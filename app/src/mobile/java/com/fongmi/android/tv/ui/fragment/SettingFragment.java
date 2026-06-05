@@ -127,6 +127,7 @@ public class SettingFragment extends BaseFragment implements ConfigListener, Sit
         mBinding.size.setOnClickListener(this::setSize);
         mBinding.uiScale.setOnClickListener(this::setUiScale);
         mBinding.cache.setOnClickListener(this::onCache);
+        mBinding.cache.setOnLongClickListener(this::onLongCache);
         mBinding.backup.setOnClickListener(this::onBackup);
         mBinding.enhance.setOnClickListener(this::onEnhance);
         mBinding.player.setOnClickListener(this::onPlayer);
@@ -326,12 +327,17 @@ public class SettingFragment extends BaseFragment implements ConfigListener, Sit
     }
 
     private void onCache(View view) {
+        Notify.show(R.string.setting_cache_tip);
+    }
+
+    private boolean onLongCache(View view) {
         FileUtil.clearCache(new Callback() {
             @Override
             public void success() {
                 setCacheText();
             }
         });
+        return true;
     }
 
     private void onBackup(View view) {

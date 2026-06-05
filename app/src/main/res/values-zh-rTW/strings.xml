@@ -622,6 +622,7 @@
     <string name="setting_doh">DoH</string>
     <string name="setting_proxy">Proxy</string>
     <string name="setting_cache">暫存</string>
+    <string name="setting_cache_tip">長按清除暫存</string>
     <string name="setting_backup">備份</string>
     <string name="setting_restore">還原</string>
     <string name="setting_about">關於</string>
@@ -886,6 +887,9 @@
     <string name="update_status_unavailable">暫無</string>
     <string name="update_expand">展開</string>
     <string name="update_collapse">收起</string>
+    <string name="update_current_version">當前版本 <xliff:g name="name">%s</xliff:g></string>
+    <string name="update_error">檢查更新發生錯誤\n<xliff:g name="name">%s</xliff:g></string>
+    <string name="update_islatest">當前是最新版本</string>
 
     <!-- Crash -->
     <string name="crash_info">發生意外錯誤\n抱歉給您帶來不便</string>

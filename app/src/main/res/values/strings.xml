@@ -640,6 +640,7 @@
     <string name="setting_doh">DoH</string>
     <string name="setting_proxy">Proxy</string>
     <string name="setting_cache">Cache</string>
+    <string name="setting_cache_tip">Long press to clear cache</string>
     <string name="setting_backup">Backup</string>
     <string name="setting_restore">Restore</string>
     <string name="setting_about">About</string>
@@ -905,6 +906,9 @@
     <string name="update_status_unavailable">Unavailable</string>
     <string name="update_expand">Expand</string>
     <string name="update_collapse">Collapse</string>
+    <string name="update_current_version">Current version <xliff:g name="name">%s</xliff:g></string>
+    <string name="update_error">Checking updates error\n<xliff:g name="name">%s</xliff:g></string>
+    <string name="update_islatest">Current version is latest version</string>
 
     <!-- Crash -->
     <string name="crash_info">An unexpected error occurred.\nSorry for the inconvenience.</string>
