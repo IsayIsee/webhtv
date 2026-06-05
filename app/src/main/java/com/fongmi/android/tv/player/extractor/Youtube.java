@@ -25,6 +25,7 @@ import org.schabi.newpipe.extractor.stream.VideoStream;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
@@ -87,10 +88,17 @@ public class Youtube implements Source.Extractor {
         StringBuilder audio = new StringBuilder();
         List<AudioStream> audioFormats = info.getAudioStreams();
         List<VideoStream> videoFormats = info.getVideoOnlyStreams();
+        if (audioFormats.isEmpty() && videoFormats.isEmpty()) return getProgressive(info.getVideoStreams());
         for (AudioStream format : audioFormats) audio.append(getAdaptationSet(format, getAudioParam(format)));
         for (VideoStream format : videoFormats) video.append(getAdaptationSet(format, getVideoParam(format)));
         String mpd = String.format(Locale.getDefault(), MPD, info.getDuration(), info.getDuration(), video, audio);
         return "data:application/dash+xml;base64," + Base64.encodeToString(mpd.getBytes(), Base64.DEFAULT);
+    }
+
+    private String getProgressive(List<VideoStream> formats) {
+        return formats.stream().filter(format -> !format.getContent().isEmpty())
+                .max(Comparator.comparingInt(VideoStream::getHeight).thenComparingInt(VideoStream::getBitrate))
+                .map(VideoStream::getContent).orElse("");
     }
 
     private String getVideoParam(VideoStream format) {
