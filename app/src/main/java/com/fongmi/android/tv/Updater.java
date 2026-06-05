@@ -21,7 +21,7 @@ import org.json.JSONObject;
 import java.io.File;
 
 public class Updater implements Download.Callback, UpdateListener {
-
+    private boolean isForceUpdate = false;
     private final Download download;
     private UpdateDialog dialog;
 
@@ -47,6 +47,7 @@ public class Updater implements Download.Callback, UpdateListener {
 
     public Updater force() {
         Notify.show(R.string.update_check);
+        this.isForceUpdate = true;
         Setting.putUpdate(true);
         return this;
     }
@@ -57,14 +58,25 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     private void doInBackground(FragmentActivity activity) {
+        final String url = getJson();
+
         try {
-            JSONObject object = new JSONObject(OkHttp.string(getJson()));
+            String jsonResponse = OkHttp.string(url);
+            JSONObject object = new JSONObject(jsonResponse);
+
             String name = object.optString("name");
             String desc = object.optString("desc");
             int code = object.optInt("code");
-            if (code <= BuildConfig.VERSION_CODE) return;
-            App.post(() -> show(activity, name, desc));
+
+            // 检查版本并切回主线程显示 UI
+            if (code > BuildConfig.VERSION_CODE)
+                App.post(() -> show(activity, name, desc));
+            else
+            if (this.isForceUpdate) {
+                App.post(() -> Notify.show(R.string.update_islatest));
+            }
         } catch (Exception e) {
+            App.post(() -> Notify.show(ResUtil.getString(R.string.update_error, url)));
             e.printStackTrace();
         }
     }
