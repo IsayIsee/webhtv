@@ -180,6 +180,7 @@
     <string name="setting_doh">DoH</string>
     <string name="setting_proxy">Proxy</string>
     <string name="setting_cache">缓存</string>
+    <string name="setting_cache_tip">长按清除缓存</string>
     <string name="setting_backup">备份</string>
     <string name="setting_restore">恢复</string>
     <string name="setting_version">版本</string>
@@ -306,6 +307,9 @@
     <string name="update_version">发现新版本 <xliff:g name="name">%s</xliff:g></string>
     <string name="update_check">正在检测更新…</string>
     <string name="update_confirm">更新</string>
+    <string name="update_current_version">当前版本 <xliff:g name="name">%s</xliff:g></string>
+    <string name="update_error">检查更新发生错误\n<xliff:g name="name">%s</xliff:g></string>
+    <string name="update_islatest">当前是最新版本</string>
 
     <!-- Crash -->
     <string name="crash_info">发生意外错误\n抱歉给您带来不便</string>
