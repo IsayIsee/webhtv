@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -36,6 +37,7 @@ public class CustomCspSetting {
     private static final String KIND_WEB_HOME = "webHome";
     private static final String KIND_CSP = "csp";
     private static final String KIND_LIVE = "live";
+    private static final String API_BUILTIN = "csp_Builtin";
 
     public static Registry load() {
         String text = Path.read(registryFile());
@@ -184,7 +186,7 @@ public class CustomCspSetting {
         item.setKey(PREFIX + item.getId());
         item.setWebHome(true);
         item.setType(3);
-        item.setApi("");
+        item.setApi(API_BUILTIN);
         return item;
     }
 
@@ -227,9 +229,13 @@ public class CustomCspSetting {
             if (items == null) items = new ArrayList<>();
             items.removeIf(Objects::isNull);
             Set<String> ids = new HashSet<>();
+            Set<String> keys = new HashSet<>();
             List<Item> unique = new ArrayList<>();
             for (Item item : items) {
+                String oldKey = item.peekKey();
                 item.normalize();
+                item.ensureUniqueKey(keys);
+                if (!TextUtils.isEmpty(oldKey) && oldKey.equals(homeKey) && !oldKey.equals(item.getKey())) homeKey = item.getKey();
                 if (!ids.add(item.getId())) continue;
                 unique.add(item);
             }
@@ -318,6 +324,8 @@ public class CustomCspSetting {
         private String jar;
         @SerializedName("homePage")
         private String homePage;
+        @SerializedName("extensions")
+        private JsonElement extensions;
         @SerializedName("click")
         private String click;
         @SerializedName("playUrl")
@@ -350,6 +358,9 @@ public class CustomCspSetting {
         private JsonObject site;
         @SerializedName("live")
         private JsonObject live;
+        private transient String extensionsText;
+        private transient boolean extensionsInvalid;
+        private transient Boolean extensionsExpanded;
 
         public Item normalize() {
             normalizeKind();
@@ -358,6 +369,7 @@ public class CustomCspSetting {
                 String siteKey = getSiteString("key");
                 key = TextUtils.isEmpty(siteKey) ? PREFIX + id : siteKey;
             }
+            if (!isLive() && shouldUseNameKey(key)) key = keyFromName(getName(), id);
             return this;
         }
 
@@ -383,8 +395,8 @@ public class CustomCspSetting {
         private boolean inferWebHome() {
             String apiValue = !TextUtils.isEmpty(api) ? api.trim() : getSiteString("api");
             String homeValue = !TextUtils.isEmpty(homePage) ? homePage.trim() : getSiteString("homePage");
-            if (TextUtils.isEmpty(homeValue)) homeValue = getSiteString("webHome");
-            return apiValue.isEmpty() && !homeValue.isEmpty();
+            if (TextUtils.isEmpty(homeValue)) homeValue = getSiteHomeAlias();
+            return !homeValue.isEmpty() && isBuiltinApi(apiValue);
         }
 
         public boolean isLive() {
@@ -446,6 +458,10 @@ public class CustomCspSetting {
                 referer = null;
                 timeZone = null;
                 timeout = null;
+                if (isWebHome()) {
+                    if (type == null) type = 3;
+                    if (TextUtils.isEmpty(api) || isBuiltinApi(api)) api = API_BUILTIN;
+                }
             }
         }
 
@@ -465,6 +481,7 @@ public class CustomCspSetting {
 
         public void setName(String name) {
             this.name = name;
+            if (!isLive() && shouldUseNameKey(getKey())) setKey(keyFromName(getName(), getId()));
             if (isLive()) putLive("name", name);
             else putSite("name", name);
         }
@@ -526,6 +543,27 @@ public class CustomCspSetting {
         public void setHomePage(String homePage) {
             this.homePage = homePage;
             putSite("homePage", homePage);
+        }
+
+        public void setExtensionsText(String text) {
+            extensionsText = text == null ? "" : text.trim();
+            extensionsInvalid = false;
+            if (TextUtils.isEmpty(extensionsText)) {
+                extensions = null;
+                removeSite("extensions");
+                return;
+            }
+            try {
+                extensions = parseExtensions(extensionsText);
+                putSite("extensions", extensions);
+            } catch (Exception e) {
+                extensionsInvalid = true;
+            }
+        }
+
+        public void setExtensionsExpanded(boolean expanded) {
+            extensionsExpanded = expanded;
+            if (!expanded) setExtensionsText("");
         }
 
         public void setClick(String click) {
@@ -631,7 +669,23 @@ public class CustomCspSetting {
 
         public String getHomePage() {
             String value = !TextUtils.isEmpty(homePage) ? homePage.trim() : getSiteString("homePage");
-            return TextUtils.isEmpty(value) ? getSiteString("webHome") : value;
+            return TextUtils.isEmpty(value) ? getSiteHomeAlias() : value;
+        }
+
+        public String getExtensionsText() {
+            if (extensionsText != null) return extensionsText;
+            JsonElement element = getExtensions();
+            if (element == null || element.isJsonNull()) return "";
+            if (element.isJsonPrimitive()) return element.getAsString().trim();
+            return App.gson().toJson(element);
+        }
+
+        public boolean hasInvalidExtensions() {
+            return extensionsInvalid;
+        }
+
+        public boolean isExtensionsExpanded() {
+            return extensionsExpanded == null ? !TextUtils.isEmpty(getExtensionsText()) : extensionsExpanded;
         }
 
         public String getClick() {
@@ -683,7 +737,7 @@ public class CustomCspSetting {
             site.setKey(getKey());
             site.setName(getName());
             site.setType(getType());
-            site.setApi(webHomeOnly ? "" : UrlUtil.convert(getApi()));
+            site.setApi(webHomeOnly ? API_BUILTIN : UrlUtil.convert(getApi()));
             site.setExt(webHomeOnly ? "" : UrlUtil.convert(getExt()));
             site.setJar(webHomeOnly ? "" : getJar());
             site.setHomePage(UrlUtil.convert(getHomePage()));
@@ -693,6 +747,7 @@ public class CustomCspSetting {
             site.setSearchable(getSearchable());
             site.setChangeable(getChangeable());
             site.setQuickSearch(getQuickSearch());
+            if (webHomeOnly && getExtensions() != null) site.setExtensions(getExtensions().deepCopy());
             site.setStyle(Style.rect());
             return site;
         }
@@ -725,6 +780,7 @@ public class CustomCspSetting {
 
         private Site siteFromJson() {
             JsonObject object = site.deepCopy();
+            sanitizeSiteObject(object);
             if (!TextUtils.isEmpty(key)) object.addProperty("key", key.trim());
             else if (!object.has("key")) object.addProperty("key", getKey());
             if (!TextUtils.isEmpty(name)) object.addProperty("name", name.trim());
@@ -740,23 +796,66 @@ public class CustomCspSetting {
             if (changeable != null) object.addProperty("changeable", changeable);
             if (quickSearch != null) object.addProperty("quickSearch", quickSearch);
             if (isWebHome()) {
-                object.addProperty("api", "");
-                object.addProperty("ext", "");
-                object.addProperty("jar", "");
+                object.addProperty("type", getType());
+                object.addProperty("api", API_BUILTIN);
+                object.remove("ext");
+                object.remove("jar");
+                object.remove("click");
+                object.remove("playUrl");
+                JsonElement value = getExtensions();
+                if (value == null || value.isJsonNull()) object.remove("extensions");
+                else object.add("extensions", value.deepCopy());
             }
             Site result = Site.objectFrom(object, getJar());
-            boolean webHomeOnly = isWebHome() || result.getApi().isEmpty() && !result.getHomePage().isEmpty();
+            boolean webHomeOnly = isWebHome() || isBuiltinApi(result.getApi()) && !result.getHomePage().isEmpty();
             if (webHomeOnly && searchable == null && !object.has("searchable")) result.setSearchable(0);
             if (webHomeOnly && quickSearch == null && !object.has("quickSearch")) result.setQuickSearch(0);
             return result;
+        }
+
+        private void sanitizeSiteObject(JsonObject object) {
+            object.remove("kind");
+            object.remove("enabled");
+            object.remove("live");
+            if (object.has("webHome") && object.get("webHome").isJsonPrimitive() && object.getAsJsonPrimitive("webHome").isBoolean()) object.remove("webHome");
         }
 
         private String getSiteString(String key) {
             return getString(site, key);
         }
 
+        private String getSiteHomeAlias() {
+            if (site == null || !site.has("webHome") || !site.get("webHome").isJsonPrimitive()) return "";
+            if (site.getAsJsonPrimitive("webHome").isBoolean()) return "";
+            return site.get("webHome").getAsString().trim();
+        }
+
         private String getLiveString(String key) {
             return getString(live, key);
+        }
+
+        private JsonElement getExtensions() {
+            if (extensions != null) return extensions;
+            if (site == null || !site.has("extensions")) return null;
+            return site.get("extensions");
+        }
+
+        private JsonElement parseExtensions(String text) {
+            String value = text == null ? "" : text.trim();
+            JsonArray array = new JsonArray();
+            if (!value.startsWith("[") && !value.startsWith("{") && !value.startsWith("\"")) {
+                array.add(value);
+                return array;
+            }
+            JsonElement element = JsonParser.parseString(value);
+            if (element.isJsonArray()) return element;
+            if (element.isJsonObject() && element.getAsJsonObject().has("extensions")) return element.getAsJsonObject().get("extensions");
+            array.add(element);
+            return array;
+        }
+
+        private boolean isBuiltinApi(String value) {
+            return TextUtils.isEmpty(value) || API_BUILTIN.equals(value.trim());
         }
 
         private String getString(JsonObject object, String key) {
@@ -786,6 +885,51 @@ public class CustomCspSetting {
             return live != null && live.has("groups") && live.get("groups").isJsonArray() && !live.getAsJsonArray("groups").isEmpty();
         }
 
+        private String peekKey() {
+            if (!TextUtils.isEmpty(key)) return key.trim();
+            if (site == null || !site.has("key") || !site.get("key").isJsonPrimitive()) return "";
+            return site.get("key").getAsString().trim();
+        }
+
+        private void ensureUniqueKey(Set<String> keys) {
+            if (isLive()) return;
+            String base = getKey();
+            String key = base;
+            int index = 2;
+            while (keys.contains(key)) key = base + "_" + index++;
+            setKey(key);
+            keys.add(key);
+        }
+
+        private boolean shouldUseNameKey(String key) {
+            return TextUtils.isEmpty(key) || key.startsWith(PREFIX);
+        }
+
+        private String keyFromName(String name, String fallback) {
+            String slug = slug(name);
+            if (TextUtils.isEmpty(slug)) slug = TextUtils.isEmpty(fallback) ? Util.md5(String.valueOf(System.nanoTime())).substring(0, 8) : fallback;
+            return PREFIX + slug;
+        }
+
+        private String slug(String text) {
+            String value = text == null ? "" : text.trim().toLowerCase(Locale.ROOT);
+            StringBuilder builder = new StringBuilder();
+            boolean underscore = false;
+            for (int i = 0; i < value.length(); ) {
+                int codePoint = value.codePointAt(i);
+                if (Character.isLetterOrDigit(codePoint) || codePoint == '-' || codePoint == '.') {
+                    builder.appendCodePoint(codePoint);
+                    underscore = false;
+                } else if (!underscore && builder.length() > 0) {
+                    builder.append('_');
+                    underscore = true;
+                }
+                i += Character.charCount(codePoint);
+            }
+            while (builder.length() > 0 && builder.charAt(builder.length() - 1) == '_') builder.deleteCharAt(builder.length() - 1);
+            return builder.toString();
+        }
+
         private void putSite(String key, String value) {
             if (site == null) return;
             if (TextUtils.isEmpty(value) && site.has(key) && !site.get(key).isJsonPrimitive()) return;
@@ -794,6 +938,14 @@ public class CustomCspSetting {
 
         private void putSite(String key, Integer value) {
             if (site != null && value != null) site.addProperty(key, value);
+        }
+
+        private void putSite(String key, JsonElement value) {
+            if (site != null && value != null) site.add(key, value.deepCopy());
+        }
+
+        private void removeSite(String key) {
+            if (site != null) site.remove(key);
         }
 
         private void putLive(String key, String value) {

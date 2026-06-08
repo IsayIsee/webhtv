@@ -69,6 +69,10 @@ public class Site implements Parcelable {
     private String homePage;
 
     @Ignore
+    @SerializedName("extensions")
+    private JsonElement extensions;
+
+    @Ignore
     @SerializedName("type")
     private Integer type;
 
@@ -218,6 +222,14 @@ public class Site implements Parcelable {
 
     public void setHomePage(String homePage) {
         this.homePage = homePage;
+    }
+
+    public JsonElement getExtensions() {
+        return extensions;
+    }
+
+    public void setExtensions(JsonElement extensions) {
+        this.extensions = extensions;
     }
 
     public Integer getType() {

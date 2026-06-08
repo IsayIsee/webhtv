@@ -127,6 +127,7 @@ dependencies {
     implementation libs.splashscreen
     implementation libs.swiperefreshlayout
     implementation libs.viewpager2
+    implementation libs.webkit
     implementation libs.android.gif.drawable
     implementation libs.bundles.glide
     implementation libs.bundles.jupnp

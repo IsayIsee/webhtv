@@ -132,6 +132,14 @@ public class Setting {
         Prefers.put("site_health_dialog_sort", sort);
     }
 
+    public static boolean isWebHomeExtension() {
+        return Prefers.getBoolean("web_home_extension", true);
+    }
+
+    public static void putWebHomeExtension(boolean extension) {
+        Prefers.put("web_home_extension", extension);
+    }
+
     public static boolean isDebugLog() {
         return DebugLogStore.isEnabled();
     }

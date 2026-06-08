@@ -15,6 +15,7 @@ import com.fongmi.android.tv.event.RefreshEvent;
 import com.fongmi.android.tv.impl.Callback;
 import com.fongmi.android.tv.setting.CustomCspSetting;
 import com.fongmi.android.tv.utils.UrlUtil;
+import com.fongmi.android.tv.web.ext.WebHomeExtensionRegistry;
 import com.github.catvod.bean.Doh;
 import com.github.catvod.bean.Header;
 import com.github.catvod.bean.Proxy;
@@ -89,6 +90,7 @@ public class VodConfig extends BaseConfig {
         flags = null;
         rules = null;
         parses = null;
+        WebHomeExtensionRegistry.get().setGlobalSources(null, "");
         BaseLoader.get().clear();
         RuleConfig.get().invalidate();
         return this;
@@ -146,6 +148,7 @@ public class VodConfig extends BaseConfig {
         initWall(config, object);
         initSite(config, object);
         initParse(config, object);
+        WebHomeExtensionRegistry.get().setGlobalSources(object.get("webHomeExtensions"), config.getUrl());
         config.setLogo(Json.safeString(object, "logo"));
         config.setNotice(Json.safeString(object, "notice"));
         config.setDanmaku(Json.safeString(object, "danmaku"));

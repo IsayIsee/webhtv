@@ -474,6 +474,56 @@
     </androidx.appcompat.widget.LinearLayoutCompat>
 
     <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/extensionsPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="vertical">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/extensionsToggle"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:minHeight="40dp"
+            android:minWidth="76dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/setting_custom_csp_extensions_toggle"
+            android:textColor="@color/dialog_tonal_button_text"
+            app:backgroundTint="@color/dialog_tonal_button_bg" />
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/extensionsLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/setting_custom_csp_extensions"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/extensions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="start|top"
+                android:imeOptions="flagNoExtractUi"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:maxLines="5"
+                android:minLines="2"
+                android:scrollHorizontally="true"
+                android:scrollbars="horizontal|vertical"
+                android:singleLine="false"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
         android:id="@+id/liveMetaPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

@@ -33,10 +33,16 @@ public class WebCall {
     private static final OkHttpClient CLIENT = new OkHttpClient.Builder().followRedirects(true).followSslRedirects(true).dns(OkHttp.dns()).proxySelector(OkHttp.selector()).proxyAuthenticator(OkHttp.authenticator()).build();
 
     public static String request(JsonObject payload) {
+        return request(payload, null);
+    }
+
+    public static String request(JsonObject payload, HomeWebController controller) {
         Response response = null;
+        Request request = null;
+        String url = Json.safeString(payload, "url");
+        String method = Json.safeString(payload, "method");
+        long start = 0;
         try {
-            String url = Json.safeString(payload, "url");
-            String method = Json.safeString(payload, "method");
             String body = Json.safeString(payload, "body");
             String responseType = Json.safeString(payload, "responseType");
             boolean include = "include".equals(Json.safeString(payload, "credentials"));
@@ -46,18 +52,56 @@ public class WebCall {
             Request.Builder builder = new Request.Builder().url(url).headers(HeaderPolicy.of(headers));
             CookieBridge.apply(builder.build().url(), builder, include, HeaderPolicy.hasCookie(headers));
             builder.method(getMethod(method), getBody(getMethod(method), body, builder.build().headers()));
-            Request request = builder.build();
-            long start = System.currentTimeMillis();
+            request = builder.build();
+            start = System.currentTimeMillis();
+            dispatch(controller, "NATIVE_START", request.method(), request.url().toString(), 0, 0, requestInfo(request));
             SpiderDebug.log("webhome-net", "%s %s include=%s timeout=%ss headers=%s", request.method(), request.url(), include, timeout, request.headers().names());
             response = client(timeout).newCall(request).execute();
             SpiderDebug.log("webhome-net", "%s %s -> %s in %sms", request.method(), request.url(), response.code(), System.currentTimeMillis() - start);
             CookieBridge.set(url, response.headers());
+            dispatch(controller, "NATIVE_DONE", request.method(), response.request().url().toString(), response.code(), System.currentTimeMillis() - start, responseInfo(response));
             return toJson(response, responseType);
         } catch (Throwable e) {
             SpiderDebug.log("webhome-net", e);
+            dispatch(controller, "NATIVE_ERROR", request == null ? getMethod(method) : request.method(), request == null ? url : request.url().toString(), 0, start <= 0 ? 0 : System.currentTimeMillis() - start, e.getMessage());
             return error(e);
         } finally {
             if (response != null) response.close();
+        }
+    }
+
+    private static void dispatch(HomeWebController controller, String type, String method, String url, int status, long durationMs, String detail) {
+        if (controller != null) controller.dispatchDebugNetwork(type, method, url, status, durationMs, detail);
+    }
+
+    private static String requestInfo(Request request) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("Request Headers\n").append(request.headers());
+        RequestBody body = request.body();
+        if (body != null) builder.append("Body\n").append("contentType=").append(body.contentType()).append('\n').append("contentLength=").append(contentLength(body)).append('\n').append(bodyPreview(body));
+        return builder.toString().trim();
+    }
+
+    private static String responseInfo(Response response) {
+        return ("message=" + response.message() + "\nResponse Headers\n" + response.headers()).trim();
+    }
+
+    private static long contentLength(RequestBody body) {
+        try {
+            return body.contentLength();
+        } catch (Throwable e) {
+            return -1;
+        }
+    }
+
+    private static String bodyPreview(RequestBody body) {
+        try {
+            okio.Buffer buffer = new okio.Buffer();
+            body.writeTo(buffer);
+            String text = buffer.readString(StandardCharsets.UTF_8);
+            return "payload:\n" + (text.length() > 2000 ? text.substring(0, 2000) + "\n...truncated" : text);
+        } catch (Throwable e) {
+            return "payloadPreview=" + e.getMessage();
         }
     }
 

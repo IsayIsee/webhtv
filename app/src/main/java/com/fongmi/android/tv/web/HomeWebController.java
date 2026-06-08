@@ -14,9 +14,16 @@ import android.webkit.ConsoleMessage;
 import android.webkit.WebChromeClient;
 import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.ValueCallback;
 
+import androidx.webkit.ScriptHandler;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
+import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
 import com.github.catvod.crawler.SpiderDebug;
 import com.fongmi.android.tv.api.config.VodConfig;
@@ -27,32 +34,61 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.UrlUtil;
 import com.fongmi.android.tv.utils.Util;
 import com.fongmi.android.tv.utils.WebViewUtil;
+import com.fongmi.android.tv.web.ext.WebHomeExtension;
+import com.fongmi.android.tv.web.ext.WebHomeExtensionRegistry;
 
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 public class HomeWebController {
 
     private static final String BRIDGE = "fongmiBridge";
     private static final int SLOW_KEY_MS = 24;
+    private static HomeWebController active;
+    private static boolean extensionReloadRequested;
 
     private final Listener listener;
     private final Activity activity;
+    private final Set<String> injectedExtensions;
+    private final boolean debugTools;
     private WebView webView;
     private final float density;
+    private ScriptHandler documentStartHandler;
+    private Site site;
+    private String documentStartKey;
     private String homePage;
     private long pauseAt;
     private long lastKeyAt;
+    private boolean sdkReady;
+    private boolean paused;
 
     public HomeWebController(Activity activity, WebView webView, Listener listener) {
+        this(activity, webView, listener, false);
+    }
+
+    public HomeWebController(Activity activity, WebView webView, Listener listener, boolean debugTools) {
         this.activity = activity;
         this.webView = webView;
         this.listener = listener;
+        this.debugTools = debugTools;
         this.density = activity.getResources().getDisplayMetrics().density;
+        this.injectedExtensions = new HashSet<>();
+        active = this;
         init();
+    }
+
+    public static void requestExtensionReload() {
+        extensionReloadRequested = true;
+        HomeWebController controller = active;
+        if (controller != null) App.post(controller::consumeExtensionReload);
     }
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     private void init() {
+        if (debugTools) WebView.setWebContentsDebuggingEnabled(true);
         WebViewUtil.configureHome(webView);
         if (Util.isLeanback()) webView.setNextFocusUpId(R.id.title);
         webView.setBackgroundColor(Color.TRANSPARENT);
@@ -74,7 +110,13 @@ public class HomeWebController {
         if (!site.hasHomePage()) return false;
         Server.get().start();
         String url = getHomePage(site);
-        if (force || !url.equals(homePage)) {
+        boolean reload = force || !url.equals(homePage);
+        this.site = site;
+        prepareExtensions(site);
+        registerDocumentStartScripts();
+        if (reload) {
+            sdkReady = false;
+            injectedExtensions.clear();
             homePage = url;
             webView.loadUrl(force ? reloadUrl(homePage) : homePage);
         }
@@ -91,9 +133,31 @@ public class HomeWebController {
         }
     }
 
+    public void reloadExtensions() {
+        extensionReloadRequested = true;
+        consumeExtensionReload();
+    }
+
+    public void evaluate(String script, ValueCallback<String> callback) {
+        webView.post(() -> webView.evaluateJavascript(script, callback));
+    }
+
+    public void dispatchDebugConsole(String level, String message) {
+        if (!debugTools) return;
+        String text = (TextUtils.isEmpty(level) ? "log" : level).toUpperCase(Locale.ROOT) + " " + (message == null ? "" : message);
+        App.post(() -> listener.onWebConsole(text));
+    }
+
+    public void dispatchDebugNetwork(String type, String method, String url, int status, long durationMs, String detail) {
+        if (!debugTools) return;
+        App.post(() -> listener.onWebNetwork(type, method, url, status, durationMs, detail));
+    }
+
     public void show() {
+        active = this;
         webView.setVisibility(View.VISIBLE);
         focusWebView("show");
+        consumeExtensionReload();
     }
 
     public void hide() {
@@ -120,20 +184,37 @@ public class HomeWebController {
     }
 
     public void onResume() {
+        paused = false;
         webView.onResume();
         webView.resumeTimers();
         recoverAfterResume();
+        consumeExtensionReload();
     }
 
     public void onPause() {
+        paused = true;
         pauseAt = System.currentTimeMillis();
         dispatchLifecycle("fmpause", "{time:" + pauseAt + "}");
         webView.onPause();
     }
 
     public void destroy() {
+        removeDocumentStartScripts();
         webView.stopLoading();
         webView.destroy();
+        if (debugTools) WebView.setWebContentsDebuggingEnabled(false);
+        if (active == this) active = null;
+    }
+
+    private void consumeExtensionReload() {
+        if (!extensionReloadRequested || paused || !isVisible() || site == null || TextUtils.isEmpty(homePage)) return;
+        extensionReloadRequested = false;
+        Site current = site;
+        WebHomeExtensionRegistry.get().refresh(current, () -> {
+            if (site == null || !current.getKey().equals(site.getKey())) return;
+            registerDocumentStartScripts();
+            reload();
+        });
     }
 
     private void recreateWebView() {
@@ -144,6 +225,7 @@ public class HomeWebController {
         int visibility = webView.getVisibility();
         ViewGroup.LayoutParams params = webView.getLayoutParams();
         try {
+            removeDocumentStartScripts();
             webView.stopLoading();
             parent.removeView(webView);
             webView.destroy();
@@ -154,6 +236,7 @@ public class HomeWebController {
         webView.setVisibility(visibility);
         parent.addView(webView, Math.max(0, index), params);
         init();
+        registerDocumentStartScripts();
     }
 
     private void recoverAfterResume() {
@@ -232,6 +315,10 @@ public class HomeWebController {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
                 SpiderDebug.log("webhome-webview", "page started url=%s", url);
+                listener.onWebRequest("PAGE", url, true);
+                sdkReady = false;
+                injectedExtensions.clear();
+                markDocumentStartInjected();
                 listener.onWebLoading();
             }
 
@@ -248,6 +335,7 @@ public class HomeWebController {
             public void onReceivedError(WebView view, WebResourceRequest request, android.webkit.WebResourceError error) {
                 super.onReceivedError(view, request, error);
                 SpiderDebug.log("webhome-webview", "resource error main=%s code=%s desc=%s url=%s", request.isForMainFrame(), error.getErrorCode(), error.getDescription(), request.getUrl());
+                listener.onWebConsole("ERROR " + error.getErrorCode() + " " + error.getDescription() + " " + request.getUrl());
                 if (request.isForMainFrame()) {
                     homePage = null;
                     Notify.show(error.getDescription().toString());
@@ -258,6 +346,12 @@ public class HomeWebController {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return false;
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                listener.onWebRequest(request.getMethod(), request.getUrl().toString(), request.isForMainFrame(), request.getRequestHeaders());
+                return super.shouldInterceptRequest(view, request);
             }
 
             @Override
@@ -279,7 +373,11 @@ public class HomeWebController {
         return new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
-                if (message != null) SpiderDebug.log("webhome-console", "%s %s:%s %s", message.messageLevel(), message.sourceId(), message.lineNumber(), message.message());
+                if (message != null) {
+                    String line = String.format(Locale.ROOT, "%s %s:%s %s", message.messageLevel(), message.sourceId(), message.lineNumber(), message.message());
+                    SpiderDebug.log("webhome-console", line);
+                    listener.onWebConsole(line);
+                }
                 return super.onConsoleMessage(message);
             }
         };
@@ -287,7 +385,88 @@ public class HomeWebController {
 
     private void injectSdk() {
         injectViewport();
-        webView.evaluateJavascript(getSdk(), null);
+        webView.evaluateJavascript(getSdk(), value -> {
+            sdkReady = true;
+            injectExtensions(WebHomeExtension.RUN_AT_END);
+            webView.postDelayed(() -> injectExtensions(WebHomeExtension.RUN_AT_IDLE), 600);
+        });
+    }
+
+    private void prepareExtensions(Site site) {
+        String key = site.getKey();
+        WebHomeExtensionRegistry.get().prepare(site, () -> {
+            if (this.site == null || !key.equals(this.site.getKey())) return;
+            registerDocumentStartScripts();
+            injectExtensions(WebHomeExtension.RUN_AT_END);
+            webView.postDelayed(() -> injectExtensions(WebHomeExtension.RUN_AT_IDLE), 600);
+        });
+    }
+
+    private void registerDocumentStartScripts() {
+        removeDocumentStartScripts();
+        if (site == null || !isDocumentStartSupported()) return;
+        String script = documentStartScript();
+        if (TextUtils.isEmpty(script)) return;
+        try {
+            documentStartHandler = WebViewCompat.addDocumentStartJavaScript(webView, script, Collections.singleton("*"));
+            documentStartKey = site.getKey();
+            SpiderDebug.log("webhome-ext", "document-start registered site=%s", documentStartKey);
+        } catch (Throwable e) {
+            documentStartHandler = null;
+            documentStartKey = "";
+            SpiderDebug.log("webhome-ext", "document-start register failed site=%s error=%s", site.getKey(), e.getMessage());
+        }
+    }
+
+    private void removeDocumentStartScripts() {
+        try {
+            if (documentStartHandler != null) documentStartHandler.remove();
+        } catch (Throwable e) {
+            SpiderDebug.log("webhome-ext", "document-start remove failed error=%s", e.getMessage());
+        }
+        documentStartHandler = null;
+        documentStartKey = "";
+    }
+
+    private String documentStartScript() {
+        if (site == null) return "";
+        StringBuilder script = new StringBuilder();
+        for (WebHomeExtension extension : WebHomeExtensionRegistry.get().get(site.getKey())) {
+            if (!WebHomeExtension.RUN_AT_START.equals(extension.getRunAt())) continue;
+            if (script.length() == 0) script.append(getSdk());
+            script.append('\n').append(extension.script(site.getKey()));
+        }
+        return script.toString();
+    }
+
+    private void markDocumentStartInjected() {
+        if (site == null || TextUtils.isEmpty(documentStartKey) || !documentStartKey.equals(site.getKey())) return;
+        for (WebHomeExtension extension : WebHomeExtensionRegistry.get().get(site.getKey())) {
+            if (!WebHomeExtension.RUN_AT_START.equals(extension.getRunAt())) continue;
+            injectedExtensions.add(extension.getId());
+            WebHomeExtensionRegistry.get().recordInject(extension, site.getKey(), WebHomeExtension.RUN_AT_START);
+        }
+    }
+
+    private boolean isDocumentStartSupported() {
+        try {
+            return WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT);
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    private void injectExtensions(String runAt) {
+        if (!sdkReady || site == null || !isVisible()) return;
+        for (WebHomeExtension extension : WebHomeExtensionRegistry.get().get(site.getKey())) {
+            if (!extension.shouldInjectAt(runAt)) continue;
+            if (!injectedExtensions.add(extension.getId())) continue;
+            if (WebHomeExtension.RUN_AT_START.equals(extension.getRunAt())) SpiderDebug.log("webhome-ext", "document-start downgraded id=%s site=%s", extension.getId(), site.getKey());
+            SpiderDebug.log("webhome-ext", "inject id=%s runAt=%s target=%s site=%s", extension.getId(), extension.getRunAt(), runAt, site.getKey());
+            WebHomeExtensionRegistry.get().recordInject(extension, site.getKey(), runAt);
+            if (debugTools) dispatchDebugConsole("EXT", "inject id=" + extension.getId() + " runAt=" + extension.getRunAt() + " target=" + runAt);
+            webView.evaluateJavascript(extension.script(site.getKey()), null);
+        }
     }
 
     private void injectViewport() {
@@ -351,6 +530,16 @@ public class HomeWebController {
                     resolve:(id,data)=>{ if(callbacks[id]){ callbacks[id].resolve(hydrate(data)); delete callbacks[id]; } },
                     reject:(id,error)=>{ if(callbacks[id]){ callbacks[id].reject(new Error(error||'')); delete callbacks[id]; } }
                   };
+                  if(!window.__fmUrlHook&&window.history){
+                    window.__fmUrlHook=true;
+                    const emit=()=>window.dispatchEvent(new CustomEvent('fmurlchange',{detail:{url:location.href}}));
+                    const rawPush=history.pushState;
+                    const rawReplace=history.replaceState;
+                    history.pushState=function(){const r=rawPush.apply(this,arguments);emit();return r;};
+                    history.replaceState=function(){const r=rawReplace.apply(this,arguments);emit();return r;};
+                    window.addEventListener('popstate',emit);
+                  }
+                  %s
                   const player={
                     playUrl:(url,title,options)=>invoke('player.playUrl',Object.assign({},options||{},{url,title})),
                     playVod:(siteKey,vodId,title,pic,options)=>invoke('player.playVod',Object.assign({},options||{},{siteKey,vodId,title,pic})),
@@ -370,6 +559,11 @@ public class HomeWebController {
                     check:(items)=>invoke('pan.check',{items}),
                     play:(payload)=>invoke('pan.play',payload||{})
                   };
+                  const ext={
+                    info:()=>invoke('ext.info',{}),
+                    log:(message,data)=>invoke('ext.log',{message,data}),
+                    toast:(message)=>invoke('ext.toast',{message})
+                  };
                   const ui={
                     setToolbar:(visible)=>invoke('ui.setToolbar',{visible:visible!==false})
                   };
@@ -382,6 +576,7 @@ public class HomeWebController {
                       history:()=>invoke('app.history',{})
                     },
                     pan,
+                    ext,
                     device:{info:()=>invoke('device.info',{})},
                     site:{info:()=>invoke('site.info',{})},
                     config:{info:()=>invoke('config.info',{})},
@@ -406,6 +601,7 @@ public class HomeWebController {
                     pan,
                     check:window.fongmi.pan.check,
                     cache,
+                    ext,
                     ui,
                     device:window.fongmi.device.info,
                     site:window.fongmi.site.info,
@@ -415,7 +611,88 @@ public class HomeWebController {
                   };
                   window.dispatchEvent(new CustomEvent('fmsdk'));
                 })();
-                """, com.fongmi.android.tv.BuildConfig.FLAVOR_mode, com.fongmi.android.tv.utils.Util.isLeanback());
+                """, com.fongmi.android.tv.BuildConfig.FLAVOR_mode, com.fongmi.android.tv.utils.Util.isLeanback(), debugTools ? debugSdkHook() : "");
+    }
+
+    private String debugSdkHook() {
+        return """
+                  if(!window.__fmConsoleHook){
+                    window.__fmConsoleHook=true;
+                    ['log','info','warn','error','debug'].forEach(function(level){
+                      const raw=console[level]||console.log;
+                      console[level]=function(){
+                        const args=Array.prototype.slice.call(arguments);
+                        try{fongmiBridge.console(level,args.map(function(v){try{return typeof v==='string'?v:JSON.stringify(v);}catch(e){return String(v);}}).join(' '));}catch(e){}
+                        return raw&&raw.apply(console,args);
+                      };
+                    });
+                  }
+                  if(!window.__fmNetworkHook){
+                    window.__fmNetworkHook=true;
+                    const absolute=function(url){try{return new URL(String(url),location.href).href;}catch(e){return String(url||'');}};
+                    const clip=function(value){value=String(value||'');return value.length>2000?value.slice(0,2000)+'\\n...truncated':value;};
+                    const bodyText=function(body){
+                      if(!body)return '';
+                      if(typeof body==='string')return 'payload:\\n'+clip(body);
+                      if(body instanceof URLSearchParams)return 'payload:\\n'+clip(body.toString());
+                      if(body instanceof FormData){
+                        const out=[];
+                        try{body.forEach(function(v,k){out.push(k+'='+(v&&v.name?'[file '+v.name+']':String(v)));});}catch(e){}
+                        return 'payload:\\n'+clip(out.join('\\n'));
+                      }
+                      return 'payloadType='+Object.prototype.toString.call(body)+'\\npayloadBytes='+String(body).length;
+                    };
+                    const headers=function(headers){
+                      const out=[];
+                      try{
+                        if(headers&&headers.forEach)headers.forEach(function(v,k){out.push(k+': '+v);});
+                        else if(headers)Object.keys(headers).forEach(function(k){out.push(k+': '+headers[k]);});
+                      }catch(e){}
+                      return out.join('\\n');
+                    };
+                    const rawFetch=window.fetch;
+                    if(rawFetch){
+                      window.fetch=function(input,init){
+                        const started=Date.now();
+                        const method=(init&&init.method)||(input&&input.method)||'GET';
+                        const url=absolute(input&&input.url?input.url:input);
+                        const requestHeaders=headers((init&&init.headers)||(input&&input.headers));
+                        const body=bodyText(init&&init.body);
+                        try{fongmiBridge.network('FETCH_START',method,url,0,0,[requestHeaders,body].filter(Boolean).join('\\n'));}catch(e){}
+                        return rawFetch.apply(this,arguments).then(function(resp){
+                          try{fongmiBridge.network('FETCH_DONE',method,url,resp.status||0,Date.now()-started,['type='+(resp.type||''),'headers:',headers(resp.headers)].join('\\n'));}catch(e){}
+                          return resp;
+                        }).catch(function(err){
+                          try{fongmiBridge.network('FETCH_ERROR',method,url,0,Date.now()-started,String(err&&err.message||err));}catch(e){}
+                          throw err;
+                        });
+                      };
+                    }
+                    const RawXHR=window.XMLHttpRequest;
+                    if(RawXHR&&RawXHR.prototype){
+                      const rawOpen=RawXHR.prototype.open;
+                      const rawSend=RawXHR.prototype.send;
+                      RawXHR.prototype.open=function(method,url){
+                        this.__fmMethod=method||'GET';
+                        this.__fmUrl=absolute(url);
+                        return rawOpen.apply(this,arguments);
+                      };
+                      RawXHR.prototype.send=function(){
+                        const xhr=this;
+                        const started=Date.now();
+                        const body=arguments.length?bodyText(arguments[0]):'';
+                        try{fongmiBridge.network('XHR_START',xhr.__fmMethod||'GET',xhr.__fmUrl||'',0,0,body);}catch(e){}
+                        xhr.addEventListener('loadend',function(){
+                          try{fongmiBridge.network('XHR_DONE',xhr.__fmMethod||'GET',xhr.__fmUrl||'',xhr.status||0,Date.now()-started,[xhr.statusText||'',xhr.getAllResponseHeaders&&xhr.getAllResponseHeaders()||''].filter(Boolean).join('\\n'));}catch(e){}
+                        });
+                        xhr.addEventListener('error',function(){
+                          try{fongmiBridge.network('XHR_ERROR',xhr.__fmMethod||'GET',xhr.__fmUrl||'',xhr.status||0,Date.now()-started,'error');}catch(e){}
+                        });
+                        return rawSend.apply(this,arguments);
+                      };
+                    }
+                  }
+                """;
     }
 
     public interface Listener {
@@ -430,6 +707,19 @@ public class HomeWebController {
         }
 
         default void openSetting() {
+        }
+
+        default void onWebConsole(String line) {
+        }
+
+        default void onWebRequest(String method, String url, boolean mainFrame) {
+        }
+
+        default void onWebRequest(String method, String url, boolean mainFrame, Map<String, String> headers) {
+            onWebRequest(method, url, mainFrame);
+        }
+
+        default void onWebNetwork(String type, String method, String url, int status, long durationMs, String detail) {
         }
     }
 }

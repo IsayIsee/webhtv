@@ -20,6 +20,7 @@ splashscreen = "1.2.0"
 startup = "1.2.0"
 swiperefreshlayout = "1.2.0"
 viewpager2 = "1.1.0"
+webkit = "1.16.0"
 
 androidGifDrawable = "1.2.31"
 androidautosize = "1.2.1"
@@ -69,6 +70,7 @@ splashscreen = { group = "androidx.core", name = "core-splashscreen", version.re
 startup = { group = "androidx.startup", name = "startup-runtime", version.ref = "startup" }
 swiperefreshlayout = { group = "androidx.swiperefreshlayout", name = "swiperefreshlayout", version.ref = "swiperefreshlayout" }
 viewpager2 = { group = "androidx.viewpager2", name = "viewpager2", version.ref = "viewpager2" }
+webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }
 
 android-gif-drawable = { group = "pl.droidsonroids.gif", name = "android-gif-drawable", version.ref = "androidGifDrawable" }
 androidautosize = { group = "com.github.JessYanCoding", name = "AndroidAutoSize", version.ref = "androidautosize" }
