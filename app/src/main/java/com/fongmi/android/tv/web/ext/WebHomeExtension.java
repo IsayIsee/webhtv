@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 public class WebHomeExtension {
@@ -152,7 +153,7 @@ public class WebHomeExtension {
     public String script(String siteKey) {
         StringBuilder body = new StringBuilder();
         for (String script : scripts) body.append('\n').append(script).append('\n');
-        return """
+        return String.format(Locale.US, """
                 (function(){
                   if(window.top!==window)return;
                   const __fmExt={id:%s,name:%s,siteKey:%s,source:%s,runAt:%s};
@@ -171,7 +172,7 @@ public class WebHomeExtension {
                   }
                 })();
                 //# sourceURL=fm-ext-%s.js
-                """.formatted(quote(id), quote(name), quote(siteKey), quote(sourceUrl), quote(runAt), body, safeSourceName(id));
+                """, quote(id), quote(name), quote(siteKey), quote(sourceUrl), quote(runAt), body, safeSourceName(id));
     }
 
     public String dependencyId(String dependency) {
