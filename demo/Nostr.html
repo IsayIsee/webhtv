@@ -5767,6 +5767,9 @@
     ["DE", new Set(["18"])],
   ]);
 
+  // 地区黑名单
+  const BLACKLIST_COUNTRIES = new Set(["JP", "KR"]);
+
   async function fetchContentRating(mediaType, tmdbId, name) {
     const label = name || `${mediaType}:${tmdbId}`;
     const endpoint = mediaType === "tv" ? "content_ratings" : "release_dates";
@@ -5794,14 +5797,25 @@
       }
       // 顺便拉评分（复用一次额外请求不如合并到 detail 接口）
       let vote = 0;
+      let originCountry = [];
       try {
         const detail = await requestJson(
           `${window.WEBHOME_CONFIG.tmdb.apiBase}/${mediaType}/${tmdbId}?api_key=${tmdbApiKey()}`,
           8
         );
         vote = Number(detail.vote_average || 0);
+        originCountry = Array.isArray(detail.origin_country)
+          ? detail.origin_country
+          : (detail.production_countries || []).map(c => c.iso_3166_1).filter(Boolean);
       } catch (_) {}
-      console.log(`${label} → [ContentRating] ${displayCert || "无分级"} ${vote ? "★" + vote.toFixed(1) : ""} ${mediaType}:${tmdbId}`);
+      // 产地黑名单检查
+      for (const c of originCountry) {
+        if (BLACKLIST_COUNTRIES.has(c)) {
+          console.log(`${label} → [ContentRating] 产地黑名单 ${mediaType}:${tmdbId} → ${c}`);
+          return { restricted: "BLACKLIST", display: "", rating: vote };
+        }
+      }
+      console.log(`${label} → [ContentRating] ${displayCert || "无分级"} ${vote ? "★" + vote.toFixed(1) : ""} ${mediaType}:${tmdbId} [${originCountry.join(",")}]`);
       return { restricted: "", display: displayCert, rating: vote };
     } catch (e) {
       console.warn(`${label} → [ContentRating] 查询失败 ${mediaType}:${tmdbId}`, e.message);
@@ -5822,13 +5836,12 @@
     let normal = 0;
     let failed = 0;
     for (const item of unrated) {
-      const rating = await fetchContentRating(
+      const result = await fetchContentRating(
         hotMediaTypeFromCode(item.mt), item.tid, item.t
       );
-      if (rating) restricted++;
-      else if (rating === "") normal++;
-      else failed++;
-      item.r = rating || "";
+      if (result.restricted) restricted++;
+      else normal++;
+      item.r = result.restricted || "";
       item.cr = result.display || "";
       if (result.rating) item.v = result.rating;
       state.hot.media.set(item.m, item);
