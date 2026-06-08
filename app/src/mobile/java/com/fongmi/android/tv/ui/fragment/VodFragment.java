@@ -13,6 +13,7 @@ import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentStatePagerAdapter;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.viewbinding.ViewBinding;
+import androidx.viewpager.widget.PagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import com.fongmi.android.tv.R;
@@ -145,8 +146,9 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
     }
 
     private void setAdapter(Result result) {
+        if (mWeb != null && mWeb.isVisible()) return;
         mAdapter.addAll(mResult = result);
-        mBinding.pager.getAdapter().notifyDataSetChanged();
+        notifyPagerAdapter();
         setFabVisible(0);
         hideProgress();
         showContent();
@@ -271,22 +273,32 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
         setWebFullscreen(false);
         showProgress();
         mBinding.homeWeb.setVisibility(View.GONE);
-        setFabVisible(0);
-        mAdapter.clear();
-        mViewModel.homeContent();
+        clearPagerTypes();
         mBinding.pager.setAdapter(new PageAdapter(getChildFragmentManager()));
+        setFabVisible(0);
+        mViewModel.homeContent();
     }
 
     private void loadHome() {
         setTitle();
         if (mWeb != null && mWeb.load(getHome())) {
-            mAdapter.clear();
+            clearPagerTypes();
             hideProgress();
             hideNativeContent();
         } else {
             showNativeContent();
             homeContent();
         }
+    }
+
+    private void clearPagerTypes() {
+        mAdapter.clear();
+        notifyPagerAdapter();
+    }
+
+    private void notifyPagerAdapter() {
+        PagerAdapter adapter = mBinding.pager.getAdapter();
+        if (adapter != null) adapter.notifyDataSetChanged();
     }
 
     public Result getResult() {
@@ -434,6 +446,11 @@ public class VodFragment extends BaseFragment implements ConfigListener, SiteLis
     @Override
     public void setToolbar(boolean visible) {
         setWebFullscreen(!visible);
+    }
+
+    @Override
+    public void openSetting() {
+        if (getActivity() instanceof HomeActivity) ((HomeActivity) getActivity()).change(1);
     }
 
     private void hideNativeContent() {

@@ -119,6 +119,21 @@
             app:backgroundTint="@color/dialog_toggle_button_bg"
             app:strokeColor="@color/dialog_outlined_button_stroke" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/liveMode"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:minHeight="40dp"
+            android:minWidth="0dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="@string/setting_custom_csp_live"
+            android:textColor="@color/dialog_toggle_button_text"
+            app:backgroundTint="@color/dialog_toggle_button_bg"
+            app:strokeColor="@color/dialog_outlined_button_stroke" />
+
     </com.google.android.material.button.MaterialButtonToggleGroup>
 
     <androidx.appcompat.widget.LinearLayoutCompat
@@ -240,6 +255,167 @@
 
     </com.google.android.material.textfield.TextInputLayout>
 
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/liveUrlLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="@string/setting_custom_csp_live_url"
+        app:boxBackgroundColor="@color/white"
+        app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+        app:hintTextColor="#5F6368">
+
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/liveUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:imeOptions="actionNext"
+            android:importantForAutofill="no"
+            android:inputType="textUri|textNoSuggestions"
+            android:scrollHorizontally="true"
+            android:singleLine="true"
+            android:textColor="@color/black"
+            android:textColorHint="#666666" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/liveTypePanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/setting_custom_csp_type"
+            android:textColor="#5F6368"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/liveTypeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="4dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/liveType0"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="@string/setting_custom_csp_player_system"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/liveType1"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="@string/setting_custom_csp_player_ijk"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/liveType2"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="@string/setting_custom_csp_player_exo"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/setting_custom_csp_player_type"
+            android:textColor="#5F6368"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/playerTypeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="4dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playerTypeUnset"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="@string/setting_custom_csp_unset"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playerType0"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="0"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playerType1"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="1"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/playerType2"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:minHeight="40dp"
+                android:minWidth="0dp"
+                android:text="2"
+                android:textColor="@color/dialog_toggle_button_text"
+                app:backgroundTint="@color/dialog_toggle_button_bg"
+                app:strokeColor="@color/dialog_outlined_button_stroke" />
+
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
     <androidx.appcompat.widget.LinearLayoutCompat
         android:id="@+id/cspOptionsPanel"
         android:layout_width="match_parent"
@@ -287,6 +463,197 @@
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="number"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/liveMetaPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_logo"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/logo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textUri|textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_epg"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/epg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textUri|textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/liveHeaderPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_ua"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/ua"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_referer"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/referer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textUri|textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/liveTunePanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_origin"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/origin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textUri|textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:hint="@string/setting_custom_csp_time_zone"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/timeZone"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNext"
+                android:importantForAutofill="no"
+                android:inputType="textNoSuggestions"
+                android:scrollHorizontally="true"
+                android:singleLine="true"
+                android:textColor="@color/black"
+                android:textColorHint="#666666" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:layout_width="96dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:hint="@string/setting_custom_csp_timeout"
+            app:boxBackgroundColor="@color/white"
+            app:boxStrokeColor="@color/dialog_outlined_button_stroke"
+            app:hintTextColor="#5F6368">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/timeout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:imeOptions="actionDone"
                 android:importantForAutofill="no"
                 android:inputType="number"
                 android:singleLine="true"
@@ -434,6 +801,7 @@
         </com.google.android.material.textfield.TextInputLayout>
 
         <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/playUrlLayout"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"

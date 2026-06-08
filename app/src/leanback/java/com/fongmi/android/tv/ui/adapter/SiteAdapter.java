@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.adapter;
 
+import android.content.res.ColorStateList;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -11,6 +12,8 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.databinding.AdapterSiteBinding;
+import com.fongmi.android.tv.setting.Setting;
+import com.fongmi.android.tv.setting.SiteHealthStore;
 import com.github.catvod.crawler.SpiderDebug;
 
 import java.util.ArrayList;
@@ -59,6 +62,7 @@ public class SiteAdapter extends RecyclerView.Adapter<SiteAdapter.ViewHolder> {
 
     private void addAll() {
         for (Site site : VodConfig.get().getSites()) if (!site.isHide()) allItems.add(site);
+        if (Setting.isSiteHealthDialogSort()) SiteHealthStore.sortSites(allItems);
         mItems.addAll(allItems);
     }
 
@@ -85,6 +89,7 @@ public class SiteAdapter extends RecyclerView.Adapter<SiteAdapter.ViewHolder> {
             SpiderDebug.log("site-dialog", "first bind position=%s name=%s", position, item.getName());
         }
         holder.binding.text.setText(item.getName());
+        holder.binding.health.setBackgroundTintList(ColorStateList.valueOf(SiteHealthStore.getColor(item)));
         holder.binding.check.setChecked(getChecked(item));
         holder.binding.text.setSelected(item.isSelected());
         holder.binding.getRoot().setSelected(item.isSelected());

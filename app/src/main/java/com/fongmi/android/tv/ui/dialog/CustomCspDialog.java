@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewbinding.ViewBinding;
 
 import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.api.config.LiveConfig;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.databinding.AdapterCustomCspBinding;
 import com.fongmi.android.tv.databinding.DialogCustomCspBinding;
@@ -55,6 +56,9 @@ public class CustomCspDialog extends BaseAlertDialog {
 
     private static final int MIN_INSERT_INDEX = 0;
     private static final int MAX_INSERT_INDEX = 9;
+    private static final String KIND_WEB_HOME = "webHome";
+    private static final String KIND_CSP = "csp";
+    private static final String KIND_LIVE = "live";
 
     private DialogCustomCspBinding binding;
     private CustomCspSetting.Registry registry;
@@ -224,22 +228,26 @@ public class CustomCspDialog extends BaseAlertDialog {
         if (now - lastAddTime < 500) return;
         lastAddTime = now;
         CustomCspSetting.Item item = CustomCspSetting.createDefaultItem();
-        item.setName(nextName(true));
+        item.setName(nextName(KIND_WEB_HOME));
         adapter.add(item);
         binding.recycler.scrollToPosition(adapter.getItemCount() - 1);
     }
 
-    private String nextName(boolean webHome) {
-        String prefix = webHome ? getString(R.string.setting_custom_csp_webhome) : getString(R.string.setting_custom_csp_common);
+    private String nextName(String kind) {
+        String prefix = getKindPrefix(kind);
         int max = 0;
         for (CustomCspSetting.Item item : adapter.getItems()) {
-            if (item.isWebHome() != webHome) continue;
+            if (!item.getKind().equals(kind)) continue;
             String name = item.getName();
             if (name.equals(prefix)) max = Math.max(max, 1);
             else if (name.startsWith(prefix + " ")) max = Math.max(max, parseInt(name.substring(prefix.length() + 1), 0));
         }
         int next = Math.max(1, max + 1);
-        return getString(webHome ? R.string.setting_custom_csp_webhome_name : R.string.setting_custom_csp_common_name, next);
+        return getString(KIND_WEB_HOME.equals(kind) ? R.string.setting_custom_csp_webhome_name : KIND_LIVE.equals(kind) ? R.string.setting_custom_csp_live_name : R.string.setting_custom_csp_common_name, next);
+    }
+
+    private String getKindPrefix(String kind) {
+        return getString(KIND_WEB_HOME.equals(kind) ? R.string.setting_custom_csp_webhome : KIND_LIVE.equals(kind) ? R.string.setting_custom_csp_live : R.string.setting_custom_csp_common);
     }
 
     private boolean onPositive() {
@@ -292,14 +300,16 @@ public class CustomCspDialog extends BaseAlertDialog {
         registry.setInsertIndex(getInsertIndex());
         registry.setItems(new ArrayList<>(adapter.getItems()));
         CustomCspSetting.save(registry);
-        reloadVodConfig();
+        reloadConfigs();
         if (callback != null) callback.run();
         saved = true;
         return true;
     }
 
-    private void reloadVodConfig() {
+    private void reloadConfigs() {
         VodConfig.get().clear().config(VodConfig.get().getConfig()).load(new Callback() {
+        });
+        if (LiveConfig.hasLoadedLives() || !LiveConfig.get().getConfig().isEmpty() || CustomCspSetting.hasLives()) LiveConfig.get().clear().config(LiveConfig.get().getConfig()).load(new Callback() {
         });
     }
 
@@ -462,11 +472,12 @@ public class CustomCspDialog extends BaseAlertDialog {
             syncAllVisibleRows();
             focusBeforeRemove(removed);
             CustomCspSetting.Item item = items.remove(position);
-            if (item.site().getKey().equals(registry.getHomeKey())) registry.setHomeKey("");
+            if (!item.isLive() && item.site().getKey().equals(registry.getHomeKey())) registry.setHomeKey("");
             notifyItemRemoved(position);
         }
 
         void setHome(CustomCspSetting.Item item) {
+            if (item.isLive()) return;
             syncAllVisibleRows();
             String key = item.site().getKey();
             registry.setHomeKey(key.equals(registry.getHomeKey()) ? "" : key);
@@ -508,9 +519,19 @@ public class CustomCspDialog extends BaseAlertDialog {
                 binding.jar.addTextChangedListener(new TextSync(this));
                 binding.click.addTextChangedListener(new TextSync(this));
                 binding.playUrl.addTextChangedListener(new TextSync(this));
+                binding.liveUrl.addTextChangedListener(new TextSync(this));
+                binding.logo.addTextChangedListener(new TextSync(this));
+                binding.epg.addTextChangedListener(new TextSync(this));
+                binding.ua.addTextChangedListener(new TextSync(this));
+                binding.referer.addTextChangedListener(new TextSync(this));
+                binding.origin.addTextChangedListener(new TextSync(this));
+                binding.timeZone.addTextChangedListener(new TextSync(this));
+                binding.timeout.addTextChangedListener(new TextSync(this));
                 binding.enabled.setOnClickListener(view -> toggleEnabled());
                 binding.home.setOnCheckedChangeListener((button, checked) -> onHomeChecked(checked));
                 binding.typeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> onTypeChecked(checkedId, isChecked));
+                binding.liveTypeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> onLiveTypeChecked(checkedId, isChecked));
+                binding.playerTypeGroup.addOnButtonCheckedListener((group, checkedId, isChecked) -> onPlayerTypeChecked(checkedId, isChecked));
                 binding.hide.setOnCheckedChangeListener((button, checked) -> sync());
                 binding.searchable.setOnCheckedChangeListener((button, checked) -> sync());
                 binding.changeable.setOnCheckedChangeListener((button, checked) -> sync());
@@ -526,10 +547,10 @@ public class CustomCspDialog extends BaseAlertDialog {
             void bind(CustomCspSetting.Item item) {
                 this.item = item;
                 bindingItem = true;
-                autoName = isAutoName(item.getName(), item.isWebHome());
+                autoName = isAutoName(item.getName(), item.getKind());
                 binding.enabled.setAlpha(item.isEnabled() ? 1.0f : 0.65f);
                 binding.enabled.setText(item.isEnabled() ? R.string.setting_enable : R.string.setting_disable);
-                binding.typeGroup.check(item.isWebHome() ? R.id.webHomeMode : R.id.cspMode);
+                binding.typeGroup.check(item.isLive() ? R.id.liveMode : item.isWebHome() ? R.id.webHomeMode : R.id.cspMode);
                 setText(binding.name, item.getName());
                 setText(binding.key, item.getKey());
                 setText(binding.type, String.valueOf(item.getType()));
@@ -539,11 +560,21 @@ public class CustomCspDialog extends BaseAlertDialog {
                 setText(binding.jar, item.getJar());
                 setText(binding.click, item.getClick());
                 setText(binding.playUrl, item.getPlayUrl());
+                setText(binding.liveUrl, item.getUrl());
+                setText(binding.logo, item.getLogo());
+                setText(binding.epg, item.getEpg());
+                setText(binding.ua, item.getUa());
+                setText(binding.referer, item.getReferer());
+                setText(binding.origin, item.getOrigin());
+                setText(binding.timeZone, item.getTimeZone());
+                setText(binding.timeout, item.getTimeout() == null ? "" : String.valueOf(item.getTimeout()));
+                binding.liveTypeGroup.check(liveTypeId(item.getType()));
+                binding.playerTypeGroup.check(playerTypeId(item.getPlayerType()));
                 binding.hide.setChecked(item.getHide() == 1);
                 binding.searchable.setChecked(item.getSearchable() == 1);
                 binding.changeable.setChecked(item.getChangeable() == 1);
                 binding.quickSearch.setChecked(item.getQuickSearch() == 1);
-                boolean home = item.site().getKey().equals(registry.getHomeKey());
+                boolean home = !item.isLive() && item.site().getKey().equals(registry.getHomeKey());
                 binding.home.setChecked(home);
                 updateTypePanels();
                 updateValidity();
@@ -560,16 +591,30 @@ public class CustomCspDialog extends BaseAlertDialog {
 
             private void onHomeChecked(boolean checked) {
                 if (bindingItem || item == null) return;
+                if (item.isLive()) return;
                 if (checked != item.site().getKey().equals(registry.getHomeKey())) setHome(item);
             }
 
             private void onTypeChecked(int checkedId, boolean isChecked) {
                 if (bindingItem || item == null || !isChecked) return;
-                boolean oldWebHome = item.isWebHome();
-                boolean newWebHome = checkedId == R.id.webHomeMode;
-                item.setWebHome(newWebHome);
-                if (oldWebHome != newWebHome && autoName) {
-                    String name = nextName(newWebHome);
+                String oldKind = item.getKind();
+                String newKind = checkedId == R.id.liveMode ? KIND_LIVE : checkedId == R.id.webHomeMode ? KIND_WEB_HOME : KIND_CSP;
+                if (oldKind.equals(newKind)) return;
+                String oldHomeKey = item.isLive() ? "" : item.site().getKey();
+                item.setKind(newKind);
+                if (item.isLive() && registry.getHomeKey().equals(oldHomeKey)) registry.setHomeKey("");
+                if (KIND_LIVE.equals(newKind) && !KIND_LIVE.equals(oldKind)) {
+                    item.setApi("");
+                    item.setExt("");
+                    item.setJar("");
+                    item.setClick("");
+                    setText(binding.api, "");
+                    setText(binding.ext, "");
+                    setText(binding.jar, "");
+                    setText(binding.click, "");
+                }
+                if (autoName) {
+                    String name = nextName(newKind);
                     item.setName(name);
                     setText(binding.name, name);
                 }
@@ -577,24 +622,59 @@ public class CustomCspDialog extends BaseAlertDialog {
                 updateValidity();
             }
 
+            private void onLiveTypeChecked(int checkedId, boolean isChecked) {
+                if (bindingItem || item == null || !item.isLive() || !isChecked) return;
+                item.setType(liveTypeFromId(checkedId));
+                updateValidity();
+            }
+
+            private void onPlayerTypeChecked(int checkedId, boolean isChecked) {
+                if (bindingItem || item == null || !item.isLive() || !isChecked) return;
+                item.setPlayerType(playerTypeFromId(checkedId));
+                updateValidity();
+            }
+
             private void updateTypePanels() {
                 boolean webHome = item != null && item.isWebHome();
+                boolean live = item != null && item.isLive();
                 binding.webHomePanel.setVisibility(webHome ? View.VISIBLE : View.GONE);
-                binding.apiLayout.setVisibility(webHome ? View.GONE : View.VISIBLE);
+                binding.home.setVisibility(live ? View.GONE : View.VISIBLE);
+                binding.apiLayout.setVisibility(webHome || live ? View.GONE : View.VISIBLE);
                 binding.homePageLayout.setVisibility(webHome ? View.VISIBLE : View.GONE);
-                binding.cspOptionsPanel.setVisibility(webHome ? View.GONE : View.VISIBLE);
-                binding.flagsPanel.setVisibility(webHome ? View.GONE : View.VISIBLE);
-                binding.advancedPanel.setVisibility(webHome ? View.GONE : View.VISIBLE);
-                binding.playPanel.setVisibility(webHome ? View.GONE : View.VISIBLE);
+                binding.liveUrlLayout.setVisibility(live ? View.VISIBLE : View.GONE);
+                binding.liveTypePanel.setVisibility(View.GONE);
+                binding.cspOptionsPanel.setVisibility(!webHome && !live ? View.VISIBLE : View.GONE);
+                binding.liveMetaPanel.setVisibility(live ? View.VISIBLE : View.GONE);
+                binding.liveHeaderPanel.setVisibility(live ? View.VISIBLE : View.GONE);
+                binding.liveTunePanel.setVisibility(live ? View.VISIBLE : View.GONE);
+                binding.flagsPanel.setVisibility(!webHome && !live ? View.VISIBLE : View.GONE);
+                binding.advancedPanel.setVisibility(!webHome && !live ? View.VISIBLE : View.GONE);
+                binding.playPanel.setVisibility(!webHome && !live ? View.VISIBLE : View.GONE);
+                binding.playUrlLayout.setVisibility(live ? View.GONE : View.VISIBLE);
             }
 
             void sync() {
                 if (item == null || bindingItem) return;
                 String name = binding.name.getText().toString().trim();
-                autoName = autoName || isAutoName(item.getName(), item.isWebHome());
+                autoName = autoName || isAutoName(item.getName(), item.getKind());
                 if (!name.equals(item.getName())) autoName = false;
                 item.setName(name);
-                if (!item.isWebHome()) {
+                if (item.isLive()) {
+                    item.setUrl(binding.liveUrl.getText().toString().trim());
+                    item.setApi(binding.api.getText().toString().trim());
+                    item.setExt(binding.ext.getText().toString().trim());
+                    item.setJar(binding.jar.getText().toString().trim());
+                    item.setClick(binding.click.getText().toString().trim());
+                    item.setLogo(binding.logo.getText().toString().trim());
+                    item.setEpg(binding.epg.getText().toString().trim());
+                    item.setUa(binding.ua.getText().toString().trim());
+                    item.setReferer(binding.referer.getText().toString().trim());
+                    item.setOrigin(binding.origin.getText().toString().trim());
+                    item.setTimeZone(binding.timeZone.getText().toString().trim());
+                    item.setTimeout(parseOptionalInt(binding.timeout.getText().toString()));
+                    item.setHomePage("");
+                    item.setPlayUrl("");
+                } else if (!item.isWebHome()) {
                     item.setKey(binding.key.getText().toString().trim());
                     item.setType(parseInt(binding.type.getText().toString(), 3));
                     item.setApi(binding.api.getText().toString().trim());
@@ -603,7 +683,10 @@ public class CustomCspDialog extends BaseAlertDialog {
                     item.setChangeable(binding.changeable.isChecked() ? 1 : 0);
                     item.setQuickSearch(binding.quickSearch.isChecked() ? 1 : 0);
                 }
-                if (!item.isWebHome()) {
+                if (item.isLive()) {
+                    item.setHomePage("");
+                    item.setPlayUrl("");
+                } else if (!item.isWebHome()) {
                     item.setHomePage("");
                     item.setExt(binding.ext.getText().toString().trim());
                     item.setJar(binding.jar.getText().toString().trim());
@@ -617,8 +700,34 @@ public class CustomCspDialog extends BaseAlertDialog {
                 updateValidity();
             }
 
-            private boolean isAutoName(String name, boolean webHome) {
-                String prefix = webHome ? getString(R.string.setting_custom_csp_webhome) : getString(R.string.setting_custom_csp_common);
+            private int liveTypeId(int value) {
+                if (value == 1) return R.id.liveType1;
+                if (value == 2) return R.id.liveType2;
+                return R.id.liveType0;
+            }
+
+            private int playerTypeId(Integer value) {
+                if (value == null) return R.id.playerTypeUnset;
+                if (value == 0) return R.id.playerType0;
+                if (value == 1) return R.id.playerType1;
+                return R.id.playerType2;
+            }
+
+            private int liveTypeFromId(int id) {
+                if (id == R.id.liveType1) return 1;
+                if (id == R.id.liveType2) return 2;
+                return 0;
+            }
+
+            private Integer playerTypeFromId(int id) {
+                if (id == R.id.playerTypeUnset) return null;
+                if (id == R.id.playerType0) return 0;
+                if (id == R.id.playerType1) return 1;
+                return 2;
+            }
+
+            private boolean isAutoName(String name, String kind) {
+                String prefix = getKindPrefix(kind);
                 if (TextUtils.isEmpty(name)) return true;
                 if (name.equals(prefix)) return true;
                 return name.matches(java.util.regex.Pattern.quote(prefix) + " \\d+");
@@ -638,6 +747,12 @@ public class CustomCspDialog extends BaseAlertDialog {
         } catch (Exception e) {
             return fallback;
         }
+    }
+
+    private Integer parseOptionalInt(String text) {
+        String value = text == null ? "" : text.trim();
+        if (value.isEmpty()) return null;
+        return parseInt(value, 0);
     }
 
     private static class TextSync extends CustomTextListener {

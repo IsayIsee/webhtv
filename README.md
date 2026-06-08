@@ -1,15 +1,16 @@
 # WebHomeTV
 
-WebHomeTV 是基于 FongMi / CatVod 生态二次开发的 Android 影音应用，保留原有点播、直播、Spider、解析、投屏、本地 HTTP 服务等能力，并重点增强了 **WebHome 自定义首页**、**App Native SDK**、**网盘链接检测** 和 **Nostr/TMDB 推荐首页**。
+WebHomeTV 是基于 FongMi / CatVod 生态二次开发的 Android 影音应用，保留原有点播、直播、Spider、解析、投屏、本地 HTTP 服务等能力，并重点增强了 **WebHome 自定义首页**、**App Native SDK**、**网盘链接检测**、**站点健康排序** 和 **Nostr/TMDB 推荐首页**。
 
 这个项目的核心目标不是替换 CSP/Spider 体系，而是让 CSP 站点首页可以变成一个真正可开发的网页应用：开发者可以用 HTML/CSS/JavaScript 定制首页，再通过 App 暴露的 Native 能力完成搜索、播放、跨域请求、资源代理、最近观看、网盘检测和状态同步。
 
 ### 增强功能
 
 - **网盘检测**：对网盘相关能力进行可用性检测，帮助确认当前环境是否支持网盘播放或解析。
+- **站点健康排序**：自动学习站点搜索、详情和播放成功率，搜索与换源优先使用更可用的站点；站点弹窗默认保留用户配置顺序，可在弹窗内单独开启健康排序。
 - **一键同步**：支持在同一局域网设备间同步配置、站源数据、WebHome 数据、搜索记录、观看历史、收藏和应用设置。
 - **站点注入**：支持添加自定义 WebHome 或通用 CSP 站点，并可配置启用状态、插入位置、首页、搜索和换源等行为。
-- **APP代理**：支持配置代理地址和域名匹配规则，用于改善特定站点、接口或播放链路的网络访问。
+- **APP代理**：支持配置代理地址和域名匹配规则，可按当前站点自动建议代理域名，并用于改善特定站点、接口或播放链路的网络访问。
 - **调试日志**：提供本机和局域网日志查看入口，便于排查播放、代理、站源和 WebHome 相关问题。
 
 ## 效果演示
@@ -42,6 +43,7 @@ https://github.com/user-attachments/assets/7249b787-a720-406c-8365-acaa0995cb6a
 - WebHome SDK 参数和返回值
 - 透明背景实现建议
 - 网盘检测 API
+- 站点健康排序
 - PanSou 集成建议
 - Nostr 首页实现要点
 - 隐藏功能和使用技巧
@@ -86,6 +88,7 @@ WebHome 页面会注入 `window.fongmi` 和简写 `window.fm`，网页可以直�
 | `fm.play(url, title, options)` | 播放直链或 `push://` 地址 |
 | `fm.vod(siteKey, vodId, title, pic)` | 打开 App 原生 CSP 详情/播放链路 |
 | `fm.search(keyword, { direct })` | 调用 App 搜索，支持直接进入搜索结果 |
+| `fm.openLive()` / `fm.openKeep()` / `fm.openSetting()` | 打开 App 原生直播、收藏和设置入口 |
 | `fm.history()` | 读取最近观看记录 |
 | `fm.stat()` | 获取当前播放状态、进度、时长等信息 |
 | `fm.ctrl(action)` | 控制播放、暂停、停止、上一集、下一集等 |
@@ -178,7 +181,7 @@ Content-Type: application/json
 
 ### 7. PanSou 网盘搜索集成示例
 
-`demo/nostr.html` 的详情页集成了 PanSou 类搜索能力，支持：
+`demo/nostr-合并.html` 的详情页集成了 PanSou 类搜索能力，支持：
 
 - 自定义盘搜服务地址。
 - 账号密码认证。
@@ -193,7 +196,7 @@ PanSou 搜索结果可能是异步补充的，示例页会轮询合并新增结�
 
 ### 8. Nostr + TMDB 推荐首页示例
 
-`demo/nostr.html` 是一个完整的 WebHome 首页示例，不只是 SDK demo。它包含：
+`demo/nostr-合并.html` 是一个完整的 WebHome 首页示例，不只是 SDK demo。它包含：
 
 - TMDB 今日趋势、电影、剧集、动画等榜单。
 - 中国大陆内容优先的推荐分区。
@@ -210,17 +213,17 @@ PanSou 搜索结果可能是异步补充的，示例页会轮询合并新增结�
 
 - 启动 App 不再自动弹出版本更新窗口。
 - 用户仍可在设置页手动点击版本检查。
-- 设置页新增“增强功能”入口，手机端和电视端都是独立设置页，当前包含网盘检测和调试日志两个文本式开关。
+- 设置页新增“增强功能”入口，手机端和电视端都是独立设置页，集中放置网盘检测、站点健康排序、管理页面、站点注入、Proxy、一键同步和调试日志。
 - 手机端和电视端都保留原有 FongMi/CatVod 能力。
 - WebHome 能力优先面向手机端体验，同时兼顾电视遥控器焦点和返回操作。
 
 ## Demo
 
-仓库内置两个 WebHome 相关示例：
+仓库主要维护两个 WebHome 相关示例：
 
 | 文件 | 说明 |
 | --- | --- |
-| `demo/nostr.html` | 正式推荐首页示例，集成 TMDB、Nostr、PanSou、网盘检测、透明背景 |
+| `demo/nostr-合并.html` | 正式推荐首页示例，集成 TMDB、Nostr、PanSou、网盘检测、透明背景 |
 | `demo/check.html` | 网盘检测能力测试页 |
 
 配置示例：
@@ -233,13 +236,13 @@ PanSou 搜索结果可能是异步补充的，示例页会轮询合并新增结�
       "name": "WebHome 推荐",
       "type": 3,
       "api": "csp_Demo",
-      "homePage": "./nostr.html"
+      "homePage": "./nostr-合并.html"
     }
   ]
 }
 ```
 
-如果你的配置文件和 `nostr.html` 放在同一个服务器目录，`homePage` 可以直接写相对路径。
+如果你的配置文件和示例 HTML 放在同一个服务器目录，`homePage` 可以直接写相对路径。
 
 ## 构建
 

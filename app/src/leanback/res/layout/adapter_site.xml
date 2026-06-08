@@ -9,6 +9,13 @@
     android:gravity="center_vertical"
     android:orientation="horizontal">
 
+    <View
+        android:id="@+id/health"
+        android:layout_width="8dp"
+        android:layout_height="8dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/shape_site_health" />
+
     <com.google.android.material.textview.MaterialTextView
         android:id="@+id/text"
         android:layout_width="0dp"

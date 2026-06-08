@@ -10,6 +10,7 @@ import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.exception.ExtractException;
+import com.fongmi.android.tv.setting.SiteHealthStore;
 import com.fongmi.android.tv.utils.Task;
 import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -26,6 +27,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 public class SiteViewModel extends ViewModel {
 
@@ -96,23 +98,40 @@ public class SiteViewModel extends ViewModel {
     }
 
     public void searchContent(Site site, String keyword, boolean quick, String page) {
-        execute(TaskType.RESULT, result, SearchTask.create(site, keyword, quick, page));
+        long start = System.currentTimeMillis();
+        execute(TaskType.RESULT, result, SearchTask.create(site, keyword, quick, page),
+                result -> SiteHealthStore.recordSearch(site, true, result.getList().size(), System.currentTimeMillis() - start, ""),
+                error -> SiteHealthStore.recordSearch(site, false, 0, System.currentTimeMillis() - start, error.getMessage()));
     }
 
     public void searchContent(List<Site> sites, String keyword, boolean quick) {
         int epoch = stopSearch();
-        sites.forEach(site -> {
+        for (Site site : sites) {
+            if (quick && !site.isQuickSearch()) continue;
+            long start = System.currentTimeMillis();
             FluentFuture<Result> future = FluentFuture.from(Task.largeExecutor().submit(SearchTask.create(site, keyword, quick))).withTimeout(Constant.TIMEOUT_SEARCH, TimeUnit.MILLISECONDS, Task.scheduler());
             searchFuture.add(future);
             future.addCallback(Task.callback(
                     result -> {
-                        if (searchEpoch.get() == epoch) search.postValue(result);
+                        if (searchEpoch.get() != epoch) return;
+                        SiteHealthStore.recordSearch(site, true, result.getList().size(), System.currentTimeMillis() - start, "");
+                        search.postValue(result);
+                    },
+                    error -> {
+                        if (searchEpoch.get() != epoch) return;
+                        if (error instanceof CancellationException) return;
+                        SiteHealthStore.recordSearch(site, false, 0, System.currentTimeMillis() - start, error.getMessage());
+                        error.printStackTrace();
                     }
             ), MoreExecutors.directExecutor());
-        });
+        }
     }
 
     private void execute(TaskType type, MutableLiveData<Result> liveData, Callable<Result> callable) {
+        execute(type, liveData, callable, null, null);
+    }
+
+    private void execute(TaskType type, MutableLiveData<Result> liveData, Callable<Result> callable, Consumer<Result> onSuccess, Consumer<Throwable> onError) {
         AtomicInteger taskId = Objects.requireNonNull(taskIds.get(type));
         int currentId = taskId.incrementAndGet();
         ListenableFuture<?> old = futures.get(type);
@@ -121,11 +140,14 @@ public class SiteViewModel extends ViewModel {
         futures.put(type, future);
         future.addCallback(Task.callback(
                 result -> {
-                    if (taskId.get() == currentId) liveData.postValue(result);
+                    if (taskId.get() != currentId) return;
+                    if (onSuccess != null) onSuccess.accept(result);
+                    liveData.postValue(result);
                 },
                 error -> {
                     if (taskId.get() != currentId) return;
                     if (error instanceof CancellationException) return;
+                    if (onError != null) onError.accept(error);
                     if (error instanceof ExtractException) liveData.postValue(Result.error(error.getMessage()));
                     else liveData.postValue(Result.empty());
                     error.printStackTrace();

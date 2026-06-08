@@ -4,6 +4,7 @@ import android.text.TextUtils;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.Constant;
+import com.fongmi.android.tv.api.config.LiveConfig;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Backup;
 import com.fongmi.android.tv.bean.Config;
@@ -476,7 +477,7 @@ public class Manage implements Process {
         if (params.containsKey("registry")) {
             CustomCspSetting.Registry registry = CustomCspSetting.parse(params.get("registry"));
             CustomCspSetting.save(registry);
-            reloadVodConfig();
+            reloadConfigs();
         }
         CustomCspSetting.Registry registry = CustomCspSetting.load();
         CustomCspSetting.Count count = CustomCspSetting.count();
@@ -506,9 +507,13 @@ public class Manage implements Process {
         return json(object);
     }
 
-    private void reloadVodConfig() {
+    private void reloadConfigs() {
         App.post(() -> VodConfig.get().clear().config(VodConfig.get().getConfig()).load(new Callback() {
         }));
+        App.post(() -> {
+            if (LiveConfig.hasLoadedLives() || !LiveConfig.get().getConfig().isEmpty() || CustomCspSetting.hasLives()) LiveConfig.get().clear().config(LiveConfig.get().getConfig()).load(new Callback() {
+            });
+        });
     }
 
     private JsonArray array(Iterable<String> values) {

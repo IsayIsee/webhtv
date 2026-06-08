@@ -741,4 +741,9 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
         updateToolbarVisibility(visible);
     }
 
+    @Override
+    public void openSetting() {
+        SettingActivity.start(this);
+    }
+
 }

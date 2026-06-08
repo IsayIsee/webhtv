@@ -91,6 +91,7 @@ public class HomeWebBridge {
                 case "app.search" -> search(payload);
                 case "app.openLive" -> openLive();
                 case "app.openKeep" -> openKeep();
+                case "app.openSetting" -> openSetting();
                 case "app.history" -> history();
                 case "pan.check" -> checkLinks(payload);
                 case "pan.play" -> playPan(payload);
@@ -171,6 +172,11 @@ public class HomeWebBridge {
 
     private String openKeep() {
         App.post(() -> KeepActivity.start(activity));
+        return "{}";
+    }
+
+    private String openSetting() {
+        App.post(controller::openSetting);
         return "{}";
     }
 

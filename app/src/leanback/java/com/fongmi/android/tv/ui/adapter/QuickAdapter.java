@@ -8,6 +8,7 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.fongmi.android.tv.bean.Vod;
 import com.fongmi.android.tv.databinding.AdapterQuickBinding;
+import com.fongmi.android.tv.setting.SiteHealthStore;
 import com.fongmi.android.tv.utils.ResUtil;
 
 import java.util.ArrayList;
@@ -44,6 +45,14 @@ public class QuickAdapter extends RecyclerView.Adapter<QuickAdapter.ViewHolder> 
 
     public Vod get(int position) {
         return mItems.get(position);
+    }
+
+    public int getBestPosition() {
+        int position = 0;
+        for (int i = 1; i < mItems.size(); i++) {
+            if (SiteHealthStore.compareVods(mItems.get(i), mItems.get(position)) < 0) position = i;
+        }
+        return position;
     }
 
     @Override

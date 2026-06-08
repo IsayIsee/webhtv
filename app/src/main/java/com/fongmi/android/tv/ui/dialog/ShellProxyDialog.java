@@ -24,7 +24,10 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewbinding.ViewBinding;
 
+import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.api.config.VodConfig;
+import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.databinding.AdapterShellProxyRuleBinding;
 import com.fongmi.android.tv.databinding.DialogShellProxyBinding;
 import com.fongmi.android.tv.setting.ProxySetting;
@@ -32,6 +35,9 @@ import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.custom.CustomTextListener;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.ResUtil;
+import com.fongmi.android.tv.utils.Task;
+import com.github.catvod.bean.Proxy;
+import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Json;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.gson.GsonBuilder;
@@ -39,9 +45,17 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class ShellProxyDialog extends BaseAlertDialog {
 
@@ -52,6 +66,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
     private boolean proxyEnabled;
     private boolean textMode = true;
     private boolean saved;
+    private boolean testing;
 
     public static void show(Fragment fragment) {
         show(fragment, null);
@@ -166,6 +181,8 @@ public class ShellProxyDialog extends BaseAlertDialog {
             syncTextFromRules();
             binding.ruleRecycler.scrollToPosition(adapter.getItemCount() - 1);
         });
+        binding.suggestRule.setOnClickListener(view -> showSuggestSiteDialog());
+        binding.testRule.setOnClickListener(view -> testProxy());
     }
 
     @Override
@@ -261,7 +278,17 @@ public class ShellProxyDialog extends BaseAlertDialog {
     }
 
     private void attachTouchHelper() {
-        ItemTouchHelper helper = new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP | ItemTouchHelper.DOWN, ItemTouchHelper.START | ItemTouchHelper.END) {
+        ItemTouchHelper helper = new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP | ItemTouchHelper.DOWN, 0) {
+            @Override
+            public boolean isLongPressDragEnabled() {
+                return false;
+            }
+
+            @Override
+            public boolean isItemViewSwipeEnabled() {
+                return false;
+            }
+
             @Override
             public boolean onMove(@NonNull RecyclerView recyclerView, @NonNull RecyclerView.ViewHolder source, @NonNull RecyclerView.ViewHolder target) {
                 adapter.move(source.getBindingAdapterPosition(), target.getBindingAdapterPosition());
@@ -271,12 +298,138 @@ public class ShellProxyDialog extends BaseAlertDialog {
 
             @Override
             public void onSwiped(@NonNull RecyclerView.ViewHolder viewHolder, int direction) {
-                adapter.remove(viewHolder.getBindingAdapterPosition());
-                syncTextFromRules();
             }
         });
         helper.attachToRecyclerView(binding.ruleRecycler);
         adapter.setDragListener(holder -> helper.startDrag(holder));
+    }
+
+    private void showSuggestSiteDialog() {
+        List<Site> sites = VodConfig.get().getSites().stream().filter(site -> !site.isEmpty()).toList();
+        if (sites.isEmpty()) {
+            Notify.show(R.string.setting_proxy_no_site);
+            return;
+        }
+        String[] names = new String[sites.size()];
+        for (int i = 0; i < sites.size(); i++) names[i] = getSiteName(sites.get(i));
+        new MaterialAlertDialogBuilder(requireActivity(), R.style.ThemeOverlay_WebHTV_LightDialog).setTitle(R.string.setting_proxy_select_site).setItems(names, (dialog, which) -> suggestRules(sites.get(which))).show();
+    }
+
+    private String getSiteName(Site site) {
+        return TextUtils.isEmpty(site.getName()) ? site.getKey() : site.getName();
+    }
+
+    private void suggestRules(Site site) {
+        String url = getDefaultUrl();
+        if (!ProxySetting.isValid(url)) {
+            Notify.show(R.string.setting_proxy_invalid);
+            return;
+        }
+        ProxySetting.Suggestion suggestion = ProxySetting.suggest(site);
+        if (suggestion.isEmpty()) {
+            Notify.show(R.string.setting_proxy_no_suggest);
+            return;
+        }
+        syncTextFromRulesIfNeeded();
+        List<Rule> items = new ArrayList<>(adapter.getItems());
+        Set<String> hosts = getHosts(items);
+        int added = 0;
+        for (String host : suggestion.hosts()) {
+            String key = normalizeHost(host);
+            if (TextUtils.isEmpty(key) || hosts.contains(key)) continue;
+            items.add(new Rule(host, url));
+            hosts.add(key);
+            added++;
+        }
+        adapter.setItems(items);
+        proxyEnabled = true;
+        updateProxyEnabledText();
+        syncTextFromRules();
+        Notify.show(ResUtil.getString(R.string.setting_proxy_suggest_added, added, hosts.size()));
+    }
+
+    private Set<String> getHosts(List<Rule> items) {
+        Set<String> hosts = new LinkedHashSet<>();
+        for (Rule item : items) {
+            if (item.hosts == null) continue;
+            for (String host : item.hosts.split(",")) {
+                String value = normalizeHost(host);
+                if (!TextUtils.isEmpty(value)) hosts.add(value);
+            }
+        }
+        return hosts;
+    }
+
+    private String normalizeHost(String host) {
+        return host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void testProxy() {
+        if (testing) return;
+        String url = getDefaultUrl();
+        String rules = getRuleText();
+        if (!ProxySetting.isValidRules(rules, url)) {
+            Notify.show(R.string.setting_proxy_invalid);
+            return;
+        }
+        List<Proxy> items = ProxySetting.getRules(rules, url);
+        String host = ProxySetting.firstTestHost(items);
+        if (TextUtils.isEmpty(host)) {
+            Notify.show(R.string.setting_proxy_test_no_rule);
+            return;
+        }
+        testing = true;
+        binding.testRule.setEnabled(false);
+        Notify.show(R.string.setting_proxy_test_running);
+        Task.execute(() -> {
+            TestResult result;
+            try {
+                result = runProxyTest(items, host);
+            } catch (Throwable e) {
+                result = new TestResult(false, getError(e));
+            }
+            TestResult output = result;
+            App.post(() -> {
+                testing = false;
+                binding.testRule.setEnabled(true);
+                Notify.show(ResUtil.getString(output.success ? R.string.setting_proxy_test_success : R.string.setting_proxy_test_failed, output.message));
+            });
+        });
+    }
+
+    private TestResult runProxyTest(List<Proxy> rules, String host) {
+        Exception error = null;
+        try {
+            OkHttp.selector().remove("app");
+            OkHttp.selector().addAll(rules);
+            if (!isRouted("https://" + host + "/") && !isRouted("http://" + host + "/")) return new TestResult(false, host);
+            okhttp3.OkHttpClient client = OkHttp.client(TimeUnit.SECONDS.toMillis(6));
+            for (String scheme : List.of("https", "http")) {
+                String url = scheme + "://" + host + "/";
+                try (Response response = client.newCall(new Request.Builder().url(url).header("Range", "bytes=0-0").build()).execute()) {
+                    return new TestResult(true, host + " " + response.code());
+                } catch (Exception e) {
+                    error = e;
+                }
+            }
+            return new TestResult(false, host + " " + getError(error));
+        } finally {
+            ProxySetting.apply();
+        }
+    }
+
+    private boolean isRouted(String url) {
+        try {
+            for (java.net.Proxy proxy : OkHttp.selector().select(URI.create(url))) {
+                if (proxy.type() != java.net.Proxy.Type.DIRECT) return true;
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    private String getError(Throwable error) {
+        return error == null || TextUtils.isEmpty(error.getMessage()) ? "" : error.getMessage();
     }
 
     private void onPositive() {
@@ -298,6 +451,9 @@ public class ShellProxyDialog extends BaseAlertDialog {
         if (callback != null) callback.run();
         saved = true;
         return true;
+    }
+
+    private record TestResult(boolean success, String message) {
     }
 
     private static class Rule {
@@ -431,6 +587,10 @@ public class ShellProxyDialog extends BaseAlertDialog {
             Rule item = items.get(position);
             holder.binding.hosts.setText(item.hosts);
             holder.binding.url.setText(item.url);
+            holder.binding.delete.setOnClickListener(view -> {
+                adapter.remove(holder.getBindingAdapterPosition());
+                syncTextFromRules();
+            });
             holder.binding.drag.setOnTouchListener((view, event) -> {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN && dragListener != null) dragListener.onStartDrag(holder);
                 return false;

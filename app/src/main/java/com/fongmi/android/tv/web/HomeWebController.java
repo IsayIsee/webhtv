@@ -115,6 +115,10 @@ public class HomeWebController {
         listener.setToolbar(visible);
     }
 
+    public void openSetting() {
+        listener.openSetting();
+    }
+
     public void onResume() {
         webView.onResume();
         webView.resumeTimers();
@@ -374,6 +378,7 @@ public class HomeWebController {
                       search:(keyword,options)=>invoke('app.search',Object.assign({},options||{},{keyword})),
                       openLive:()=>invoke('app.openLive',{}),
                       openKeep:()=>invoke('app.openKeep',{}),
+                      openSetting:()=>invoke('app.openSetting',{}),
                       history:()=>invoke('app.history',{})
                     },
                     pan,
@@ -396,6 +401,7 @@ public class HomeWebController {
                     search:window.fongmi.app.search,
                     openLive:window.fongmi.app.openLive,
                     openKeep:window.fongmi.app.openKeep,
+                    openSetting:window.fongmi.app.openSetting,
                     history:window.fongmi.app.history,
                     pan,
                     check:window.fongmi.pan.check,
@@ -421,6 +427,9 @@ public class HomeWebController {
         void onWebError();
 
         default void setToolbar(boolean visible) {
+        }
+
+        default void openSetting() {
         }
     }
 }

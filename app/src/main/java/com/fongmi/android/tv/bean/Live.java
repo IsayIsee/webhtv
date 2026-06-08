@@ -42,6 +42,14 @@ public class Live {
     private String url;
 
     @Ignore
+    @SerializedName("type")
+    private Integer type;
+
+    @Ignore
+    @SerializedName("playerType")
+    private Integer playerType;
+
+    @Ignore
     @SerializedName("api")
     private String api;
 
@@ -160,6 +168,22 @@ public class Live {
 
     public void setUrl(String url) {
         this.url = url;
+    }
+
+    public int getType() {
+        return type == null ? 0 : type;
+    }
+
+    public void setType(Integer type) {
+        this.type = type;
+    }
+
+    public int getPlayerType() {
+        return playerType == null ? 0 : playerType;
+    }
+
+    public void setPlayerType(Integer playerType) {
+        this.playerType = playerType;
     }
 
     public String getApi() {

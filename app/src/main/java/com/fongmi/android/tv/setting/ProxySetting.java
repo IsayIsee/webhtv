@@ -3,18 +3,31 @@ package com.fongmi.android.tv.setting;
 import android.net.Uri;
 import android.text.TextUtils;
 
+import com.fongmi.android.tv.bean.Site;
+import com.github.catvod.crawler.DebugLogStore;
 import com.github.catvod.bean.Proxy;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Path;
 import com.github.catvod.utils.Json;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ProxySetting {
 
     private static final String NAME = "app";
+    private static final int MAX_SUGGESTION_URLS = 200;
+    private static final Pattern URL_PATTERN = Pattern.compile("(?i)(?:https?:)?//[^\\s\"'<>\\\\]+");
 
     public static void apply() {
         OkHttp.selector().remove(NAME);
@@ -38,10 +51,126 @@ public class ProxySetting {
         return legacy();
     }
 
+    public static List<Proxy> getRules(String rules, String defaultUrl) {
+        String text = rules == null ? "" : rules.trim();
+        String url = cleanUrl(defaultUrl);
+        return TextUtils.isEmpty(text) ? List.of() : parse(text, url);
+    }
+
+    public static Suggestion suggest(Site site) {
+        LinkedHashSet<String> urls = new LinkedHashSet<>();
+        LinkedHashSet<String> hosts = new LinkedHashSet<>();
+        collectSiteUrls(site, urls);
+        collectDebugUrls(urls);
+        for (String url : urls) {
+            String host = host(url);
+            if (isUsefulHost(host)) hosts.add(host);
+        }
+        return new Suggestion(new ArrayList<>(hosts), new ArrayList<>(urls));
+    }
+
+    public static String firstTestHost(List<Proxy> rules) {
+        for (Proxy proxy : rules) {
+            for (String host : proxy.getHosts()) {
+                String value = cleanRuleHost(host);
+                if (isUsefulHost(value)) return value;
+            }
+        }
+        return "";
+    }
+
     private static List<Proxy> legacy() {
         String url = cleanUrl(Setting.getShellProxyUrl());
         if (TextUtils.isEmpty(url) || !isValid(url)) return List.of();
         return Proxy.arrayFrom(legacy(url));
+    }
+
+    private static void collectSiteUrls(Site site, Set<String> urls) {
+        if (site == null || site.isEmpty()) return;
+        addUrls(site.getApi(), urls);
+        addUrls(site.getExt(), urls);
+        addUrls(site.getJar(), urls);
+        addUrls(site.getClick(), urls);
+        addUrls(site.getPlayUrl(), urls);
+        addUrls(site.getHomePage(), urls);
+        addLocalFileUrls(site.getExt(), urls);
+        addLocalFileUrls(site.getHomePage(), urls);
+        for (String category : site.getCategories()) addUrls(category, urls);
+        for (Map.Entry<String, String> entry : site.getHeader().entrySet()) {
+            addUrls(entry.getKey(), urls);
+            addUrls(entry.getValue(), urls);
+        }
+    }
+
+    private static void collectDebugUrls(Set<String> urls) {
+        for (String line : DebugLogStore.snapshot()) addUrls(line, urls);
+    }
+
+    private static void addLocalFileUrls(String source, Set<String> urls) {
+        String path = localPath(source);
+        if (TextUtils.isEmpty(path)) return;
+        File file = Path.local(path);
+        if (file.isDirectory()) file = new File(file, "index.html");
+        if (!file.isFile()) return;
+        addUrls(Path.read(file), urls);
+    }
+
+    private static String localPath(String source) {
+        String value = source == null ? "" : source.trim();
+        if (TextUtils.isEmpty(value)) return "";
+        if (value.startsWith("file://")) return value.substring("file://".length());
+        Uri uri = Uri.parse(value);
+        String path = uri.getPath();
+        if (!isLocalHost(uri.getHost()) || path == null || !path.startsWith("/file/")) return "";
+        return path.substring("/file/".length());
+    }
+
+    private static void addUrls(String text, Set<String> urls) {
+        if (TextUtils.isEmpty(text) || urls.size() >= MAX_SUGGESTION_URLS) return;
+        Matcher matcher = URL_PATTERN.matcher(text.replace("\\/", "/"));
+        while (matcher.find() && urls.size() < MAX_SUGGESTION_URLS) {
+            String url = cleanCandidateUrl(matcher.group());
+            if (url.startsWith("//")) url = "https:" + url;
+            if (url.startsWith("http://") || url.startsWith("https://")) urls.add(url);
+        }
+    }
+
+    private static String cleanCandidateUrl(String url) {
+        String value = url == null ? "" : url.trim().replace("&amp;", "&");
+        while (!value.isEmpty() && ".,;:)]}'\"".indexOf(value.charAt(value.length() - 1)) >= 0) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
+    }
+
+    private static String host(String url) {
+        try {
+            return normalizeHost(Uri.parse(url).getHost());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static String cleanRuleHost(String host) {
+        String value = normalizeHost(host);
+        if (value.contains("*") || value.contains("^") || value.contains("$") || value.contains("|") || value.contains("[") || value.contains("(") || value.contains("\\")) return "";
+        return value;
+    }
+
+    private static String normalizeHost(String host) {
+        String value = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+        while (value.endsWith(".")) value = value.substring(0, value.length() - 1);
+        return value;
+    }
+
+    private static boolean isUsefulHost(String host) {
+        if (TextUtils.isEmpty(host) || isLocalHost(host)) return false;
+        return host.contains(".");
+    }
+
+    private static boolean isLocalHost(String host) {
+        String value = normalizeHost(host);
+        return "localhost".equals(value) || "127.0.0.1".equals(value) || "0.0.0.0".equals(value) || "::1".equals(value);
     }
 
     private static List<Proxy> parse(String rules, String defaultUrl) {
@@ -181,6 +310,13 @@ public class ProxySetting {
 
     public static int count() {
         return getRules().size();
+    }
+
+    public record Suggestion(List<String> hosts, List<String> urls) {
+
+        public boolean isEmpty() {
+            return hosts.isEmpty();
+        }
     }
 
 }
