@@ -835,7 +835,7 @@
       border: 1px solid rgba(255, 255, 255, .18);
       color: rgba(255, 255, 255, .94);
       font-size: 12px;
-      font-weight: 800;
+      font-weight: 600;
       line-height: 1;
       backdrop-filter: blur(8px);
     }
@@ -852,8 +852,8 @@
       background: rgba(220, 38, 38, .72);
       border: 1px solid rgba(255, 255, 255, .2);
       color: #fff;
-      font-size: 10px;
-      font-weight: 800;
+      font-size: 11px;
+      font-weight: 500;
       line-height: 1;
       backdrop-filter: blur(8px);
       padding: 0 4px;
@@ -5376,7 +5376,8 @@
       const parsed = new URL(value);
       if (parsed.hostname === "images.tmdb.org") return parsed.pathname.replace(/^\/t\/p\/[^/]+/, "") || parsed.pathname;
     } catch (e) {}
-    return value;
+    // return value;
+    return ""; // 非 TMDB 来源的海报一律丢弃
   }
 
   function hotPosterUrl(path) {
@@ -5651,7 +5652,12 @@
 
   function buildHotItemsFromIndex() {
     return Array.from(state.hot.media.values())
-      .filter((item) => !item.r)
+      .filter((item) => {
+        if (item.r) return false;  // 限制级
+        // 无有效 tmdbId 的条目无法验证分级，默认不显示
+        if (!item.tid || item.tid === "" || item.tid === 0) return false;
+        return true;
+      })
       .map((item) => {
         const pic = hotPosterUrl(item.p || "");
         const people = Number(item.c || 0);
@@ -5761,8 +5767,8 @@
   // 与 wire 格式完全解耦，纯本地行为
 
   const RESTRICTED_RATINGS = new Map([
-    ["HK", new Set(["III"])],
-    ["US", new Set(["NC-17", "X"])],
+    ["HK", new Set(["III", "IIB"])],
+    ["US", new Set(["R", "NC-17", "X"])],
     ["GB", new Set(["18"])],
     ["DE", new Set(["18"])],
   ]);
