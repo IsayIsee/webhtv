@@ -824,7 +824,7 @@
 
     .rating-badge {
       position: absolute;
-      right: 7px;
+      left: 7px;
       top: 7px;
       min-width: 34px;
       height: 24px;
@@ -838,6 +838,25 @@
       font-weight: 800;
       line-height: 1;
       backdrop-filter: blur(8px);
+    }
+
+    .cr-badge {
+      position: absolute;
+      right: 7px;
+      top: 7px;
+      min-width: 24px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 4px;
+      background: rgba(220, 38, 38, .72);
+      border: 1px solid rgba(255, 255, 255, .2);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 1;
+      backdrop-filter: blur(8px);
+      padding: 0 4px;
     }
 
     .card-meta {
@@ -2102,7 +2121,8 @@
     }
 
     #detailSheet.detail-large .landscape-card .card-meta,
-    #detailSheet.detail-large .landscape-card .rating-badge {
+    #detailSheet.detail-large .landscape-card .rating-badge,
+    #detailSheet.detail-large .landscape-card .cr-badge {
       display: none;
     }
 
@@ -3708,6 +3728,7 @@
     html.tv-mode .pan-result-item,
     html.tv-mode .person-info,
     html.tv-mode .rating-badge,
+    html.tv-mode .cr-badge,
     html.tv-mode .recent-badge,
     html.tv-mode .live-entry-card {
       backdrop-filter: none;
@@ -5621,7 +5642,9 @@
       p: media && hotCompactPoster(media.p) || oldMedia && oldMedia.p || "",
       c: Math.max(0, Number(oldMedia && oldMedia.c || 0) + Number(countDelta || 0)),
       l: Math.max(Number(oldMedia && oldMedia.l || 0), Number(latestAt || 0)),
-      r: oldMedia && oldMedia.r || media && media.r || undefined
+      r: oldMedia && oldMedia.r || media && media.r || undefined,
+      cr: oldMedia && oldMedia.cr || media && media.cr || undefined,
+      v: oldMedia && oldMedia.v || media && media.v || undefined
     };
     return value;
   }
@@ -5644,6 +5667,8 @@
           people,
           count: people,
           latest: item.l || 0,
+          cr: item.cr || "",
+          voteAverage: Number(item.v) || 0,
           lastEventAt: item.l || 0,
           remark: ""
         };
@@ -5751,23 +5776,36 @@
         10
       );
       const results = data.results || [];
+      let displayCert = "";
       for (const entry of results) {
         const country = entry.iso_3166_1;
-        const restricted = RESTRICTED_RATINGS.get(country);
-        if (!restricted) continue;
         const cert = mediaType === "tv"
           ? entry.rating
           : (entry.release_dates?.[0]?.certification ?? "");
-        if (cert && restricted.has(cert)) {
+        if (!cert) continue;
+        if (!displayCert && (country === "US" || country === "GB" || country === "HK" || country === "DE")) {
+          displayCert = cert;
+        }
+        const restricted = RESTRICTED_RATINGS.get(country);
+        if (restricted && restricted.has(cert)) {
           console.log(`${label} → [ContentRating] 限制级 ${mediaType}:${tmdbId} → ${country}:${cert}`);
-          return cert;
+          return { restricted: cert, display: cert, rating: 0 };
         }
       }
-      console.log(`${label} → [ContentRating] 正常 ${mediaType}:${tmdbId}`);
-      return "";
+      // 顺便拉评分（复用一次额外请求不如合并到 detail 接口）
+      let vote = 0;
+      try {
+        const detail = await requestJson(
+          `${window.WEBHOME_CONFIG.tmdb.apiBase}/${mediaType}/${tmdbId}?api_key=${tmdbApiKey()}`,
+          8
+        );
+        vote = Number(detail.vote_average || 0);
+      } catch (_) {}
+      console.log(`${label} → [ContentRating] ${displayCert || "无分级"} ${vote ? "★" + vote.toFixed(1) : ""} ${mediaType}:${tmdbId}`);
+      return { restricted: "", display: displayCert, rating: vote };
     } catch (e) {
       console.warn(`${label} → [ContentRating] 查询失败 ${mediaType}:${tmdbId}`, e.message);
-      return "";
+      return { restricted: "", display: "", rating: 0 };
     }
   }
 
@@ -5791,6 +5829,8 @@
       else if (rating === "") normal++;
       else failed++;
       item.r = rating || "";
+      item.cr = result.display || "";
+      if (result.rating) item.v = result.rating;
       state.hot.media.set(item.m, item);
     }
     console.log(`[ContentRating] 完成：限制级 ${restricted} 条 / 正常 ${normal} 条 / 失败 ${failed} 条`);
@@ -7514,6 +7554,8 @@
     button.innerHTML = recent ? `
       <img class="poster" alt="" ${imageAttrs(poster, imageOpt)}>
       ${item.badge ? `<span class="recent-badge">${escapeHtml(item.badge)}</span>` : ""}
+      ${rating ? `<span class="rating-badge">${escapeHtml(rating)}</span>` : ""}
+      ${item.cr ? `<span class="cr-badge">${escapeHtml(item.cr)}</span>` : ""}
       <div class="card-body">
         <div class="card-title">${escapeHtml(item.title)}</div>
         <div class="card-meta">${escapeHtml(item.remark)}</div>
@@ -7525,6 +7567,7 @@
         ${people > 0 ? `<span class="card-people">${escapeHtml(people)}人</span>` : ""}
       </div>
       ${rating ? `<span class="rating-badge">${escapeHtml(rating)}</span>` : ""}
+      ${item.cr ? `<span class="cr-badge">${escapeHtml(item.cr)}</span>` : ""}
       <div class="card-body">
         <div class="card-title">${escapeHtml(item.title)}</div>
         <div class="card-meta">${escapeHtml(item.remark)}</div>
