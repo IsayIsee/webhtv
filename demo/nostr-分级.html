@@ -5176,8 +5176,12 @@
       state.hot.ready = true;
     }
     useNostrRecommendationsIfReady();
-    scheduleRender();
-    ensureContentRatings().catch(() => {}); // 分级过滤
+    scheduleRender(); // 先用本地缓存数据先渲染，视觉反馈快
+    // 异步补查缺失分级，完成后再重新 build + render，使过滤生效
+    ensureContentRatings().catch(() => {}).finally(() => {
+      state.hot.items = buildHotItemsFromIndex();
+      scheduleRender();
+    });
   }
 
   async function hotIngestEvent(event) {
@@ -5298,13 +5302,24 @@
     const title = String(item.title || "").trim().slice(0, HOT_TITLE_LIMIT);
     const poster = hotCompactPoster(item.poster || "").slice(0, HOT_POSTER_LIMIT);
     if (!title || !poster) return null;
-    // v6: 返回 8 元素数组（兼容 v5 读取时自动忽略多余元素）
+    // 返回 8 元素数组（兼容旧数据读取时自动忽略多余元素）
     return [item.typeCode, item.tmdbId, item.day, title, poster, item.vote, item.origin, item.certs];
   }
 
   function hotNormalizeStoredItem(raw, fallbackDay, keepExpired) {
     const item = hotNormalizeVectorParts(raw, fallbackDay, keepExpired);
-    return item ? [item.typeCode, item.tmdbId, item.day] : null;
+    if (!item) return null;
+    // 保留全部 8 个字段（与 wire 格式对齐），防止重启后 vote/origin/certs 丢失被 relay 新数据覆盖
+    return [
+      item.typeCode,
+      item.tmdbId,
+      item.day,
+      item.title  || "",
+      item.poster || "",
+      item.vote   || 0,
+      item.origin || "",
+      item.certs  || ""
+    ];
   }
 
   function hotNormalizeVectorParts(raw, fallbackDay, keepExpired) {
@@ -5322,7 +5337,7 @@
       day = Number(raw[2] || fallbackDay);
       title = String(raw[3] || "");
       poster = String(raw[4] || "");
-      // v6 扩展字段（兼容 v5 的 5 元素数组）
+      // 扩展字段
       if (raw.length > 5) vote = Number(raw[5]) || 0;
       if (raw.length > 6) origin = String(raw[6] || "");
       if (raw.length > 7) certs = String(raw[7] || "");
@@ -5433,7 +5448,7 @@
       mt: mediaType,
       tid: tmdbId,
       p: hotCompactPoster(item && item[4] || ""),
-      // v6: 从 wire item 提取评分、产地、分级编码
+      // 从 wire item 提取评分、产地、分级编码
       v: item && item[5] ? Number(item[5]) || 0 : 0,
       origin: item && item[6] ? String(item[6] || "") : "",
       certs: item && item[7] ? String(item[7] || "") : ""
@@ -5629,13 +5644,16 @@
   function hotRefreshItems() {
     clearTimeout(state.hot.refreshTimer);
     state.hot.refreshTimer = 0;
-    state.hot.items = buildHotItemsFromIndex();
     useNostrRecommendationsIfReady();
-    if (isNostrRefreshActive()) {
-      updateNostrRefreshProgress({ indexed: state.hot.items.length });
-      maybeFinishNostrRefresh();
-    }
-    ensureContentRatings().catch(() => {}); // 分级过滤
+    // 先补齐分级数据，完成后再一次性 build + render，避免挂起对象的未过滤数据先被渲染
+    ensureContentRatings().catch(() => {}).finally(() => {
+      state.hot.items = buildHotItemsFromIndex();
+      if (isNostrRefreshActive()) {
+        updateNostrRefreshProgress({ indexed: state.hot.items.length });
+        maybeFinishNostrRefresh();
+      }
+      scheduleRender();
+    });
   }
 
   function scheduleHotRefresh(delay) {
@@ -5644,12 +5662,13 @@
     const wait = Number.isFinite(delay) ? delay : busy ? HOT_REFRESH_BACKFILL_MS : HOT_REFRESH_IDLE_MS;
     state.hot.refreshTimer = setTimeout(() => {
       state.hot.refreshTimer = 0;
-      hotRefreshItems();
-      scheduleRender();
+      hotRefreshItems(); // 内部已包含 scheduleRender
     }, wait);
   }
 
   function mergeHotMedia(oldMedia, media, latestAt, countDelta) {
+    // 判断本地是否已有 TMDB 查询结果（rt > 0 表示本地主动查过）
+    const hasLocalRating = !!(oldMedia && Number(oldMedia.rt || 0) > 0);
     const value = {
       m: media && media.m || oldMedia && oldMedia.m || "",
       t: media && media.t || oldMedia && oldMedia.t || "",
@@ -5659,42 +5678,62 @@
       c: Math.max(0, Number(oldMedia && oldMedia.c || 0) + Number(countDelta || 0)),
       l: Math.max(Number(oldMedia && oldMedia.l || 0), Number(latestAt || 0)),
       cr: oldMedia && oldMedia.cr || media && media.cr || undefined,
-      v: oldMedia && oldMedia.v || media && media.v || undefined,
-      // v6: 合并分级编码和产地（优先保留已有数据，新数据补充）
-      certs: oldMedia && oldMedia.certs && oldMedia.certs !== "------"
+      // 本地查过（rt > 0）则用本地值，否则用 relay 带来的值（可能也为空，等 ensureContentRatings 补）
+      v: hasLocalRating
+        ? (oldMedia.v || media && media.v || undefined)
+        : (media && media.v || oldMedia && oldMedia.v || undefined),
+      // certs：本地有效值优先；relay 有效值次之；最后兜底空串
+      certs: (oldMedia && oldMedia.certs && oldMedia.certs !== "------")
         ? oldMedia.certs
-        : (media && media.certs && media.certs !== "------" ? media.certs : oldMedia && oldMedia.certs || ""),
-      origin: oldMedia && oldMedia.origin || media && media.origin || "",
-      rt: oldMedia && oldMedia.rt || 0  // 保留查询时间戳
+        : (media && media.certs && media.certs !== "------" ? media.certs : ""),
+      // origin：本地查过则用本地值，否则用 relay 值
+      origin: hasLocalRating
+        ? (oldMedia.origin || media && media.origin || "")
+        : (media && media.origin || oldMedia && oldMedia.origin || ""),
+      rt: oldMedia && Number(oldMedia.rt || 0) || 0  // 保留本地查询时间戳，relay 不会带此字段
     };
     return value;
   }
 
   function buildHotItemsFromIndex() {
-    const myMaxLevel = certMyMaxLevel();
-    return Array.from(state.hot.media.values())
+    const blockedRatings = getBlockedRatings();
+    const filterStats = { noTid: 0, blacklist: [], ratingBlocked: [] };
+    const items = Array.from(state.hot.media.values())
       .filter((item) => {
         // 无有效 tmdbId 的条目无法验证分级，默认不显示
-        if (!item.tid || item.tid === "" || item.tid === 0) return false;
-        // 条件1: 产地黑名单（与分级无关，JP/KR 直接过滤）
-        if (item.origin && BLACKLIST_COUNTRIES.has(item.origin)) return false;
-        // 条件2: 分级过滤（用产地分级级别 vs 全局 maxLevel）
+        if (!item.tid || item.tid === "" || item.tid === 0) {
+          filterStats.noTid++;
+          return false;
+        }
+        // 产地黑名单（与分级无关）
+        if (item.origin && BLACKLIST_COUNTRIES.has(item.origin)) {
+          filterStats.blacklist.push(item.t + "(" + item.origin + ")");
+          return false;
+        }
+        // 分级过滤（按地区+分级名称）
         if (item.certs && item.certs !== "------") {
-          let originRegion = item.origin || "US";  // 默认 US
-          if (!CERT_REGIONS.includes(originRegion)) originRegion = "US";
-          const level = getCertLevel(item.certs, originRegion);
-          if (level >= 0 && level > myMaxLevel) return false;
-          // 产地分级未查到时放行
+          const originRegion = item.origin || "US";
+          const certInfo = getCertInfo(item.certs, originRegion);
+          if (certInfo.level >= 0) {
+            const actualRegion = CERT_REGIONS[certInfo.regionIdx];
+            const ratingLabel = getCertLabel(item.certs, originRegion);
+            const blocked = blockedRatings[actualRegion];
+            if (blocked && blocked.has(ratingLabel)) {
+              filterStats.ratingBlocked.push(item.t + "(" + (item.origin || "US") + "/" + ratingLabel + ")");
+              return false;
+            }
+          }
         }
         return true;
       })
       .map((item) => {
         const pic = hotPosterUrl(item.p || "");
         const people = Number(item.c || 0);
-        // v6: cr badge 完全基于产地分级解析
-        // 如果产地不在 CERT_REGIONS 中，fallback 到 US
+        // cr badge 分级解析
+        // 如果地区不在 CERT_REGIONS 中，fallback 到 US
         let originRegion = item.origin || "US";
         if (!CERT_REGIONS.includes(originRegion)) originRegion = "US";
+        // 获取海报分级显示数据
         const crDisplay = (item.certs && item.certs !== "------") ? getCertLabel(item.certs, originRegion) : "";
         return {
           id: item.m,
@@ -5717,6 +5756,18 @@
       .filter((item) => item && item.people > 0 && hasPoster(item))
       .sort((a, b) => b.people - a.people || b.lastEventAt - a.lastEventAt)
       .slice(0, HOT_RENDER_LIMIT);
+    // 汇总输出过滤情况，只在有过滤时才打印（每次 buildHotItems 调用一条）
+    if (filterStats.noTid > 0 || filterStats.blacklist.length || filterStats.ratingBlocked.length) {
+      const lines = ["[filter]"];
+      if (filterStats.noTid > 0)
+        lines.push("  无tmdbId  ×" + filterStats.noTid);
+      if (filterStats.blacklist.length)
+        lines.push("  地区黑名单 ×" + filterStats.blacklist.length + "\n    " + filterStats.blacklist.join("\n    "));
+      if (filterStats.ratingBlocked.length)
+        lines.push("  分级屏蔽   ×" + filterStats.ratingBlocked.length + "\n    " + filterStats.ratingBlocked.join("\n    "));
+      console.log(lines.join("\n"));
+    }
+    return items;
   }
 
   async function hotClearIndex(onlyMine) {
@@ -5748,23 +5799,48 @@
     const db = await openHotDb();
     const localKey = state.identity ? hotUserKey(state.identity.pubkey) : "";
     const localVector = localKey ? await hotGetUserVector(localKey, db) : null;
+
+    // 收集本地已查询过 TMDB 的 media（rt > 0），刷新后保留，不被 relay 数据覆盖
+    const preservedMedia = new Map();
+    state.hot.media.forEach((media, key) => {
+      if (Number(media.rt || 0) > 0) preservedMedia.set(key, Object.assign({}, media));
+    });
+
+    // 收集本地用户自己的观看推荐
     const localMedia = [];
     hotActiveVectorItems(localVector).forEach((item) => {
       const mediaKey = hotVectorItemMediaKey(item);
       const media = mediaKey ? state.hot.media.get(mediaKey) : null;
       if (media && media.m) localMedia.push(Object.assign({}, media, { c: 1 }));
     });
-    await hotClearIndex(false);
+
+    await hotClearIndex(false); // 清空 relay 接收的计数和 vector
+
+    // 恢复本地用户观看记录
     if (localVector && localVector.u) state.hot.users.set(localVector.u, localVector);
     localMedia.forEach((media) => state.hot.media.set(media.m, media));
-    if (db && (localVector && localVector.u || localMedia.length)) {
+    // 恢复 preservedMedia 到内存，这样 relay 新数据推进时 mergeHotMedia 能拿到 oldMedia，防止合并时 rt/certs 丢失
+    preservedMedia.forEach((preserved, key) => {
+      if (!state.hot.media.has(key)) state.hot.media.set(key, preserved);
+    });
+
+    // 将 preservedMedia 直接写回 DB（不依赖 state.hot.media，建刷时 relay 数据还未到达）
+    // relay 后续推数据时， mergeHotMedia 会用 DB 里的 rt/certs 作为 oldMedia 合并，保持数据不丢失
+    if (db && preservedMedia.size > 0) {
       const tx = db.transaction(["media", "userVector"], "readwrite");
       const mediaStore = tx.objectStore("media");
       const vectorStore = tx.objectStore("userVector");
       if (localVector && localVector.u) vectorStore.put(localVector);
       localMedia.forEach((media) => mediaStore.put(media));
+      // 直接写入备份数据，不等 relay 数据到达
+      preservedMedia.forEach((preserved) => mediaStore.put(preserved));
+      await idbDone(tx).catch(() => {});
+    } else if (db) {
+      const tx = db.transaction(["userVector"], "readwrite");
+      if (localVector && localVector.u) tx.objectStore("userVector").put(localVector);
       await idbDone(tx).catch(() => {});
     }
+    console.log("[refresh] 回写 DB: TMDB=" + preservedMedia.size + " 条 localMedia=" + localMedia.length + " 条");
     state.hot.items = buildHotItemsFromIndex();
   }
 
@@ -5792,56 +5868,77 @@
     if (!options || options.refresh !== false) scheduleHotRefresh();
   }
 
-  // ═══════════════════════════════════════════════════════
+  // ════════════════════════分级编码部分═══════════════════════════
   // 6 位分级编码 (certs)
-  // ═══════════════════════════════════════════════════════
-  // 每位 0-5 代表该地区分级级别，"-" 代表未查到
-  // 位置: 0=US  1=GB  2=HK  3=DE  4=JP  5=KR
+  // 每位代表该地区的分级级别
+  // 数字 = 电影分级（0-5 对应不同级别）
+  // 字母 = TV 分级（A-E 对应不同级别）
+  // "-" = 未查到
   //
-  // 0=全年龄  1=儿童引导  2=青少年  3=准限制级  4=限制级  5=禁止级
+  // 位置: 0=US  1=GB  2=HK  3=CN  4=JP  5=KR
+  //
+  // 电影分级映射（数字）：
+  //   0=G/U/I, 1=PG/IIA, 2=PG-13/IIB, 3=R, 4=NC-17/III, 5=X
+  //
+  // TV 分级映射（字母）：
+  //   A=TV-Y, B=TV-G, C=TV-PG, D=TV-14, E=TV-MA
 
-  // 产地黑名单（与分级无关，直接过滤）
+  // 地区黑名单
   const BLACKLIST_COUNTRIES = new Set(["JP", "KR"]);
 
-  const CERT_REGIONS = ["US", "GB", "HK", "CN", "JP", "KR"];
+  const CERT_REGIONS = ["US", "GB", "HK", "CN", "DE", "FR"];
 
-  // 各地区默认允许的最高级别（高于此级别则过滤）
-  // 可通过 WEBHOME_CONFIG.nostr.certMaxLevel 覆盖
-  const CERT_REGION_MAX_LEVEL = { US: 2, GB: 3, HK: 0, CN: 2, JP: 2, KR: 2 };
-
-  // 默认关注的地区（可通过 WEBHOME_CONFIG.nostr.certRegion 覆盖）
-  function certMyRegion() {
-    return (window.WEBHOME_CONFIG && window.WEBHOME_CONFIG.nostr && window.WEBHOME_CONFIG.nostr.certRegion) || "HK";
+  // 用户配置的分级黑名单（按地区+分级名称）
+  // 格式: {"HK": ["III", "IIB"], "US": ["R", "NC-17"]}
+  function getBlockedRatings() {
+    // TODO: 从用户配置读取，暂时使用默认值
+    return {
+      HK: new Set(["III", "IIB"]),
+      US: new Set(["R", "NC-17", "X", "TV-MA"]),
+      GB: new Set(["18"]),
+      CN: new Set(["18"]),
+      DE: new Set(["18"]),
+      FR: new Set(["-18"])
+    };
   }
-  function certMyMaxLevel() {
-    var cfg = window.WEBHOME_CONFIG && window.WEBHOME_CONFIG.nostr;
-    if (cfg && cfg.certMaxLevel !== undefined && cfg.certMaxLevel !== null) return Number(cfg.certMaxLevel);
-    return CERT_REGION_MAX_LEVEL[certMyRegion()] !== undefined ? CERT_REGION_MAX_LEVEL[certMyRegion()] : 2;
-  }
 
-  const CERT_TO_LEVEL = {
-    US: {
-      // 电影分级
-      G: 0, PG: 1, "PG-13": 2, R: 3, "NC-17": 4, X: 5,
-      // TV 分级
-      "TV-Y": 0, "TV-Y7": 1, "TV-G": 0, "TV-PG": 1, "TV-14": 2, "TV-MA": 3
-    },
+  // 电影分级：名称 → 数字（编码用）
+  const MOVIE_CERT_TO_LEVEL = {
+    US: { G: 0, PG: 1, "PG-13": 2, R: 3, "NC-17": 4, X: 5 },
     GB: { U: 0, PG: 1, "12A": 2, "12": 2, "15": 3, "18": 4 },
     HK: { I: 0, IIA: 1, IIB: 2, III: 4 },
     CN: { "0": 0, "6": 1, "12": 2, "16": 3, "18": 4 },
-    JP: { G: 0, PG12: 2, "R15+": 3, "R18+": 4 },
-    KR: { ALL: 0, "12": 1, "15": 2, "18": 4 }
+    DE: { "0": 0, "6": 1, "12": 2, "16": 3, "18": 4 },
+    FR: { "U": 0, "-10": 1, "-12": 2, "-16": 3, "-18": 4 }
   };
 
-  // level → 各地区显示名称
-  const LEVEL_TO_LABEL = [
-    /*0*/ ["G",     "U",   "I",   "0",  "G",    "ALL"],
-    /*1*/ ["PG",    "PG",  "IIA", "6",  "",     "12" ],
-    /*2*/ ["PG-13", "12",  "IIB", "12", "PG12", "15" ],
-    /*3*/ ["R",     "15",  "",    "16", "R15+", ""   ],
-    /*4*/ ["NC-17", "18",  "III", "18", "R18+", "18" ],
-    /*5*/ ["X",     "",    "",    "",   "",     ""   ]
+  // TV 分级：名称 → 字母（编码用）
+  const TV_CERT_TO_LEVEL = {
+    "TV-Y": "A",
+    "TV-G": "B",
+    "TV-PG": "C",
+    "TV-14": "D",
+    "TV-MA": "E"
+  };
+
+  // 电影分级：数字 → 各地区名称（解码显示用）
+  const MOVIE_LEVEL_TO_LABEL = [
+    /*0*/ ["G",     "U",   "I",   "0",  "0",   "U"  ],
+    /*1*/ ["PG",    "PG",  "IIA", "6",  "6",   "-10"],
+    /*2*/ ["PG-13", "12",  "IIB", "12", "12",  "-12"],
+    /*3*/ ["R",     "15",  "",    "16", "16",  "-16"],
+    /*4*/ ["NC-17", "18",  "III", "18", "18",  "-18"],
+    /*5*/ ["X",     "",    "",    "",   "",    ""   ]
   ];
+
+  // TV 分级：字母 → 名称（解码显示用）
+  const TV_LEVEL_TO_LABEL = {
+    A: "TV-Y",
+    B: "TV-G",
+    C: "TV-PG",
+    D: "TV-14",
+    E: "TV-MA"
+  };
 
   // TMDB API 响应 → 6 位字符串
   function encodeCerts(tmdbRatings, mediaType) {
@@ -5851,35 +5948,80 @@
       var entry = tmdbRatings[i];
       var idx = CERT_REGIONS.indexOf(entry.iso_3166_1);
       if (idx < 0) continue;
-      var map = CERT_TO_LEVEL[entry.iso_3166_1];
-      if (!map) continue;
-      // TV: entry.rating, 电影: entry.release_dates[0].certification
-      var cert = mediaType === "tv"
-        ? entry.rating
-        : (entry.release_dates && entry.release_dates[0] ? entry.release_dates[0].certification : "");
-      if (!cert) continue;
-      var level = map[cert];
-      if (level === undefined) continue;
-      chars[idx] = String(level);
+
+      var cert, level;
+      if (mediaType === "tv") {
+        // TV 分级：映射到与电影分级对齐的数字
+        cert = entry.rating;
+        level = TV_CERT_TO_LEVEL[cert];
+        if (level !== undefined) chars[idx] = String(level);
+      } else {
+        // 电影分级：使用数字 0-5
+        cert = entry.release_dates && entry.release_dates[0] ? entry.release_dates[0].certification : entry.rating;
+        var map = MOVIE_CERT_TO_LEVEL[entry.iso_3166_1];
+        if (map) {
+          level = map[cert];
+          if (level !== undefined) chars[idx] = String(level);
+        }
+      }
     }
     return chars.join("");
   }
 
+  // 6 位字符串 → 获取分级信息（级别 + 实际使用的地区索引）
+  // 返回 { level, regionIdx }，level=-1 表示无数据
+  function getCertInfo(certs, region) {
+    if (!certs || certs === "------") return { level: -1, regionIdx: -1 };
+
+    var idx = CERT_REGIONS.indexOf(region);
+
+    // 如果地区不在 CERT_REGIONS 中，直接使用 US（idx=0）
+    if (idx < 0) idx = 0;
+
+    var ch = certs[idx];
+
+    // 如果本地区无数据，fallback 到第一个有数据的位置
+    if (ch === "-") {
+      for (var i = 0; i < certs.length; i++) {
+        if (certs[i] !== "-") { idx = i; ch = certs[i]; break; }
+      }
+    }
+
+    if (ch === "-") return { level: -1, regionIdx: -1 };
+
+    var level;
+    // 数字：电影分级 0-5
+    if (ch >= "0" && ch <= "5") level = Number(ch);
+    // 字母：TV 分级 A-E，转换为数字级别 0-4
+    else if (ch >= "A" && ch <= "E") level = ch.charCodeAt(0) - 65;
+    else return { level: -1, regionIdx: -1 };
+
+    return { level: level, regionIdx: idx };
+  }
+
   // 6 位字符串 → 指定地区的级别（-1 = 未查到）
   function getCertLevel(certs, region) {
-    var idx = CERT_REGIONS.indexOf(region);
-    if (idx < 0 || !certs || certs.length <= idx) return -1;
-    var ch = certs[idx];
-    return ch === "-" ? -1 : Number(ch);
+    return getCertInfo(certs, region).level;
   }
 
   // 6 位字符串 → 指定地区的显示名称
   function getCertLabel(certs, region) {
-    var level = getCertLevel(certs, region);
-    if (level < 0) return "";
-    var idx = CERT_REGIONS.indexOf(region);
-    if (idx < 0 || !LEVEL_TO_LABEL[level]) return "";
-    return LEVEL_TO_LABEL[level][idx] || "";
+    if (!certs || certs === "------") return "";
+
+    var info = getCertInfo(certs, region);
+    if (info.level < 0) return "";
+
+    var ch = certs[info.regionIdx];
+
+    // 数字：电影分级，使用对应地区的标签
+    if (ch >= "0" && ch <= "5") {
+      return MOVIE_LEVEL_TO_LABEL[info.level] ? MOVIE_LEVEL_TO_LABEL[info.level][info.regionIdx] || "" : "";
+    }
+    // 字母：TV 分级
+    if (ch >= "A" && ch <= "E") {
+      return TV_LEVEL_TO_LABEL[ch] || "";
+    }
+    return "";
   }
 
   // 取所有地区最高级别（用于无本地区数据时的保守过滤）
@@ -5889,14 +6031,20 @@
     for (var i = 0; i < certs.length; i++) {
       var ch = certs[i];
       if (ch === "-") continue;
-      var l = Number(ch);
-      if (l > max) max = l;
+      var level;
+      // 数字：电影分级 0-5
+      if (ch >= "0" && ch <= "5") level = Number(ch);
+      // 字母：TV 分级 A-E → 0-4
+      else if (ch >= "A" && ch <= "E") level = ch.charCodeAt(0) - 65;
+      else continue;
+      if (level > max) max = level;
     }
     return max;
   }
 
+  // 获取 imdb 数据
   async function fetchContentRating(mediaType, tmdbId, name) {
-    const label = name || `${mediaType}:${tmdbId}`;
+    // const label = name || `${mediaType}:${tmdbId}`;
     const endpoint = mediaType === "tv" ? "content_ratings" : "release_dates";
     try {
       const data = await requestJson(
@@ -5904,20 +6052,10 @@
         10
       );
       const results = data.results || [];
-      // 编码 6 位 certs（电影和 TV 接口结构不同）
+      // 编码 6 位 certs
       const certs = encodeCerts(results, mediaType);
-      let displayCert = "";
-      for (const entry of results) {
-        const country = entry.iso_3166_1;
-        const cert = mediaType === "tv"
-          ? entry.rating
-          : (entry.release_dates?.[0]?.certification ?? "");
-        if (!cert) continue;
-        if (!displayCert && (country === "US" || country === "GB" || country === "HK" || country === "DE")) {
-          displayCert = cert;
-        }
-      }
-      // 顺便拉评分和产地
+
+      // 拉评分和地区
       let vote = 0;
       let originCountry = [];
       try {
@@ -5930,67 +6068,110 @@
           ? detail.origin_country
           : (detail.production_countries || []).map(c => c.iso_3166_1).filter(Boolean);
       } catch (_) {}
-      // 产地黑名单检查
+
+      // 地区黑名单检查，如果在地区黑名单中则直接返回
       for (const c of originCountry) {
         if (BLACKLIST_COUNTRIES.has(c)) {
-          console.log(`${label} → [ContentRating] 产地黑名单 ${mediaType}:${tmdbId} → ${c}`);
           return { display: "", rating: vote, certs, allRatings: results, origin: originCountry[0] || "" };
         }
       }
+
       const origin = originCountry[0] || "";
-      console.log(`${label} → [ContentRating] ${displayCert || "无分级"} ${vote ? "★" + vote.toFixed(1) : ""} ${mediaType}:${tmdbId} [${originCountry.join(",")}] certs=${certs}`);
+
+      // 计算 displayCert，优先使用产地的分级
+      let displayCert = "";
+      if (origin) {
+        for (const entry of results) {
+          if (entry.iso_3166_1 === origin) {
+            const cert = mediaType === "tv"
+              ? entry.rating
+              : (entry.release_dates?.[0]?.certification ?? "");
+            if (cert) {
+              displayCert = cert;
+              break;
+            }
+          }
+        }
+      }
+      // 如果没有产地分级，使用第一个匹配的通用地区分级
+      if (!displayCert) {
+        for (const entry of results) {
+          const country = entry.iso_3166_1;
+          const cert = mediaType === "tv"
+            ? entry.rating
+            : (entry.release_dates?.[0]?.certification ?? "");
+          if (!cert) continue;
+          if (!displayCert && (country === "US" || country === "GB" || country === "HK" || country === "DE" || country === "FR")) {
+            displayCert = cert;
+          }
+        }
+      }
+      console.log("[rating] " + (name || (mediaType + ":" + tmdbId)) + " origin=" + (origin || "-") + " cert=" + (displayCert || "-") + " vote=" + (vote ? vote.toFixed(1) : "-") + " certs=" + certs);
       return { display: displayCert, rating: vote, certs, allRatings: results, origin };
     } catch (e) {
-      console.warn(`${label} → [ContentRating] 查询失败 ${mediaType}:${tmdbId}`, e.message);
+      console.warn("[rating] 查询失败 " + (name || (mediaType + ":" + tmdbId)) + " " + e.message);
       return { display: "", rating: 0, certs: "------", allRatings: [], origin: "" };
     }
   }
 
   let _ensureContentRatingsRunning = false;
+  const RATING_CACHE_TTL     = 7 * 24 * 3600; // 成功查询后 7 天内不重查
+  const RATING_RETRY_COOLDOWN =      3600;     // 查询失败（certs==="------"）1 小时内不重试
 
   async function ensureContentRatings() {
-    if (_ensureContentRatingsRunning) return;
+    if (_ensureContentRatingsRunning) {
+      console.log("[rating] 跳过：上一轮补查仍在进行中");
+      return;
+    }
     _ensureContentRatingsRunning = true;
     try {
-      // 触发条件：certs 为空（relay v5 数据或本地旧数据未补查）
+      const now = hotNow();
+      let skipCached = 0, skipCooling = 0, skipNoId = 0;
       const unrated = Array.from(state.hot.media.values())
-        .filter(item => (!item.certs || item.certs === "------") && item.tid && item.mt);
-      if (!unrated.length) {
-        console.log("[ContentRating] 无待查条目");
-        return;
-      }
-      console.log(`[ContentRating] 开始检查 ${unrated.length} 条`);
+        .filter(item => {
+          if (!item.tid || !item.mt) { skipNoId++; return false; }
+          const rt = Number(item.rt || 0);
+          // 本地已有有效 certs，且未超过缓存有效期 → 跳过
+          if (item.certs && item.certs !== "------" && rt > 0) {
+            if (now - rt < RATING_CACHE_TTL) { skipCached++; return false; }
+          }
+          // 上次查询失败（certs === "------"），在冷却期内 → 跳过
+          if (item.certs === "------" && rt > 0) {
+            if (now - rt < RATING_RETRY_COOLDOWN) { skipCooling++; return false; }
+          }
+          return true; // 未查过，或缓存过期，或冷却结束
+        });
+      // 输出计数摘要，方便排查重复查询
+      console.log(
+        "[rating] 扫描完成" +
+        " 缓存有效=" + skipCached +
+        " 冷却中=" + skipCooling +
+        " 无ID=" + skipNoId +
+        " 待查=" + unrated.length
+      );
+      if (!unrated.length) return;
+      console.log("[rating] 开始补查 " + unrated.length + " 条");
       const db = await openHotDb();
       let updated = 0;
       for (const item of unrated) {
-        // 产地黑名单：直接写入 certs="------"，不查询 TMDB
-        if (item.origin && BLACKLIST_COUNTRIES.has(item.origin)) {
-          item.certs = "------";
-          item.rt = hotNow();
-          state.hot.media.set(item.m, item);
-          updated++;
-          continue;
-        }
         const result = await fetchContentRating(
           hotMediaTypeFromCode(item.mt), item.tid, item.t
         );
-        // v6: 写入 certs 和 origin
         item.certs = result.certs || "------";
         if (result.origin) item.origin = result.origin;
         if (result.display) item.cr = result.display;
         if (result.rating) item.v = result.rating;
-        item.rt = hotNow(); // 记录查询时间戳，用于过期刷新
+        item.rt = hotNow();
         state.hot.media.set(item.m, item);
         updated++;
       }
-      console.log(`[ContentRating] 完成：更新 ${updated} 条`);
+      console.log(`[rating] 完成 ${updated} 条`);
       if (!db) return;
       const tx = db.transaction("media", "readwrite");
       const store = tx.objectStore("media");
       unrated.forEach(item => store.put(item));
       await idbDone(tx).catch(() => {});
-      state.hot.items = buildHotItemsFromIndex();
-      scheduleRender();
+      // build + render 由调用方的 .finally 统一执行，这里不重复
     } finally {
       _ensureContentRatingsRunning = false;
     }
@@ -8254,7 +8435,7 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
   function renderDetailTitleMeta(item, detail) {
     const root = $("detailTitleMeta");
     const items = useLargeDetailLayout()
-      ? detailTitleMeta(item, detail).filter((meta) => meta.type === "score").slice(0, 1)
+      ? detailTitleMeta(item, detail).filter((meta) => meta.type === "score" || meta.type === "rating").slice(0, 2)
       : isTvMode() ? uniqueMeta(detailTitleMeta(item, detail).concat(detailMeta(item, detail))) : detailTitleMeta(item, detail);
     root.replaceChildren(...items.flatMap((meta, index) => {
       const span = document.createElement("span");
@@ -8450,12 +8631,33 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
       const genreText = genres.length ? genres.slice(0, 3).join(" / ") : mediaType;
       const episodeText = item.mediaType === "tv" ? detailLargeEpisodeLabel(data) : runtime;
       const status = detailStatus(data.status || "");
-      return uniqueMeta([year, genreText, episodeText, status && status !== "已完结" ? status : "", runtime && item.mediaType === "tv" ? runtime : ""])
+      // 分级：优先用本地 certs，其次 item.cr
+      const mediaKey2 = item.mediaKey || item.id || "";
+      const hotMedia2 = mediaKey2 ? state.hot.media.get(mediaKey2) : null;
+      let crText = "";
+      if (hotMedia2 && hotMedia2.certs && hotMedia2.certs !== "------") {
+        const reg2 = hotMedia2.origin || "US";
+        crText = getCertLabel(hotMedia2.certs, reg2);
+      } else if (item.cr) {
+        crText = item.cr;
+      }
+      return uniqueMeta([year, crText, genreText, episodeText, status && status !== "已完结" ? status : "", runtime && item.mediaType === "tv" ? runtime : ""])
         .slice(0, 6)
         .map((meta) => typeof meta === "string" ? { text: meta } : meta);
     }
+    // 分级：优先用本地 certs，其次 item.cr
+    const mediaKey3 = item.mediaKey || item.id || "";
+    const hotMedia3 = mediaKey3 ? state.hot.media.get(mediaKey3) : null;
+    let crText3 = "";
+    if (hotMedia3 && hotMedia3.certs && hotMedia3.certs !== "------") {
+      const reg3 = hotMedia3.origin || "US";
+      crText3 = getCertLabel(hotMedia3.certs, reg3);
+    } else if (item.cr) {
+      crText3 = item.cr;
+    }
     const metas = [
       detailDateLabel(item, date),
+      crText3,
       seasonText,
       runtime
     ].filter(Boolean);
@@ -8469,8 +8671,19 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
     const rating = Number(data.vote_average || item.voteAverage || 0);
     const episodeProgress = item.mediaType === "tv" ? detailEpisodeProgress(data) : "";
     const status = detailStatus(data.status || "");
+    // 分级显示：优先用本地已查的 certs，其次用 detail 页返回的原始分级
+    const mediaKey = item.mediaKey || item.id || "";
+    const hotMedia = mediaKey ? state.hot.media.get(mediaKey) : null;
+    let crLabel = "";
+    if (hotMedia && hotMedia.certs && hotMedia.certs !== "------") {
+      const region = hotMedia.origin || "US";
+      crLabel = getCertLabel(hotMedia.certs, region);
+    } else if (item.cr) {
+      crLabel = item.cr;
+    }
     return [
       rating > 0 ? { text: `${rating.toFixed(1)}分`, type: "score" } : null,
+      crLabel ? { text: crLabel, type: "rating" } : null,
       { text: mediaType },
       episodeProgress ? { text: episodeProgress } : null,
       status ? { text: status } : null
@@ -8569,6 +8782,23 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
       if (!body || state.selected !== item) return;
       state.detail = body;
       renderDetailExtras(item, body);
+      // 详情页成功加载：把 TMDB 返回的评分回写到本地 media store，同时更新 rt 延长缓存有效期
+      const mediaKey = item.mediaKey || item.id || "";
+      const media = mediaKey ? state.hot.media.get(mediaKey) : null;
+      if (media) {
+        const newVote = Number(body.vote_average || 0);
+        if (newVote > 0) media.v = newVote;
+        // 查询该影片分级，更新 rt 保证详情页打开对 7 天缓存起到延长效果
+        media.rt = hotNow();
+        state.hot.media.set(mediaKey, media);
+        // 异步回写 DB，不阻塞详情页渲染
+        openHotDb().then(db => {
+          if (!db) return;
+          const tx = db.transaction("media", "readwrite");
+          tx.objectStore("media").put(media);
+          idbDone(tx).catch(() => {});
+        });
+      }
     } catch (e) {
       setDetailTextContent(`详情加载失败：${e.message || "unknown"}`);
       scheduleDetailTextClamp();
@@ -11272,10 +11502,12 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
 
   function publishEvent(event) {
     if (!event || !event.sig) {
+      console.warn("[publish] 事件未签名，放弃发布");
       setStatus("publish", "未签名，未发布");
       return;
     }
     const relays = window.WEBHOME_CONFIG.nostr.relays;
+    console.log("[publish] 开始发布 kind=" + event.kind + " id=" + (event.id || "").slice(0, 8) + " 到 " + relays.length + " 个 relay");
     state.relay.total = relays.length;
     let done = 0;
     let ok = 0;
@@ -11291,13 +11523,20 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
           state.relay.lastOk = ok;
           state.relay.lastDone = done;
           setStatus("publish", `发布 ${ok}/${done}/${relays.length}${text ? " · " + text : ""}`);
+          console.log("[publish] " + (success ? "✓" : "×") + " " + text);
+          if (done === relays.length) {
+            console.log("[publish] 完成 " + ok + "/" + relays.length + " 成功");
+          }
           renderMetrics();
         };
         const timer = setTimeout(() => {
           finish(false, shortRelay(relay) + " 超时");
           try { ws.close(); } catch (e) {}
         }, 6000);
-        ws.onopen = () => ws.send(JSON.stringify(["EVENT", stripLocal(event)]));
+        ws.onopen = () => {
+          console.log("[publish] 连接 " + shortRelay(relay));
+          ws.send(JSON.stringify(["EVENT", stripLocal(event)]));
+        };
         ws.onmessage = (message) => {
           const data = safeJson(message.data, []);
           if (data[0] === "OK") {
@@ -11307,14 +11546,16 @@ nsec: ${state.identity.nsec}` : "身份未就绪";
             try { ws.close(); } catch (e) {}
           }
         };
-        ws.onerror = () => {
+        ws.onerror = (e) => {
           clearTimeout(timer);
+          console.warn("[publish] 连接失败 " + shortRelay(relay));
           finish(false, shortRelay(relay) + " 失败");
         };
       } catch (e) {
         done += 1;
         state.relay.lastOk = ok;
         state.relay.lastDone = done;
+        console.warn("[publish] 创建连接失败 " + shortRelay(relay) + " " + e.message);
         setStatus("publish", `发布 ${ok}/${done}/${relays.length} · ${shortRelay(relay)} 失败`);
       }
     });
