@@ -22,11 +22,12 @@ import java.io.File;
 
 public class Updater implements Download.Callback, UpdateListener {
     private boolean isForceUpdate = false;
-    private final Download download;
+    private Download download;
     private UpdateDialog dialog;
 
     private Updater() {
-        this.download = Download.create(getApk(), getFile());
+        // download 延迟初始化，等拿到 apkUrl 再创建
+        // this.download = Download.create(getApk(), getFile());
     }
 
     public static Updater create() {
@@ -67,6 +68,13 @@ public class Updater implements Download.Callback, UpdateListener {
             String name = object.optString("name");
             String desc = object.optString("desc");
             int code = object.optInt("code");
+
+            // 获取下载 url，url 为空时使用原方法兜底
+            String apkUrl = object.optString("url");
+            if (apkUrl.isEmpty()) apkUrl = getApk();
+
+            // 拿到地址后再创建 Download
+            download = Download.create(apkUrl, getFile());
 
             // 检查版本并切回主线程显示 UI
             if (code > BuildConfig.VERSION_CODE)
