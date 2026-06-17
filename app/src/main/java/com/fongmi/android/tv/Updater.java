@@ -70,8 +70,17 @@ public class Updater implements Download.Callback, UpdateListener {
             int code = object.optInt("code");
 
             // 获取下载 url，url 为空时使用原方法兜底
-            String apkUrl = object.optString("url");
-            if (apkUrl.isEmpty()) apkUrl = getApk();
+            String apkUrl = null;
+            JSONObject urls = object.optJSONObject("urls");
+            if (urls != null) {
+                apkUrl = urls.optString(BuildConfig.FLAVOR_abi, null);
+            }
+            if (apkUrl == null || apkUrl.isEmpty()) {
+                apkUrl = object.optString("url");
+            }
+            if (apkUrl == null || apkUrl.isEmpty()) {
+                apkUrl = getApk();
+            }
 
             // 拿到地址后再创建 Download
             download = Download.create(apkUrl, getFile());
