@@ -93,7 +93,9 @@ public class Updater implements Download.Callback, UpdateListener {
                 App.post(() -> Notify.show(R.string.update_islatest));
             }
         } catch (Exception e) {
-            App.post(() -> Notify.show(ResUtil.getString(R.string.update_error, url)));
+            if (this.isForceUpdate) {
+                App.post(() -> Notify.show(ResUtil.getString(R.string.update_error, url)));
+            }
             e.printStackTrace();
         }
     }
