@@ -1,6 +1,7 @@
 package com.fongmi.android.tv;
 
 import android.view.View;
+import android.util.Log;
 
 import androidx.fragment.app.FragmentActivity;
 
@@ -24,6 +25,7 @@ public class Updater implements Download.Callback, UpdateListener {
     private boolean isForceUpdate = false;
     private Download download;
     private UpdateDialog dialog;
+    public static final String TAG = "Updater";
 
     private Updater() {
         // download 延迟初始化，等拿到 apkUrl 再创建
@@ -73,11 +75,9 @@ public class Updater implements Download.Callback, UpdateListener {
             String apkUrl = null;
             JSONObject urls = object.optJSONObject("urls");
             if (urls != null) {
-                apkUrl = urls.optString(BuildConfig.FLAVOR_abi, null);
+                apkUrl = urls.optString(BuildConfig.FLAVOR_abi);
             }
-            if (apkUrl == null || apkUrl.isEmpty()) {
-                apkUrl = object.optString("url");
-            }
+
             if (apkUrl == null || apkUrl.isEmpty()) {
                 apkUrl = getApk();
             }
@@ -96,7 +96,7 @@ public class Updater implements Download.Callback, UpdateListener {
             if (this.isForceUpdate) {
                 App.post(() -> Notify.show(ResUtil.getString(R.string.update_error, url)));
             }
-            e.printStackTrace();
+            Log.e(TAG, ResUtil.getString(R.string.update_error, url), e);
         }
     }
 
