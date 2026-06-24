@@ -10,7 +10,7 @@
     <string name="live_control_source">直播源</string>
 
     <!-- Detail -->
-    <string name="detail_title"><xliff:g name="name">%1%s</xliff:g>：<xliff:g name="name">%2%s</xliff:g></string>
+    <string name="detail_title"><xliff:g name="name">%1$s</xliff:g>：<xliff:g name="name">%2$s</xliff:g></string>
     <string name="detail_site">站源：<xliff:g name="name">%s</xliff:g></string>
     <string name="detail_year">年份：<xliff:g name="name">%s</xliff:g></string>
     <string name="detail_area">地區：<xliff:g name="name">%s</xliff:g></string>

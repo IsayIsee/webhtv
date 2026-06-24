@@ -11,7 +11,7 @@
     <string name="live_no_epg">00:00 - 23:59 暂无节目信息</string>
 
     <!-- Detail -->
-    <string name="detail_title"><xliff:g name="name">%1%s</xliff:g> : <xliff:g name="name">%2%s</xliff:g></string>
+    <string name="detail_title"><xliff:g name="name">%1$s</xliff:g> : <xliff:g name="name">%2$s</xliff:g></string>
     <string name="detail_site">Site: <xliff:g name="name">%s</xliff:g></string>
     <string name="detail_year">Year: <xliff:g name="name">%s</xliff:g></string>
     <string name="detail_area">Area: <xliff:g name="name">%s</xliff:g></string>
