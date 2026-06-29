@@ -1677,7 +1677,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     }
 
     private void updateHistory(Episode item) {
-        boolean sameEpisode = item.matches(mHistory.getEpisode());
+        boolean sameEpisode = item.matchesName(mHistory.getEpisode());
         boolean sameFlag = TextUtils.equals(mHistory.getVodFlag(), getFlag().getFlag());
         if ((!sameEpisode || !sameFlag) && service() != null) {
             updatePlaybackHistoryPosition();
@@ -1756,7 +1756,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
 
         @Override
         public void onStop() {
-            finish();
+            finishVideoPlayback();
         }
 
         @Override
@@ -2377,10 +2377,18 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
         } else if (isFullscreen()) {
             exitFullscreen();
         } else {
-            mViewModel.stopSearch();
-            if (isTaskRoot()) startActivity(new Intent(this, HomeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-            super.onBackInvoked();
+            finishVideoPlayback();
         }
+    }
+
+    private void finishVideoPlayback() {
+        if (isPlaybackExiting()) return;
+        mViewModel.stopSearch();
+        saveHistory(true);
+        markPlaybackExiting();
+        stopPlayback();
+        if (isTaskRoot()) startActivity(new Intent(this, HomeActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+        super.onBackInvoked();
     }
 
     @Override

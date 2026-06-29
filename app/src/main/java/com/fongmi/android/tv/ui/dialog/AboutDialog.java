@@ -37,8 +37,9 @@ public final class AboutDialog {
             if (updateAction != null) updateAction.run();
         });
         dialog.setCanceledOnTouchOutside(false);
+        boolean configured = configureWindow(activity, dialog);
         dialog.setOnShowListener(d -> {
-            configureWindow(activity, dialog);
+            if (!configured) configureWindow(activity, dialog);
             binding.confirm.requestFocus();
         });
         dialog.show();
@@ -53,9 +54,9 @@ public final class AboutDialog {
         binding.contentScroll.setLayoutParams(params);
     }
 
-    private static void configureWindow(FragmentActivity activity, AlertDialog dialog) {
+    private static boolean configureWindow(FragmentActivity activity, AlertDialog dialog) {
         Window window = dialog.getWindow();
-        if (window == null) return;
+        if (window == null) return false;
         WindowManager.LayoutParams params = window.getAttributes();
         params.width = (int) (ResUtil.getScreenWidth(activity) * (ResUtil.isLand(activity) ? 0.62f : 0.92f));
         params.height = WindowManager.LayoutParams.WRAP_CONTENT;
@@ -63,5 +64,6 @@ public final class AboutDialog {
         window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         window.setAttributes(params);
         window.setLayout(params.width, WindowManager.LayoutParams.WRAP_CONTENT);
+        return true;
     }
 }
