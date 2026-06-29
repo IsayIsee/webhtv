@@ -3,7 +3,6 @@ package com.fongmi.android.tv.bean;
 import android.text.TextUtils;
 
 import com.fongmi.android.tv.BuildConfig;
-import com.fongmi.android.tv.utils.AppVersion;
 
 public class Update {
 
@@ -37,7 +36,8 @@ public class Update {
 
     public boolean hasUpdate() {
         if (!hasManifest()) return false;
-        return code != BuildConfig.VERSION_CODE || !AppVersion.isCurrent(name);
+//        return code != BuildConfig.VERSION_CODE || !AppVersion.isCurrent(name);
+        return code > BuildConfig.VERSION_CODE;
     }
 
     public String getText() {

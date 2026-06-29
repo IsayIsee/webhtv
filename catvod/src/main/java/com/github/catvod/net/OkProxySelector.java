@@ -9,6 +9,7 @@ import java.net.Authenticator;
 import java.net.ProxySelector;
 import java.net.SocketAddress;
 import java.net.URI;
+import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -16,7 +17,6 @@ public class OkProxySelector extends ProxySelector {
 
     private final List<Proxy> proxy;
     private final ProxySelector system;
-    private boolean authSet;
 
     public OkProxySelector() {
         proxy = new CopyOnWriteArrayList<>();
@@ -63,9 +63,19 @@ public class OkProxySelector extends ProxySelector {
         for (Proxy item : proxy) {
             for (String rule : item.getHosts()) {
                 if (!matches(host, rule)) continue;
-                List<java.net.Proxy> selected = item.getProxies().isEmpty() ? fallback(uri, "empty-proxy") : item.getProxies();
-                SpiderDebug.log("proxy", "select hit uri=%s host=%s rule=%s name=%s proxy=%s", uri, host, rule, item.getName(), selected);
-                return selected;
+                if (item.getProxies().isEmpty()) return fallback(uri, "empty-proxy");
+                // 健康检查：逐个代理探测，找到第一个可用的
+                for (java.net.Proxy p : item.getProxies()) {
+                    if (!(p.address() instanceof InetSocketAddress addr)) continue;
+                    if (ProxyHealthChecker.get().isHealthy(addr.getHostString(), addr.getPort())) {
+                        List<java.net.Proxy> selected = List.of(p);
+                        SpiderDebug.log("proxy", "select hit uri=%s host=%s rule=%s proxy=%s", uri, host, rule, selected);
+                        return selected;
+                    }
+                    SpiderDebug.log("proxy", "select skip unhealthy uri=%s proxy=%s", uri, p);
+                }
+                // 所有代理均不可用，降级直连
+                return fallback(uri, "all-unhealthy");
             }
         }
         return fallback(uri, "no-match");

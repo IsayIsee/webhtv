@@ -8,6 +8,7 @@ import com.github.catvod.crawler.DebugLogStore;
 import com.github.catvod.bean.Proxy;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.net.ProxyHealthChecker;
 import com.github.catvod.utils.Path;
 import com.github.catvod.utils.Json;
 import com.google.gson.JsonArray;
@@ -32,6 +33,7 @@ public class ProxySetting {
     public static void apply() {
         OkHttp.selector().remove(NAME);
         OkHttp.closeIdleConnections();
+        ProxyHealthChecker.get().invalidate();
         if (!Setting.isShellProxy()) {
             SpiderDebug.log("proxy", "app proxy disabled");
             return;

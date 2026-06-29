@@ -22,6 +22,7 @@ import com.fongmi.android.tv.utils.MarkdownText;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.fongmi.android.tv.BuildConfig;
 
 public class UpdateDialog extends BaseAlertDialog {
 
@@ -291,7 +292,11 @@ public class UpdateDialog extends BaseAlertDialog {
     }
 
     private String getVersion(Update update) {
-        return update != null && update.hasManifest() ? AppVersion.stripPrefix(update.name) : getString(R.string.update_status_unavailable);
+        String remote = update != null && update.hasManifest()
+                ? AppVersion.stripPrefix(update.name) + " (" + update.code + ")"
+                : getString(R.string.update_status_unavailable);
+        String local = AppVersion.fullName() + " (" + BuildConfig.VERSION_CODE + ")";
+        return local + " → " + remote;
     }
 
     private String getStatus(Update update) {
