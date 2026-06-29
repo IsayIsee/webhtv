@@ -249,7 +249,7 @@ public class UpdateDialog extends BaseAlertDialog {
         if (!isProgressTarget()) return false;
         downloading = true;
         boolean indeterminate = progress < 0;
-        int value = Math.max(0, Math.min(100, progress));
+        int value = Math.clamp(progress, 0, 100);
         binding.stableItem.setEnabled(false);
         binding.betaItem.setEnabled(false);
         binding.stableConfirm.setEnabled(false);
