@@ -127,7 +127,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-public class VideoActivity extends PlaybackActivity implements Clock.Callback, CustomKeyDown.Listener, TrackDialog.Listener, ControlDialog.Listener, FlagAdapter.OnClickListener, EpisodeAdapter.OnClickListener, EpisodeGroupAdapter.OnClickListener, QualityAdapter.OnClickListener, QuickAdapter.OnClickListener, ParseAdapter.OnClickListener, CastDialog.Listener, InfoDialog.Listener {
+public class VideoActivity extends PlaybackActivity implements Clock.Callback, CustomKeyDown.Listener, TrackDialog.Listener, ControlDialog.Listener, DanmakuDialog.Host, FlagAdapter.OnClickListener, EpisodeAdapter.OnClickListener, EpisodeGroupAdapter.OnClickListener, QualityAdapter.OnClickListener, QuickAdapter.OnClickListener, ParseAdapter.OnClickListener, CastDialog.Listener, InfoDialog.Listener {
 
     private ActivityVideoBinding mBinding;
     private ViewGroup.LayoutParams mFrameParams;
@@ -681,8 +681,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mBinding.scroll.scrollTo(0, 0);
         mClock.setCallback(null);
         updateNavigationKey();
-        player().reset();
-        player().stop();
+        if (service() != null) {
+            player().reset();
+            player().stop();
+        }
         getDetail();
     }
 
@@ -1173,6 +1175,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     public void onDanmakuPanel() {
         DanmakuDialog.create().player(player()).show(this);
+    }
+
+    @Override
+    public boolean isDanmakuFullscreen() {
+        return isFullscreen();
     }
 
     private void onDanmakuShow() {

@@ -71,12 +71,16 @@ public class DanmakuAdapter extends RecyclerView.Adapter<DanmakuAdapter.ViewHold
         public ViewHolder(@NonNull AdapterDanmakuBinding binding) {
             super(binding.getRoot());
             this.binding = binding;
+            itemView.setClickable(true);
+            itemView.setFocusable(true);
             itemView.setOnClickListener(this);
         }
 
         @Override
         public void onClick(View view) {
-            listener.onItemClick(mItems.get(getLayoutPosition()));
+            int position = getBindingAdapterPosition();
+            if (position == RecyclerView.NO_POSITION) return;
+            listener.onItemClick(mItems.get(position));
         }
     }
 }

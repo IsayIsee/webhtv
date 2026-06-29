@@ -950,13 +950,18 @@ public class PlayerManager implements ParseCallback {
         if (danmakuController == null) return;
         if (spec != null) spec.setDanmaku(item);
         if (item.isEmpty()) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "clear current=%s", summarizeUrl(currentDanmakuUrl));
             if (currentDanmakuUrl != null) danmakuController.clearItems();
             currentDanmakuUrl = null;
             return;
         }
         String url = item.getRealUrl();
-        if (TextUtils.equals(currentDanmakuUrl, url)) return;
+        if (TextUtils.equals(currentDanmakuUrl, url)) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip same url=%s", summarizeUrl(url));
+            return;
+        }
         currentDanmakuUrl = url;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "load name=%s url=%s", item.getName(), summarizeUrl(url));
         danmakuController.setDataSource(Uri.parse(url));
     }
 

@@ -4,6 +4,8 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/shape_danmaku_sheet_panel"
+    android:clickable="true"
     android:orientation="vertical">
 
     <androidx.appcompat.widget.LinearLayoutCompat
@@ -47,8 +49,10 @@
         android:id="@+id/recycler"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:clickable="true"
         android:clipChildren="false"
         android:clipToPadding="false"
+        android:focusable="true"
         android:overScrollMode="never"
         android:paddingStart="24dp"
         android:paddingEnd="24dp"
