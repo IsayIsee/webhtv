@@ -1,10 +1,14 @@
 package com.fongmi.android.tv;
 
-import android.view.View;
+import android.text.TextUtils;
 import android.util.Log;
+import android.view.View;
 
 import androidx.fragment.app.FragmentActivity;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
 
+import com.fongmi.android.tv.bean.Update;
 import com.fongmi.android.tv.impl.UpdateListener;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.dialog.UpdateDialog;
@@ -20,20 +24,42 @@ import com.github.catvod.utils.Path;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.lang.ref.WeakReference;
+import java.security.MessageDigest;
+import java.util.Locale;
 
 public class Updater implements Download.Callback, UpdateListener {
-    private boolean isForceUpdate = false;
-    private Download download;
-    private UpdateDialog dialog;
+
     public static final String TAG = "Updater";
 
+    private static final String DEFAULT_RELEASE_NOTES = "手动触发 GitHub Actions 构建发布。";
+    private static final Updater INSTANCE = new Updater();
+
+    private final LifecycleEventObserver lifecycleObserver = (source, event) -> {
+        if (!(source instanceof FragmentActivity activity)) return;
+        if (event == Lifecycle.Event.ON_DESTROY) unbind(activity);
+    };
+
+    private WeakReference<FragmentActivity> activityRef;
+    private UpdateDialog dialog;
+    private Download download;
+    private Update stable;
+    private Update selected;
+    private boolean isForceUpdate;
+    private boolean downloading;
+    private boolean canceled;
+    private int lastProgress = -1;
+    private long lastBytes;
+    private long lastTotal;
+    private long lastSpeed;
+    private long lastElapsed;
+
     private Updater() {
-        // download 延迟初始化，等拿到 apkUrl 再创建
-        // this.download = Download.create(getApk(), getFile());
     }
 
     public static Updater create() {
-        return new Updater();
+        return INSTANCE;
     }
 
     private File getFile() {
@@ -49,96 +75,256 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     public Updater force() {
+        isForceUpdate = true;
         Notify.show(R.string.update_check);
-        this.isForceUpdate = true;
         Setting.putUpdate(true);
         return this;
     }
 
     public void start(FragmentActivity activity) {
+        bind(activity);
+        if (downloading) {
+            restoreDialog(activity);
+            return;
+        }
         if (!Setting.getUpdate()) return;
         Task.execute(() -> doInBackground(activity));
     }
 
-    private void doInBackground(FragmentActivity activity) {
-        final String url = getJson();
-
-        try {
-            String jsonResponse = OkHttp.string(url);
-            JSONObject object = new JSONObject(jsonResponse);
-
-            String name = object.optString("name");
-            String desc = object.optString("desc");
-            int code = object.optInt("code");
-
-            // 获取下载 url，url 为空时使用原方法兜底
-            String apkUrl = null;
-            JSONObject urls = object.optJSONObject("urls");
-            if (urls != null) {
-                apkUrl = urls.optString(BuildConfig.FLAVOR_abi);
-            }
-
-            if (apkUrl == null || apkUrl.isEmpty()) {
-                apkUrl = getApk();
-            }
-
-            // 拿到地址后再创建 Download
-            download = Download.create(apkUrl, getFile());
-
-            // 检查版本并切回主线程显示 UI
-            if (code > BuildConfig.VERSION_CODE)
-                App.post(() -> show(activity, name, desc));
-            else
-            if (this.isForceUpdate) {
-                App.post(() -> Notify.show(R.string.update_islatest));
-            }
-        } catch (Exception e) {
-            if (this.isForceUpdate) {
-                App.post(() -> Notify.show(ResUtil.getString(R.string.update_error, url)));
-            }
-            Log.e(TAG, ResUtil.getString(R.string.update_error, url), e);
-        }
+    public void resume(FragmentActivity activity) {
+        bind(activity);
+        restoreDialog(activity);
     }
 
-    private void show(FragmentActivity activity, String version, String desc) {
+    private void doInBackground(FragmentActivity activity) {
+        stable = fetchUpdate();
+        if (!stable.hasUpdate()) {
+            if (isForceUpdate) {
+                App.post(() -> {
+                    if (stable.error != null) {
+                        Notify.show(ResUtil.getString(R.string.update_error, getJson()));
+                    } else {
+                        Notify.show(R.string.update_islatest);
+                    }
+                });
+            }
+            return;
+        }
+        selected = stable;
+        App.post(() -> show(activity));
+    }
+
+    private Update fetchUpdate() {
+        Update update = Update.empty(Update.CHANNEL_STABLE);
+        String url = getJson();
+        try {
+            String text = OkHttp.string(url);
+            if (TextUtils.isEmpty(text)) throw new IllegalStateException("Empty manifest: " + url);
+            JSONObject object = new JSONObject(text);
+            update.name    = object.optString("name");
+            update.desc    = object.optString("desc");
+            update.channel = Update.CHANNEL_STABLE;
+            update.code    = object.optInt("code");
+            update.size    = object.optLong("size");
+            update.sha256  = object.optString("sha256");
+
+            // notes 优先用 desc，desc 为空再尝试 json 里的 notes 字段
+            String notes = object.optString("desc");
+            if (TextUtils.isEmpty(notes)) notes = object.optString("notes");
+            if (isDefaultReleaseNotes(notes)) notes = "";
+            update.notes = notes;
+
+            // 按 ABI 取专属下载地址，兜底用通用 apk 地址
+            String apkUrl = null;
+            JSONObject urls = object.optJSONObject("urls");
+            if (urls != null) apkUrl = urls.optString(BuildConfig.FLAVOR_abi);
+            update.apkUrl = (apkUrl != null && !apkUrl.isEmpty()) ? apkUrl : getApk();
+
+            if (update.code <= BuildConfig.VERSION_CODE) update.code = 0;
+        } catch (Exception e) {
+            Log.e(TAG, "fetchUpdate error: " + url, e);
+            update.error = e.getMessage();
+        }
+        return update;
+    }
+
+    private boolean isDefaultReleaseNotes(String notes) {
+        return !TextUtils.isEmpty(notes) && DEFAULT_RELEASE_NOTES.equals(notes.trim());
+    }
+
+    private void show(FragmentActivity activity) {
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
+        if (activity.getSupportFragmentManager().isStateSaved()) return;
+        bind(activity);
         dismiss();
-        dialog = UpdateDialog.create().title(ResUtil.getString(R.string.update_version, version)).desc(desc).listener(this).show(activity);
+        dialog = UpdateDialog.create()
+                .stable(stable)
+                .beta(null)
+                .selected(Update.CHANNEL_STABLE)
+                .listener(this)
+                .show(activity);
     }
 
     @Override
     public void onConfirm(View view) {
+        if (selected == null || !selected.hasUpdate()) {
+            Notify.show(R.string.update_latest);
+            return;
+        }
         view.setEnabled(false);
+        downloading = true;
+        canceled = false;
+        resetProgress();
+        Path.clear(getFile());
+        setDialogProgress(0, 0, selected.size, 0, 0);
+        download = Download.create(selected.apkUrl, getFile()).tag(selected.apkUrl);
         download.start(this);
     }
 
     @Override
     public void onCancel(View view) {
+        if (downloading) {
+            canceled = true;
+            downloading = false;
+            if (download != null) download.cancel();
+            download = null;
+            resetProgress();
+            Notify.show(R.string.update_canceled);
+            dismiss();
+            return;
+        }
         Setting.putUpdate(false);
-        download.cancel();
+        if (download != null) download.cancel();
         dismiss();
+    }
+
+    @Override
+    public void onClose() {
+        Setting.putUpdate(false);
+        dialog = null;
+    }
+
+    @Override
+    public void onChannel(String channel) {
+        // 单通道，无需切换
     }
 
     private void dismiss() {
         try {
-            if (dialog != null) dialog.dismiss();
+            if (dialog != null) dialog.dismissAllowingStateLoss();
         } catch (Exception ignored) {
+        } finally {
+            dialog = null;
         }
     }
 
     @Override
     public void progress(int progress) {
-        if (dialog != null) dialog.setProgress(progress);
+        setDialogProgress(progress, 0, 0, 0, 0);
+    }
+
+    @Override
+    public void progress(int progress, long bytes, long total, long speed, long elapsed) {
+        setDialogProgress(progress, bytes, total, speed, elapsed);
+    }
+
+    private void setDialogProgress(int progress, long bytes, long total, long speed, long elapsed) {
+        if (canceled || !downloading) return;
+        long manifestSize = selected == null ? 0 : selected.size;
+        if (total <= 0 && manifestSize > 0) total = manifestSize;
+        if (progress < 0 && total > 0 && bytes > 0) progress = (int) (bytes * 100.0 / total);
+        lastProgress = progress;
+        lastBytes = bytes;
+        lastTotal = total;
+        lastSpeed = speed;
+        lastElapsed = elapsed;
+        if (dialog == null) return;
+        if (!dialog.setProgress(progress, bytes, total, speed, elapsed)) dialog = null;
     }
 
     @Override
     public void error(String msg) {
+        if (canceled) return;
+        downloading = false;
+        download = null;
+        resetProgress();
         Notify.show(msg);
         dismiss();
     }
 
     @Override
     public void success(File file) {
-        FileUtil.openFile(file);
-        dismiss();
+        if (canceled) return;
+        download = null;
+        Update target = selected;
+        Task.execute(() -> {
+            String error = validate(file, target);
+            App.post(() -> {
+                if (canceled) return;
+                downloading = false;
+                resetProgress();
+                if (!TextUtils.isEmpty(error)) {
+                    Path.clear(file);
+                    Notify.show(error);
+                    dismiss();
+                    return;
+                }
+                FileUtil.openFile(file);
+                dismiss();
+            });
+        });
+    }
+
+    private void restoreDialog(FragmentActivity activity) {
+        if (!downloading || selected == null) return;
+        show(activity);
+        setDialogProgress(lastProgress, lastBytes, lastTotal, lastSpeed, lastElapsed);
+    }
+
+    private String validate(File file, Update update) {
+        if (file == null || !file.exists() || file.length() <= 0) return ResUtil.getString(R.string.update_download_invalid);
+        if (update != null && update.size > 0 && file.length() != update.size) return ResUtil.getString(R.string.update_download_incomplete);
+        if (update != null && !TextUtils.isEmpty(update.sha256) && !update.sha256.equalsIgnoreCase(sha256(file))) return ResUtil.getString(R.string.update_download_checksum);
+        if (App.get().getPackageManager().getPackageArchiveInfo(file.getAbsolutePath(), 0) == null) return ResUtil.getString(R.string.update_download_invalid);
+        return "";
+    }
+
+    private String sha256(File file) {
+        try (FileInputStream input = new FileInputStream(file)) {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[16384];
+            int read;
+            while ((read = input.read(buffer)) != -1) digest.update(buffer, 0, read);
+            StringBuilder builder = new StringBuilder();
+            for (byte value : digest.digest()) builder.append(String.format(Locale.ROOT, "%02x", value));
+            return builder.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private void bind(FragmentActivity activity) {
+        if (activity == null) return;
+        FragmentActivity old = activityRef == null ? null : activityRef.get();
+        if (old == activity) return;
+        if (old != null) old.getLifecycle().removeObserver(lifecycleObserver);
+        activityRef = new WeakReference<>(activity);
+        activity.getLifecycle().addObserver(lifecycleObserver);
+    }
+
+    private void unbind(FragmentActivity activity) {
+        FragmentActivity current = activityRef == null ? null : activityRef.get();
+        if (current != activity) return;
+        activity.getLifecycle().removeObserver(lifecycleObserver);
+        activityRef = null;
+        if (!downloading) dialog = null;
+    }
+
+    private void resetProgress() {
+        lastProgress = -1;
+        lastBytes = 0;
+        lastTotal = 0;
+        lastSpeed = 0;
+        lastElapsed = 0;
     }
 }
