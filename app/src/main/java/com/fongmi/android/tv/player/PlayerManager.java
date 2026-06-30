@@ -267,7 +267,16 @@ public class PlayerManager implements ParseCallback {
     }
 
     public String getSizeText() {
-        return (getVideoWidth() == 0 && getVideoHeight() == 0) ? "" : getVideoWidth() + " x " + getVideoHeight();
+        int width = getVideoWidth();
+        int height = getVideoHeight();
+        if (width <= 0 || height <= 0) {
+            Format format = getVideoFormat();
+            if (format != null) {
+                if (width <= 0) width = format.width;
+                if (height <= 0) height = format.height;
+            }
+        }
+        return width <= 0 || height <= 0 ? "" : width + " x " + height;
     }
 
     public Format getVideoFormat() {

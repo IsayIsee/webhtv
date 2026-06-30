@@ -1022,6 +1022,7 @@
 
     <string-array name="select_player_osd">
         <item>标题</item>
+        <item>分辨率</item>
         <item>时间</item>
         <item>进度</item>
         <item>网速</item>

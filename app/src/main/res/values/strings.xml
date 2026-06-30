@@ -1030,6 +1030,7 @@
 
     <string-array name="select_player_osd">
         <item>Title</item>
+        <item>Resolution</item>
         <item>Clock</item>
         <item>Progress</item>
         <item>Network speed</item>

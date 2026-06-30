@@ -270,6 +270,15 @@ public class PlayerSetting {
         Prefers.put("player_osd_title", value);
     }
 
+    public static boolean isOsdResolution() {
+        String key = "player_osd_resolution";
+        return Prefers.getPrefers().contains(key) ? Prefers.getBoolean(key) : isOsdTitle();
+    }
+
+    public static void putOsdResolution(boolean value) {
+        Prefers.put("player_osd_resolution", value);
+    }
+
     public static boolean isOsdTime() {
         return Prefers.getBoolean("player_osd_time");
     }
@@ -311,6 +320,6 @@ public class PlayerSetting {
     }
 
     public static boolean isOsdEnabled() {
-        return isOsdTitle() || isOsdTime() || isOsdProgress() || isOsdTraffic() || isOsdMini() || isOsdDiagnostics();
+        return isOsdTitle() || isOsdResolution() || isOsdTime() || isOsdProgress() || isOsdTraffic() || isOsdMini() || isOsdDiagnostics();
     }
 }

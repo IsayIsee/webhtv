@@ -164,16 +164,17 @@ public class SettingPlayerActivity extends BaseActivity implements UaListener, B
     }
 
     private boolean[] getOsdChecked() {
-        return new boolean[]{PlayerSetting.isOsdTitle(), PlayerSetting.isOsdTime(), PlayerSetting.isOsdProgress(), PlayerSetting.isOsdTraffic(), PlayerSetting.isOsdMini(), PlayerSetting.isOsdDiagnostics()};
+        return new boolean[]{PlayerSetting.isOsdTitle(), PlayerSetting.isOsdResolution(), PlayerSetting.isOsdTime(), PlayerSetting.isOsdProgress(), PlayerSetting.isOsdTraffic(), PlayerSetting.isOsdMini(), PlayerSetting.isOsdDiagnostics()};
     }
 
     private void setOsdChecked(boolean[] checked) {
         PlayerSetting.putOsdTitle(checked[0]);
-        PlayerSetting.putOsdTime(checked[1]);
-        PlayerSetting.putOsdProgress(checked[2]);
-        PlayerSetting.putOsdTraffic(checked[3]);
-        PlayerSetting.putOsdMini(checked[4]);
-        PlayerSetting.putOsdDiagnostics(checked[5]);
+        PlayerSetting.putOsdResolution(checked[1]);
+        PlayerSetting.putOsdTime(checked[2]);
+        PlayerSetting.putOsdProgress(checked[3]);
+        PlayerSetting.putOsdTraffic(checked[4]);
+        PlayerSetting.putOsdMini(checked[5]);
+        PlayerSetting.putOsdDiagnostics(checked[6]);
     }
 
     private String getOsdText(String[] items) {

@@ -134,15 +134,13 @@ public class PlayerOsdController {
     }
 
     private void setTopLeft(PlayerManager player) {
-        if (!PlayerSetting.isOsdTitle() || diagnosticsVisible) {
+        if ((!PlayerSetting.isOsdTitle() && !PlayerSetting.isOsdResolution()) || diagnosticsVisible) {
             topLeft.setVisibility(View.GONE);
             return;
         }
-        String title = source.getTitle();
-        String size = player == null ? "" : player.getSizeText();
-        if (TextUtils.isEmpty(title)) topLeft.setText(size);
-        else if (TextUtils.isEmpty(size)) topLeft.setText(title);
-        else topLeft.setText(title + "\n" + size);
+        String title = PlayerSetting.isOsdTitle() ? source.getTitle() : "";
+        String size = PlayerSetting.isOsdResolution() && player != null ? player.getSizeText() : "";
+        topLeft.setText(join("\n", title, size));
         topLeft.setVisibility(TextUtils.isEmpty(topLeft.getText()) ? View.GONE : View.VISIBLE);
     }
 
