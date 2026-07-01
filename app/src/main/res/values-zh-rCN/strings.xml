@@ -564,6 +564,7 @@
     <string name="setting_custom_csp_extensions_toggle">扩展</string>
     <string name="setting_custom_csp_extensions">扩展 URL / JSON</string>
     <string name="setting_custom_csp_extensions_file">文件</string>
+    <string name="setting_custom_csp_files">文件</string>
     <string name="setting_custom_csp_extensions_example">https://example.com/site.js</string>
     <string name="setting_custom_csp_extensions_invalid">extensions JSON 格式无效</string>
     <string name="setting_custom_csp_permission_required">站点注入需要文件访问权限。</string>

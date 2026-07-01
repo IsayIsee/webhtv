@@ -566,6 +566,7 @@
     <string name="setting_custom_csp_extensions_toggle">Extensions</string>
     <string name="setting_custom_csp_extensions">Extension URL / JSON</string>
     <string name="setting_custom_csp_extensions_file">File</string>
+    <string name="setting_custom_csp_files">Files</string>
     <string name="setting_custom_csp_extensions_example">https://example.com/site.js</string>
     <string name="setting_custom_csp_extensions_invalid">Invalid extensions JSON</string>
     <string name="setting_custom_csp_permission_required">Site injection needs file access permission.</string>

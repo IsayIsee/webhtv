@@ -796,11 +796,9 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         if (result.hasPosition()) mHistory.setPosition(result.getPosition());
         if (result.hasDesc()) setText(mBinding.content, 0, result.getDesc());
         mBinding.control.parse.setVisibility(isUseParse() ? View.VISIBLE : View.GONE);
+        List<Danmaku> siteDanmakus = result.getDanmaku();
         startPlayer(getHistoryKey(), result, isUseParse(), getSite().getTimeout(), buildMetadata());
-        if (DanmakuApi.canSearch()) DanmakuApi.search(mHistory.getVodName(), getEpisode().getName(), danmaku -> {
-            if (DanmakuSetting.isSpiderFirst() && !result.getDanmaku().isEmpty()) player().addDanmaku(danmaku);
-            else player().setDanmaku(danmaku);
-        });
+        if (DanmakuApi.canAutoSearch(siteDanmakus)) DanmakuApi.search(mHistory.getVodName(), getEpisode().getName(), player()::setDanmaku);
     }
 
     private void recordDetailHealth(Result result, long cost) {
@@ -982,7 +980,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void seamless(Flag flag) {
-        Episode episode = flag.find(mHistory.getEpisode(), getMark().isEmpty());
+        Episode episode = getMark().isEmpty() ? flag.find(mHistory.getEpisode(), true) : flag.find(mHistory.getVodRemarks(), false);
         setQualityVisible(episode != null && episode.isSelected() && mQualityAdapter.getItemCount() > 1);
         if (episode == null || episode.isSelected()) return;
         mHistory.setVodRemarks(episode.getName());
@@ -2001,7 +1999,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         else if (event.getType() == RefreshEvent.Type.PLAYER) onRefresh();
         else if (event.getType() == RefreshEvent.Type.VOD) updateVod(event.getVod());
         else if (event.getType() == RefreshEvent.Type.SUBTITLE) player().setSub(Sub.from(event.getPath()));
-        else if (event.getType() == RefreshEvent.Type.DANMAKU) player().setDanmaku(Danmaku.from(event.getPath()));
+        else if (event.getType() == RefreshEvent.Type.DANMAKU) player().reloadDanmaku(Danmaku.from(event.getPath()));
     }
 
     private void setPosition() {

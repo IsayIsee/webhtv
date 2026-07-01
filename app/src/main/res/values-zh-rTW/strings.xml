@@ -553,6 +553,7 @@
     <string name="setting_custom_csp_extensions_toggle">擴展</string>
     <string name="setting_custom_csp_extensions">擴展 URL / JSON</string>
     <string name="setting_custom_csp_extensions_file">檔案</string>
+    <string name="setting_custom_csp_files">檔案</string>
     <string name="setting_custom_csp_extensions_example">https://example.com/site.js</string>
     <string name="setting_custom_csp_extensions_invalid">extensions JSON 格式無效</string>
     <string name="setting_custom_csp_permission_required">站點注入需要檔案存取權限。</string>
