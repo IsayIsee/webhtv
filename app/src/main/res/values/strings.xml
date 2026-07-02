@@ -644,6 +644,7 @@
     <string name="setting_theme_color">Theme color</string>
     <string name="setting_auto">Auto</string>
     <string name="setting_custom">Custom</string>
+    <string name="setting_language">Language</string>
     <string name="setting_size">Image size</string>
     <string name="setting_ui_scale">Interface size</string>
     <string name="setting_doh">DoH</string>
@@ -1009,6 +1010,12 @@
         <item>Compact</item>
         <item>More compact</item>
         <item>Smaller</item>
+    </string-array>
+
+    <string-array name="select_language">
+        <item>Follow system</item>
+        <item>Simplified Chinese</item>
+        <item>Traditional Chinese</item>
     </string-array>
 
     <string-array name="select_scale">
