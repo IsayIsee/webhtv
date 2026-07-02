@@ -172,6 +172,14 @@ public class PlayerSetting {
         Prefers.put("play_speed", Math.min(Math.max(speed, 0.5f), 5));
     }
 
+    public static float getBrightness() {
+        return Math.min(Math.max(Prefers.getFloat("player_brightness", -1), -1), 1);
+    }
+
+    public static void putBrightness(float brightness) {
+        Prefers.put("player_brightness", Math.min(Math.max(brightness, 0), 1));
+    }
+
     public static boolean isCaption() {
         return Prefers.getBoolean("caption");
     }

@@ -13,6 +13,7 @@ import androidx.annotation.NonNull;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.setting.LiveSetting;
+import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 
@@ -36,6 +37,7 @@ public class CustomKeyDown extends GestureDetector.SimpleOnGestureListener imple
     private boolean touch;
     private boolean lock;
     private float bright;
+    private float currentBright;
     private float volume;
     private float scale;
     private long time;
@@ -52,6 +54,7 @@ public class CustomKeyDown extends GestureDetector.SimpleOnGestureListener imple
         this.videoView = videoView;
         this.activity = activity;
         this.scale = 1.0f;
+        applyBrightness();
     }
 
     public boolean onTouchEvent(MotionEvent e) {
@@ -59,9 +62,18 @@ public class CustomKeyDown extends GestureDetector.SimpleOnGestureListener imple
         if (action == MotionEvent.ACTION_DOWN) multiTouch = false;
         if (action == MotionEvent.ACTION_POINTER_DOWN) multiTouch = true;
         if (action == MotionEvent.ACTION_UP) listener.onTouchEnd();
+        if (changeBright && action == MotionEvent.ACTION_UP) PlayerSetting.putBrightness(currentBright);
         if (changeSpeed && action == MotionEvent.ACTION_UP) listener.onSpeedEnd();
         if (changeTime && action == MotionEvent.ACTION_UP) listener.onSeekEnd(time);
         return e.getPointerCount() == 2 ? scaleDetector.onTouchEvent(e) : detector.onTouchEvent(e);
+    }
+
+    private void applyBrightness() {
+        float brightness = PlayerSetting.getBrightness();
+        if (brightness < 0) return;
+        WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
+        attributes.screenBrightness = brightness;
+        activity.getWindow().setAttributes(attributes);
     }
 
     public void resetScale() {
@@ -102,6 +114,7 @@ public class CustomKeyDown extends GestureDetector.SimpleOnGestureListener imple
         changeBright = false;
         changeVolume = false;
         bright = Util.getBrightness(activity);
+        currentBright = bright;
         volume = manager.getStreamVolume(AudioManager.STREAM_MUSIC);
     }
 
@@ -184,6 +197,7 @@ public class CustomKeyDown extends GestureDetector.SimpleOnGestureListener imple
         WindowManager.LayoutParams attributes = activity.getWindow().getAttributes();
         attributes.screenBrightness = brightness;
         activity.getWindow().setAttributes(attributes);
+        currentBright = brightness;
         listener.onBright((int) (brightness * 100));
     }
 

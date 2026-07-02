@@ -76,6 +76,7 @@ public class SettingPlayerActivity extends BaseActivity implements UaListener, B
         mBinding.autoChangeText.setText(getSwitch(PlayerSetting.isAutoChange()));
         mBinding.backgroundText.setText(getSwitch(PlayerSetting.isBackgroundOn()));
         mBinding.audioDecodeText.setText(getSwitch(PlayerSetting.isAudioPrefer()));
+        mBinding.audioPassThroughText.setText(getSwitch(PlayerSetting.isAudioPassThrough()));
         mBinding.videoDecodeText.setText(getSwitch(PlayerSetting.isVideoPrefer()));
         mBinding.osdText.setText(getOsdText(osd = ResUtil.getStringArray(R.array.select_player_osd)));
         mBinding.kernelText.setText((kernel = ResUtil.getStringArray(R.array.select_player_kernel))[PlayerSetting.getPlayer()]);
@@ -112,6 +113,7 @@ public class SettingPlayerActivity extends BaseActivity implements UaListener, B
         mBinding.caption.setOnLongClickListener(this::onCaption);
         mBinding.background.setOnClickListener(this::onBackground);
         mBinding.audioDecode.setOnClickListener(this::setAudioDecode);
+        mBinding.audioPassThrough.setOnClickListener(this::setAudioPassThrough);
         mBinding.videoDecode.setOnClickListener(this::setVideoDecode);
     }
 
@@ -306,6 +308,11 @@ public class SettingPlayerActivity extends BaseActivity implements UaListener, B
     private void setAudioDecode(View view) {
         PlayerSetting.putAudioPrefer(!PlayerSetting.isAudioPrefer());
         mBinding.audioDecodeText.setText(getSwitch(PlayerSetting.isAudioPrefer()));
+    }
+
+    private void setAudioPassThrough(View view) {
+        PlayerSetting.putAudioPassThrough(!PlayerSetting.isAudioPassThrough());
+        mBinding.audioPassThroughText.setText(getSwitch(PlayerSetting.isAudioPassThrough()));
     }
 
     private void setVideoDecode(View view) {
