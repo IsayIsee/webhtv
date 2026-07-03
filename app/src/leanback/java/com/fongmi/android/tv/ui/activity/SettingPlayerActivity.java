@@ -21,12 +21,12 @@ import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.base.BaseActivity;
 import com.fongmi.android.tv.ui.dialog.BufferDialog;
 import com.fongmi.android.tv.ui.dialog.LutDialog;
+import com.fongmi.android.tv.ui.dialog.PlayerOsdDialog;
 import com.fongmi.android.tv.ui.dialog.PlayerButtonConfigDialog;
 import com.fongmi.android.tv.ui.dialog.SpeedDialog;
 import com.fongmi.android.tv.ui.dialog.UaDialog;
 import com.fongmi.android.tv.utils.FileUtil;
 import com.fongmi.android.tv.utils.ResUtil;
-import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import java.text.DecimalFormat;
 
@@ -154,11 +154,10 @@ public class SettingPlayerActivity extends BaseActivity implements UaListener, B
     }
 
     private void onOsd(View view) {
-        boolean[] checked = getOsdChecked();
-        new MaterialAlertDialogBuilder(this).setTitle(R.string.player_osd).setNegativeButton(R.string.dialog_negative, null).setPositiveButton(R.string.dialog_positive, (dialog, which) -> {
+        PlayerOsdDialog.show(this, osd, getOsdChecked(), checked -> {
             setOsdChecked(checked);
             mBinding.osdText.setText(getOsdText(osd));
-        }).setMultiChoiceItems(osd, checked, (dialog, which, isChecked) -> checked[which] = isChecked).show();
+        });
     }
 
     private void setPlayerButtonsText() {

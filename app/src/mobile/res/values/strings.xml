@@ -85,4 +85,9 @@
         <item>PiP</item>
     </string-array>
 
+    <string-array name="select_pad_live_mode">
+        <item>Fullscreen</item>
+        <item>Standard</item>
+    </string-array>
+
 </resources>

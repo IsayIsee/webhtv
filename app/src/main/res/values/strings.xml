@@ -25,6 +25,9 @@
     <string name="keep">Keep</string>
     <string name="keep_add">Added</string>
     <string name="keep_del">Removed</string>
+    <string name="exit_confirm_title">Exit app?</string>
+    <string name="exit_confirm_message">The current page will close. Background playback will continue if it is running.</string>
+    <string name="exit_confirm_positive">Exit</string>
 
     <!-- Play -->
     <string name="play">Play</string>
@@ -41,6 +44,7 @@
     <string name="play_speed">1.00</string>
     <string name="play_reset">Reset</string>
     <string name="play_decode">Hard</string>
+    <string name="play_params">Playback params</string>
     <string name="play_timer">Timer</string>
     <string name="play_title">Chapter</string>
     <string name="play_scale">Default</string>
@@ -782,6 +786,7 @@
     <string name="player_render">Render</string>
     <string name="player_button_config">Player buttons</string>
     <string name="player_button_config_summary">%1$d/%2$d shown</string>
+    <string name="player_pad_live">Tablet live</string>
     <string name="player_button_up">Up</string>
     <string name="player_button_down">Down</string>
     <string name="play_episodes">Episodes</string>

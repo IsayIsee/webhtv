@@ -36,14 +36,13 @@ import java.util.List;
 
 public class SiteDialog extends BaseAlertDialog implements SiteAdapter.OnClickListener {
 
-    private static String selectedGroup = "";
-
     private DialogSiteBinding binding;
     private SiteListener listener;
     private SiteAdapter adapter;
     private ItemTouchHelper sortTouchHelper;
     private SpaceItemDecoration itemDecoration;
     private List<String> groups;
+    private String selectedGroup = "";
     private boolean search;
     private boolean change;
     private boolean block;
