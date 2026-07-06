@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.audio.AudioRendererEventListener;
 import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider;
 import androidx.media3.exoplayer.audio.DefaultAudioSink;
+import androidx.media3.exoplayer.mediacodec.MediaCodecInfo;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
@@ -113,8 +114,7 @@ public class ExoUtil {
     }
 
     private static int getVideoRenderMode(int decode) {
-        if (decode == PlayerEngine.HARD && PlayerSetting.isExoEnhanced()) return DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF;
-        return decode == PlayerEngine.HARD ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER;
+        return decode == PlayerEngine.HARD ? DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF : DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER;
     }
 
     private static int getAudioRenderMode(int decode) {
@@ -221,12 +221,23 @@ public class ExoUtil {
 
         @Override
         protected void buildVideoRenderers(Context context, int extensionRendererMode, MediaCodecSelector mediaCodecSelector, boolean enableDecoderFallback, Handler eventHandler, VideoRendererEventListener eventListener, long allowedVideoJoiningTimeMs, ArrayList<Renderer> out) {
-            super.buildVideoRenderers(context, videoRenderMode, mediaCodecSelector, enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, out);
+            super.buildVideoRenderers(context, videoRenderMode, getVideoCodecSelector(mediaCodecSelector), enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, out);
             if (videoRenderMode == EXTENSION_RENDERER_MODE_OFF) return;
             try {
                 out.add(getExtensionRendererIndex(videoRenderMode, videoPrefer, out), new FfmpegVideoRenderer(allowedVideoJoiningTimeMs, eventHandler, eventListener, MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY));
             } catch (Throwable ignored) {
             }
+        }
+
+        private MediaCodecSelector getVideoCodecSelector(MediaCodecSelector mediaCodecSelector) {
+            if (videoRenderMode != EXTENSION_RENDERER_MODE_OFF) return mediaCodecSelector;
+            return (mimeType, requiresSecureDecoder, requiresTunnelingDecoder) -> {
+                List<MediaCodecInfo> infos = mediaCodecSelector.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
+                if (mimeType == null || !mimeType.startsWith("video/")) return infos;
+                List<MediaCodecInfo> hardwareInfos = new ArrayList<>();
+                for (MediaCodecInfo info : infos) if (info.hardwareAccelerated) hardwareInfos.add(info);
+                return hardwareInfos;
+            };
         }
 
         private int getExtensionRendererIndex(int extensionRendererMode, boolean prefer, ArrayList<Renderer> out) {

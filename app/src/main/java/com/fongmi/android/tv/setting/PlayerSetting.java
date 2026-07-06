@@ -150,6 +150,14 @@ public class PlayerSetting {
         Prefers.put("player_auto_change", autoChange);
     }
 
+    public static boolean isAutoPlay() {
+        return Prefers.getBoolean("player_auto_play", true);
+    }
+
+    public static void putAutoPlay(boolean autoPlay) {
+        Prefers.put("player_auto_play", autoPlay);
+    }
+
     public static int getBackground() {
         return Prefers.getInt("background", 2);
     }

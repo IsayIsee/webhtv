@@ -68,11 +68,17 @@ public class IjkPlayerEngine implements PlayerEngine {
 
     @Override
     public void start(PlaySpec spec) {
+        start(spec, true);
+    }
+
+    @Override
+    public void start(PlaySpec spec, boolean playWhenReady) {
         this.spec = spec;
-        SpiderDebug.log("player-engine", "start ijk decode=%d url=%s headers=%s", decode, spec.getUrl(), spec.getHeaders());
+        SpiderDebug.log("player-engine", "start ijk decode=%d play=%s url=%s headers=%s", decode, playWhenReady, spec.getUrl(), spec.getHeaders());
         player.setMediaItem(ExoUtil.getMediaItem(spec, decode));
         player.prepare();
-        player.play();
+        if (playWhenReady) player.play();
+        else player.pause();
     }
 
     @Override

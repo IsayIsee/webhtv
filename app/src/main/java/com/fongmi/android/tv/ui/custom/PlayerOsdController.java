@@ -242,7 +242,7 @@ public class PlayerOsdController {
         String enhance = switchText(PlayerSetting.isExoEnhanced());
         String passThrough = switchText(PlayerSetting.isAudioPassThrough());
         String playerText = join(" / ", player.getPlayerText(), player.getDecodeText(), render, "隧道 " + tunnel, "EXO增强 " + enhance, "音频直通 " + passThrough, player.isIjk() ? "" : "FFmpeg音频兜底 开");
-        String error = join(" ", snapshot.errorCode(), shortText(snapshot.errorMessage(), 72));
+        String error = getErrorText(player, snapshot);
         String display = getDisplayRefreshText();
         return join("\n",
                 row("结论", getDiagnosis(player, snapshot, video, audioTrack)),
@@ -258,6 +258,7 @@ public class PlayerOsdController {
     }
 
     private String getDiagnosis(PlayerManager player, PlaybackAnalyticsListener.Snapshot snapshot, Format video, AudioTrackState audioTrack) {
+        if (isDecodeError(snapshot) && player.isHardDecode()) return "硬件解码失败：设备可能不支持该视频编码、分辨率、帧率或规格；已禁止自动软解，可手动切换软解重试";
         if (!TextUtils.isEmpty(snapshot.errorCode())) return "播放器报错，先看错误行";
         if (audioTrack.hasTracks() && audioTrack.isUnsupported()) return "音频轨不支持：" + summarizeAudioFormat(audioTrack.format()) + " / " + supportText(audioTrack.support());
         if (audioTrack.hasTracks() && !audioTrack.selected() && snapshot.audioFormat() == null && player.getPlaybackState() == androidx.media3.common.Player.STATE_READY) return "已发现音轨但未选中，可能无声";
@@ -270,6 +271,23 @@ public class PlayerOsdController {
         if (video != null && video.bitrate >= 30_000_000) return "资源码率较高，对网络和解码要求高";
         if (audioTrack.hasTracks() && snapshot.audioFormat() == null) return "正在等待音频轨信息";
         return "正常";
+    }
+
+    private String getErrorText(PlayerManager player, PlaybackAnalyticsListener.Snapshot snapshot) {
+        String raw = join(" ", snapshot.errorCode(), shortText(snapshot.errorMessage(), 72));
+        String explanation = getErrorExplanation(player, snapshot);
+        return join(" / ", raw, explanation);
+    }
+
+    private String getErrorExplanation(PlayerManager player, PlaybackAnalyticsListener.Snapshot snapshot) {
+        if (isDecodeError(snapshot) && player.isHardDecode()) return "中文说明：硬解失败，设备硬件解码器可能不支持当前视频规格；不会自动切软解";
+        if (isDecodeError(snapshot)) return "中文说明：软解/解码流程失败，请尝试切回硬解或更换资源";
+        return "";
+    }
+
+    private boolean isDecodeError(PlaybackAnalyticsListener.Snapshot snapshot) {
+        String code = snapshot.errorCode();
+        return "ERROR_CODE_DECODER_INIT_FAILED".equals(code) || "ERROR_CODE_DECODER_QUERY_FAILED".equals(code) || "ERROR_CODE_DECODING_FAILED".equals(code);
     }
 
     private String summarizeVideo(Format format, PlayerManager player, String decoder) {

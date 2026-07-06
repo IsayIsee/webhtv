@@ -352,6 +352,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         mBinding.control.action.invert.setSelected(LiveSetting.isInvert());
         mBinding.control.action.across.setSelected(LiveSetting.isAcross());
         mBinding.control.action.change.setSelected(LiveSetting.isChange());
+        applyLiveListStyle();
         mBinding.video.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> mPiP.update(this, view));
     }
 
@@ -1280,6 +1281,12 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     @Override
+    public void onLiveListStylePanel(boolean classic) {
+        LiveSetting.putListStyleClassic(classic);
+        applyLiveListStyle();
+    }
+
+    @Override
     public void onLiveScalePanel(int scale) {
         if (mKeyDown.getScale() != 1.0f) mKeyDown.resetScale();
         setScale(scale);
@@ -1814,18 +1821,32 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         if (overlay) {
             moveLiveMenuToVideo();
             mBinding.recycler.setOrientation(LinearLayoutCompat.HORIZONTAL);
-            mBinding.recycler.setBackgroundResource(R.drawable.shape_live_list);
             if (mBinding.liveCurrent != null) mBinding.liveCurrent.setVisibility(View.GONE);
             setLiveListContainerOverlay();
             updateOverlayMenuWidths();
         } else {
             moveLiveMenuToRoot();
             mBinding.recycler.setOrientation(LinearLayoutCompat.VERTICAL);
-            mBinding.recycler.setBackgroundColor(Color.TRANSPARENT);
             if (mBinding.liveCurrent != null) mBinding.liveCurrent.setVisibility(View.VISIBLE);
             setLiveListContainerEmbedded();
             restoreEmbeddedMenuWidths();
         }
+        applyLiveListStyle();
+    }
+
+    private void applyLiveListStyle() {
+        if (mBinding == null) return;
+        if (liveMenuOverlay) {
+            mBinding.recycler.setBackgroundResource(R.drawable.shape_live_list);
+        } else {
+            mBinding.recycler.setBackgroundResource(LiveSetting.isListStyleClassic() ? R.color.transparent : R.drawable.shape_live_embedded_list);
+        }
+        if (mBinding.liveCurrent != null) {
+            mBinding.liveCurrent.setBackgroundResource(LiveSetting.isListStyleClassic() ? R.drawable.shape_live_classic : R.drawable.shape_live);
+        }
+        if (mGroupAdapter != null) mGroupAdapter.notifyDataSetChanged();
+        if (mChannelAdapter != null) mChannelAdapter.notifyDataSetChanged();
+        if (mEpgDataAdapter != null) mEpgDataAdapter.notifyDataSetChanged();
     }
 
     private void moveLiveMenuToVideo() {

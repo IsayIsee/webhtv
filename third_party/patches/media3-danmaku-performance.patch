@@ -1,0 +1,284 @@
+diff --git a/libraries/ui_danmaku/src/main/java/androidx/media3/ui/danmaku/DanmakuController.java b/libraries/ui_danmaku/src/main/java/androidx/media3/ui/danmaku/DanmakuController.java
+index 81f19be214..40d9bfc34d 100644
+--- a/libraries/ui_danmaku/src/main/java/androidx/media3/ui/danmaku/DanmakuController.java
++++ b/libraries/ui_danmaku/src/main/java/androidx/media3/ui/danmaku/DanmakuController.java
+@@ -64,6 +64,9 @@ public final class DanmakuController {
+   private static final long BACKWARD_FILL_DELAY_MS = 2_000;
+   private static final long BACKWARD_FILL_SEEK_DELAY_MS = 200L;
+   private static final long POSITION_POLL_INTERVAL_MS = 1_000L;
++  private static final int WINDOW_ITEM_LIMIT_MULTIPLIER = 12;
++  private static final int MIN_WINDOW_ITEM_LIMIT = 300;
++  private static final int MAX_WINDOW_ITEM_LIMIT = 2400;
+   private final PlayerListener playerListener;
+   private final List<Parser> parsers = new ArrayList<>();
+   private final List<Fetcher> fetchers = new ArrayList<>();
+@@ -135,7 +138,68 @@ public final class DanmakuController {
+     parsers.add(IQIYIParser.INSTANCE);
+   }
+ 
+-  private static List<Danmaku> subList(Danmaku[] sorted, long fromMs, long toMs) {
++  private static List<Danmaku> subList(Danmaku[] sorted, int fromIndex, int toIndex) {
++    if (fromIndex >= toIndex) {
++      return Collections.emptyList();
++    }
++    return Arrays.asList(sorted).subList(fromIndex, toIndex);
++  }
++
++  private static Danmaku[] sortedCopyOf(@Nullable List<Danmaku> items) {
++    if (items == null || items.isEmpty()) {
++      return new Danmaku[0];
++    }
++    Danmaku[] sorted = items.toArray(new Danmaku[0]);
++    Arrays.sort(sorted, Danmaku.BY_TIME);
++    return sorted;
++  }
++
++  private static int windowItemLimit(DanmakuConfig config) {
++    long scaled = Math.max(1, config.maxOnScreen) * (long) WINDOW_ITEM_LIMIT_MULTIPLIER;
++    return (int) Math.max(MIN_WINDOW_ITEM_LIMIT, Math.min(MAX_WINDOW_ITEM_LIMIT, scaled));
++  }
++
++  private static boolean isRenderable(Danmaku d, DanmakuConfig config) {
++    switch (d.type) {
++      case Danmaku.TYPE_SCROLL:
++        if (!config.showScroll) {
++          return false;
++        }
++        break;
++      case Danmaku.TYPE_REVERSE:
++        if (!config.showReverse) {
++          return false;
++        }
++        break;
++      case Danmaku.TYPE_TOP:
++        if (!config.showTop) {
++          return false;
++        }
++        break;
++      case Danmaku.TYPE_BOTTOM:
++        if (!config.showBottom) {
++          return false;
++        }
++        break;
++      case Danmaku.TYPE_POSITIONED:
++        if (!config.showPositioned) {
++          return false;
++        }
++        break;
++      default:
++        return false;
++    }
++    switch (d.pool) {
++      case Danmaku.POOL_SUBTITLE:
++        return config.showSubtitle;
++      case Danmaku.POOL_SPECIAL:
++        return config.showSpecial;
++      default:
++        return true;
++    }
++  }
++
++  private List<Danmaku> windowItems(Danmaku[] sorted, long fromMs, long toMs) {
+     if (sorted.length == 0 || fromMs > toMs) {
+       return Collections.emptyList();
+     }
+@@ -144,7 +208,57 @@ public final class DanmakuController {
+     if (lo >= hi) {
+       return Collections.emptyList();
+     }
+-    return Arrays.asList(sorted).subList(lo, hi);
++    return limitWindowItems(sorted, lo, hi);
++  }
++
++  private List<Danmaku> limitWindowItems(Danmaku[] sorted, int fromIndex, int toIndex) {
++    int total = toIndex - fromIndex;
++    if (total <= 0) {
++      return Collections.emptyList();
++    }
++    DanmakuConfig config = getConfig();
++    int limit = windowItemLimit(config);
++    int visibleCount = 0;
++    boolean allRenderable = true;
++    for (int i = fromIndex; i < toIndex; i++) {
++      if (isRenderable(sorted[i], config)) {
++        visibleCount++;
++      } else {
++        allRenderable = false;
++      }
++    }
++    if (visibleCount == 0) {
++      return Collections.emptyList();
++    }
++    if (visibleCount <= limit) {
++      if (allRenderable) {
++        return subList(sorted, fromIndex, toIndex);
++      }
++      List<Danmaku> visible = new ArrayList<>(visibleCount);
++      for (int i = fromIndex; i < toIndex; i++) {
++        Danmaku d = sorted[i];
++        if (isRenderable(d, config)) {
++          visible.add(d);
++        }
++      }
++      return visible;
++    }
++    List<Danmaku> sampled = new ArrayList<>(limit);
++    int visibleIndex = 0;
++    int picked = 0;
++    for (int i = fromIndex; i < toIndex && picked < limit; i++) {
++      Danmaku d = sorted[i];
++      if (!isRenderable(d, config)) {
++        continue;
++      }
++      long target = picked * (long) visibleCount / limit;
++      if (visibleIndex >= target) {
++        sampled.add(d);
++        picked++;
++      }
++      visibleIndex++;
++    }
++    return sampled;
+   }
+ 
+   private static int lowerBound(Danmaku[] sorted, long target) {
+@@ -264,17 +378,27 @@ public final class DanmakuController {
+   }
+ 
+   public void setItems(List<Danmaku> items) {
+-    loadGeneration.incrementAndGet();
++    ensureLoaderThread();
++    int generation = loadGeneration.incrementAndGet();
+     cancelActiveSession();
+-    sortedItems = items.toArray(new Danmaku[0]);
+-    Arrays.sort(sortedItems, Danmaku.BY_TIME);
+-    loadedFrom = Long.MIN_VALUE;
+-    loadedTo = Long.MIN_VALUE;
+-    if (player != null) {
+-      syncToPlayer(true);
+-    } else if (danmakuView != null) {
+-      extendWindowTo(0, true);
++    resetWindowState();
++    if (danmakuView != null) {
++      danmakuView.clear();
++    }
++    List<Danmaku> snapshot = items == null || items.isEmpty() ? Collections.emptyList() : new ArrayList<>(items);
++    if (loaderHandler == null) {
++      applySortedItems(sortedCopyOf(snapshot));
++      return;
+     }
++    loaderHandler.post(() -> {
++      Danmaku[] prepared = sortedCopyOf(snapshot);
++      mainHandler.post(() -> {
++        if (loadGeneration.get() != generation) {
++          return;
++        }
++        applySortedItems(prepared);
++      });
++    });
+   }
+ 
+   public void clearItems() {
+@@ -422,7 +546,7 @@ public final class DanmakuController {
+       long newFrom = sourceMs - windowBehindMs;
+       if (danmakuView != null) {
+         danmakuView.clear();
+-        List<Danmaku> window = subList(sortedItems, newFrom, desiredTo);
++        List<Danmaku> window = windowItems(sortedItems, newFrom, desiredTo);
+         if (!window.isEmpty()) {
+           danmakuView.addItems(window);
+         }
+@@ -430,7 +554,7 @@ public final class DanmakuController {
+       loadedFrom = newFrom;
+     } else {
+       if (danmakuView != null) {
+-        List<Danmaku> extension = subList(sortedItems, loadedTo + 1, desiredTo);
++        List<Danmaku> extension = windowItems(sortedItems, loadedTo + 1, desiredTo);
+         if (!extension.isEmpty()) {
+           danmakuView.addItems(extension);
+         }
+@@ -444,7 +568,7 @@ public final class DanmakuController {
+     loadedFrom = sourceMs - windowBehindMs;
+     loadedTo = sourceMs + windowAheadMs;
+     if (danmakuView != null) {
+-      danmakuView.replacePool(sortedItems.length == 0 ? Collections.emptyList() : subList(sortedItems, loadedFrom, loadedTo));
++      danmakuView.replacePool(sortedItems.length == 0 ? Collections.emptyList() : windowItems(sortedItems, loadedFrom, loadedTo));
+     }
+   }
+ 
+@@ -470,12 +594,21 @@ public final class DanmakuController {
+     scheduleNextLoad(loadGeneration.get());
+   }
+ 
+-  private void mergeItems(List<Danmaku> newItems) {
+-    if (newItems.isEmpty()) {
++  private void applySortedItems(Danmaku[] items) {
++    sortedItems = items;
++    loadedFrom = Long.MIN_VALUE;
++    loadedTo = Long.MIN_VALUE;
++    if (player != null) {
++      syncToPlayer(true);
++    } else if (danmakuView != null) {
++      extendWindowTo(0, true);
++    }
++  }
++
++  private void mergeItems(Danmaku[] incoming) {
++    if (incoming.length == 0) {
+       return;
+     }
+-    Danmaku[] incoming = newItems.toArray(new Danmaku[0]);
+-    Arrays.sort(incoming, Danmaku.BY_TIME);
+     Danmaku[] merged = new Danmaku[sortedItems.length + incoming.length];
+     int i = 0, j = 0, k = 0;
+     while (i < sortedItems.length && j < incoming.length) {
+@@ -507,7 +640,7 @@ public final class DanmakuController {
+       if (freshTo > loadedTo) {
+         loadedTo = freshTo;
+       }
+-      List<Danmaku> visible = subList(incoming, loadedFrom, loadedTo);
++      List<Danmaku> visible = windowItems(incoming, loadedFrom, loadedTo);
+       if (!visible.isEmpty()) {
+         danmakuView.addItems(visible);
+       }
+@@ -558,13 +691,15 @@ public final class DanmakuController {
+           }
+         }
+         List<Danmaku> result = items != null ? items : Collections.emptyList();
++        Danmaku[] prepared = sortedCopyOf(result);
++        int count = prepared.length;
+         mainHandler.post(() -> {
+           if (loadGeneration.get() != generation) {
+             return;
+           }
+-          setItems(result);
++          applySortedItems(prepared);
+           if (listener != null) {
+-            listener.onLoadCompleted(uri, result.size());
++            listener.onLoadCompleted(uri, count);
+           }
+         });
+       } finally {
+@@ -673,7 +808,7 @@ public final class DanmakuController {
+       failed = true;
+     }
+     final boolean isFailed = failed;
+-    final List<Danmaku> finalItems = items;
++    final Danmaku[] finalItems = sortedCopyOf(items);
+     mainHandler.post(() -> {
+       if (loadGeneration.get() != generation) {
+         return;
+@@ -687,12 +822,12 @@ public final class DanmakuController {
+     });
+   }
+ 
+-  private void onSegmentDelivered(Fetcher.Session session, int segNum, List<Danmaku> items, int generation) {
++  private void onSegmentDelivered(Fetcher.Session session, int segNum, Danmaku[] items, int generation) {
+     loadedSegments.add(segNum);
+     if (listener != null && activeUri != null) {
+       listener.onLoadProgress(activeUri, loadedSegments.size(), sessionTotalSegs);
+     }
+-    if (!items.isEmpty()) {
++    if (items.length != 0) {
+       mergeItems(items);
+     }
+     if (loadedSegments.size() >= sessionTotalSegs && activeUri != null) {

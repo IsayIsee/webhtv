@@ -811,6 +811,7 @@
     <string name="player_preload_size">预载容量</string>
     <string name="player_preload_time">预载时间</string>
     <string name="player_preload_time_value">%1$d 秒</string>
+    <string name="player_auto_play">自动播放</string>
     <string name="player_auto_change">自动换源</string>
     <string name="player_speed">长按倍速</string>
     <string name="player_ua">User-Agent</string>

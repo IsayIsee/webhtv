@@ -1,5 +1,10 @@
 package com.fongmi.android.tv.ui.dialog;
 
+import android.app.Dialog;
+import android.os.Bundle;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.fragment.app.FragmentActivity;
 import androidx.viewbinding.ViewBinding;
 
@@ -29,6 +34,15 @@ public class RestoreDialog extends BaseAlertDialog implements RestoreAdapter.OnC
 
     public void show(FragmentActivity activity) {
         show(activity.getSupportFragmentManager(), null);
+    }
+
+    @Override
+    @NonNull
+    public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
+        Dialog dialog = LightDialog.create(requireContext(), null, getBinding().getRoot());
+        initView();
+        initEvent();
+        return dialog;
     }
 
     @Override

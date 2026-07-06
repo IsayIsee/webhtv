@@ -215,10 +215,10 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
             onError(ResUtil.getString(R.string.error_play_url));
         } else if (result.needParse() || useParse) {
             attachSurface();
-            player().parse(key, result, useParse, metadata);
+            player().parse(key, result, useParse, metadata, PlayerSetting.isAutoPlay());
         } else {
             attachSurface();
-            player().start(PlaySpec.from(result, key, metadata), timeout);
+            player().start(PlaySpec.from(result, key, metadata), timeout, PlayerSetting.isAutoPlay());
         }
     }
 

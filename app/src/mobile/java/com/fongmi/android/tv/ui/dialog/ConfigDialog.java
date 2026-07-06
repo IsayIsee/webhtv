@@ -1,10 +1,14 @@
 package com.fongmi.android.tv.ui.dialog;
 
 import android.app.Activity;
-import android.content.DialogInterface;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -21,6 +25,7 @@ import com.fongmi.android.tv.databinding.DialogConfigBinding;
 import com.fongmi.android.tv.impl.ConfigListener;
 import com.fongmi.android.tv.ui.custom.CustomTextListener;
 import com.fongmi.android.tv.utils.FileChooser;
+import com.fongmi.android.tv.utils.ResUtil;
 import com.github.catvod.utils.Path;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
@@ -67,19 +72,22 @@ public class ConfigDialog extends BaseAlertDialog {
 
     @Override
     protected MaterialAlertDialogBuilder getBuilder() {
-        return builder().setTitle(type == 0 ? R.string.setting_vod : type == 1 ? R.string.setting_live : R.string.setting_wall).setView(getBinding().getRoot()).setPositiveButton(edit ? R.string.dialog_edit : R.string.dialog_positive, this::onPositive).setNegativeButton(R.string.dialog_negative, null);
+        return new MaterialAlertDialogBuilder(requireActivity(), R.style.ThemeOverlay_WebHTV_LightDialog).setView(getBinding().getRoot());
     }
 
     @Override
     protected void initView() {
+        binding.title.setText(type == 0 ? R.string.setting_vod : type == 1 ? R.string.setting_live : R.string.setting_wall);
+        binding.positive.setText(edit ? R.string.dialog_edit : R.string.dialog_positive);
         binding.name.setText(getConfig().getName());
         binding.url.setText(ori = getConfig().getUrl());
-        binding.input.setVisibility(edit ? View.VISIBLE : View.GONE);
         binding.url.setSelection(TextUtils.isEmpty(ori) ? 0 : ori.length());
     }
 
     @Override
     protected void initEvent() {
+        binding.negative.setOnClickListener(v -> dismiss());
+        binding.positive.setOnClickListener(v -> onPositive());
         binding.choose.setEndIconOnClickListener(this::onChoose);
         binding.url.addTextChangedListener(new CustomTextListener() {
             @Override
@@ -88,9 +96,20 @@ public class ConfigDialog extends BaseAlertDialog {
             }
         });
         binding.url.setOnEditorActionListener((textView, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) onPositive(null, 0);
+            if (actionId == EditorInfo.IME_ACTION_DONE) onPositive();
             return true;
         });
+        binding.name.setOnEditorActionListener((textView, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) onPositive();
+            return true;
+        });
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        configureWindow();
+        binding.url.requestFocus();
     }
 
     private Config getConfig() {
@@ -123,18 +142,42 @@ public class ConfigDialog extends BaseAlertDialog {
         }
     }
 
-    private void onPositive(DialogInterface dialog, int which) {
+    private void onPositive() {
         String url = binding.url.getText().toString().trim();
         String name = binding.name.getText().toString().trim();
-        if (edit) Config.find(ori, type).url(url).name(name).update();
-        if (url.isEmpty()) Config.delete(ori, type);
-        ((ConfigListener) requireParentFragment()).setConfig(Config.find(url, type));
+        Config config;
+        if (url.isEmpty()) {
+            Config.delete(ori, type);
+            config = Config.create(type);
+        } else if (TextUtils.isEmpty(ori)) {
+            config = Config.find(url, type).name(name).update();
+        } else {
+            config = Config.find(ori, type).url(url).name(name).update();
+        }
+        ((ConfigListener) requireParentFragment()).setConfig(config);
         dismiss();
+    }
+
+    private void configureWindow() {
+        if (getDialog() == null || getDialog().getWindow() == null) return;
+        Window window = getDialog().getWindow();
+        WindowManager.LayoutParams params = window.getAttributes();
+        boolean land = ResUtil.isLand(requireContext());
+        int width = Math.min(Math.round(ResUtil.getScreenWidth(requireContext()) * (land ? 0.58f : 0.92f)), ResUtil.dp2px(560));
+        params.width = Math.max(width, ResUtil.dp2px(320));
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT;
+        params.gravity = Gravity.CENTER;
+        window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        window.getDecorView().setPadding(0, 0, 0, 0);
+        window.setAttributes(params);
+        window.setLayout(params.width, WindowManager.LayoutParams.WRAP_CONTENT);
     }
 
     private final ActivityResultLauncher<Intent> launcher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
         if (result.getResultCode() != Activity.RESULT_OK || result.getData() == null || result.getData().getData() == null) return;
-        ((ConfigListener) requireParentFragment()).setConfig(Config.find("file:/" + FileChooser.getPathFromUri(result.getData().getData()).replace(Path.rootPath(), ""), type));
+        String name = binding.name.getText().toString().trim();
+        String url = "file:/" + FileChooser.getPathFromUri(result.getData().getData()).replace(Path.rootPath(), "");
+        ((ConfigListener) requireParentFragment()).setConfig(Config.find(url, type).name(name).update());
         dismiss();
     });
 }

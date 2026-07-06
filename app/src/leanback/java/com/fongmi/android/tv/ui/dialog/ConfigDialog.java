@@ -1,13 +1,17 @@
 package com.fongmi.android.tv.ui.dialog;
 
+import android.app.Dialog;
 import android.app.Activity;
 import android.content.Intent;
+import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.fragment.app.FragmentActivity;
 import androidx.viewbinding.ViewBinding;
 
@@ -71,6 +75,15 @@ public class ConfigDialog extends BaseAlertDialog {
     }
 
     @Override
+    @NonNull
+    public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
+        Dialog dialog = LightDialog.create(requireContext(), null, getBinding().getRoot());
+        initView();
+        initEvent();
+        return dialog;
+    }
+
+    @Override
     protected ViewBinding getBinding() {
         return binding = DialogConfigBinding.inflate(getLayoutInflater());
     }
@@ -85,7 +98,7 @@ public class ConfigDialog extends BaseAlertDialog {
         binding.text.setText(url = getUrl());
         binding.text.setSelection(TextUtils.isEmpty(url) ? 0 : url.length());
         binding.positive.setText(edit ? R.string.dialog_edit : R.string.dialog_positive);
-        binding.code.setImageBitmap(QRCode.getBitmap(Server.get().getAddress(3), 200, 0));
+        binding.code.setImageBitmap(QRCode.getLightBitmap(Server.get().getAddress(3), 200, 0));
         binding.info.setText(ResUtil.getString(R.string.push_info, Server.get().getAddress()).replace("\uff0c", "\n"));
     }
 
