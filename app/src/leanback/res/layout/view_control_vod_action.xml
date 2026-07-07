@@ -68,6 +68,12 @@
             android:layout_marginEnd="8dp"
             android:text="@string/play_params" />
 
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/codecCapability"
+            style="@style/Control"
+            android:layout_marginEnd="8dp"
+            android:text="@string/codec_capability_short" />
+
         <com.fongmi.android.tv.ui.custom.CustomUpDownView
             android:id="@+id/speed"
             style="@style/Control"

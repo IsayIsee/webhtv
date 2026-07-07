@@ -104,11 +104,10 @@
                     style="@style/ControlSheetButton"
                     tools:text="片尾" />
 
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="34dp"
-                    android:layout_marginEnd="7dp"
-                    android:layout_weight="1" />
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/codecCapability"
+                    style="@style/ControlSheetButton"
+                    android:text="@string/codec_capability_short" />
 
             </androidx.appcompat.widget.LinearLayoutCompat>
 

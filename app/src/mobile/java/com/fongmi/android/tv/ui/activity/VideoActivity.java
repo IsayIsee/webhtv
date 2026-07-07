@@ -91,6 +91,7 @@ import com.fongmi.android.tv.ui.custom.CustomSeekView;
 import com.fongmi.android.tv.ui.custom.PlayerOsdController;
 import com.fongmi.android.tv.ui.custom.SpaceItemDecoration;
 import com.fongmi.android.tv.ui.dialog.CastDialog;
+import com.fongmi.android.tv.ui.dialog.CodecCapabilityDialog;
 import com.fongmi.android.tv.ui.dialog.ControlDialog;
 import com.fongmi.android.tv.ui.dialog.DanmakuDialog;
 import com.fongmi.android.tv.ui.dialog.EpisodeGridDialog;
@@ -1182,6 +1183,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     public void onDanmakuPanel() {
         DanmakuDialog.create().player(player()).show(this);
+    }
+
+    @Override
+    public void onCodecCapabilityPanel() {
+        CodecCapabilityDialog.show(this, player());
     }
 
     @Override

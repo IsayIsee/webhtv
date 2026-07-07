@@ -22,6 +22,7 @@ import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -61,6 +62,7 @@ import com.fongmi.android.tv.gitcloud.drive.JGitDriveEngine;
 import com.fongmi.android.tv.gitcloud.provider.GitCloudProvider;
 import com.fongmi.android.tv.gitcloud.provider.GitCloudProviders;
 import com.fongmi.android.tv.gitcloud.secure.GitCloudTokenStore;
+import com.fongmi.android.tv.ui.custom.SafeScrollEditText;
 import com.fongmi.android.tv.ui.custom.SettingClipboardOverlay;
 import com.fongmi.android.tv.utils.Formatters;
 import com.fongmi.android.tv.utils.Notify;
@@ -1030,8 +1032,7 @@ public class GitCloudDialog extends BaseAlertDialog {
         editPath.edit.setEnabled(false);
         TextInput editContent = input("内容", false);
         editContent.edit.setText(content.text == null ? "" : content.text);
-        editContent.edit.setMinLines(10);
-        editContent.edit.setGravity(Gravity.TOP | Gravity.START);
+        setupTextEditor(editContent.edit, 10, 14);
         root.addView(editPath.layout);
         root.addView(editContent.layout);
         final android.app.Dialog[] holder = new android.app.Dialog[1];
@@ -1176,8 +1177,7 @@ public class GitCloudDialog extends BaseAlertDialog {
         TextInput editPath = input("远端路径", false);
         editPath.edit.setText(joinRemote(currentPath, "new-file.txt"));
         TextInput content = input("内容", false);
-        content.edit.setMinLines(6);
-        content.edit.setGravity(Gravity.TOP | Gravity.START);
+        setupTextEditor(content.edit, 6, 12);
         root.addView(editPath.layout);
         root.addView(content.layout);
         final android.app.Dialog[] holder = new android.app.Dialog[1];
@@ -2111,7 +2111,7 @@ public class GitCloudDialog extends BaseAlertDialog {
         LinearLayoutCompat.LayoutParams params = new LinearLayoutCompat.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(8);
         layout.setLayoutParams(params);
-        TextInputEditText edit = new TextInputEditText(layout.getContext());
+        TextInputEditText edit = "内容".contentEquals(hint) ? new SafeScrollEditText(layout.getContext()) : new TextInputEditText(layout.getContext());
         edit.setSingleLine(!"内容".contentEquals(hint));
         edit.setTextSize(14);
         edit.setTextColor(Color.parseColor("#202124"));
@@ -2121,6 +2121,21 @@ public class GitCloudDialog extends BaseAlertDialog {
         if (password) edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         layout.addView(edit, new LinearLayoutCompat.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return new TextInput(layout, edit);
+    }
+
+    private void setupTextEditor(TextInputEditText edit, int minLines, int maxLines) {
+        edit.setSingleLine(false);
+        edit.setMinLines(minLines);
+        edit.setMaxLines(maxLines);
+        edit.setGravity(Gravity.TOP | Gravity.START);
+        edit.setPaddingRelative(dp(14), dp(18), dp(20), dp(20));
+        edit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        edit.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        edit.setOnTouchListener((view, event) -> {
+            int action = event.getActionMasked();
+            view.getParent().requestDisallowInterceptTouchEvent(action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
+            return false;
+        });
     }
 
     private View section(String title) {

@@ -23,7 +23,7 @@ public class RestoreAdapter extends RecyclerView.Adapter<RestoreAdapter.ViewHold
     public RestoreAdapter(OnClickListener listener) {
         this.mItems = new ArrayList<>();
         this.listener = listener;
-        this.addAll();
+        this.reload();
     }
 
     public interface OnClickListener {
@@ -38,16 +38,20 @@ public class RestoreAdapter extends RecyclerView.Adapter<RestoreAdapter.ViewHold
         if (files == null) files = new File[0];
         for (File file : files) if (file.getName().startsWith("tv") && file.getName().endsWith(".bk.gz")) mItems.add(file);
         if (!mItems.isEmpty()) mItems.sort((f1, f2) -> Long.compare(f2.lastModified(), f1.lastModified()));
+    }
+
+    public int reload() {
+        mItems.clear();
+        addAll();
         notifyDataSetChanged();
+        return getItemCount();
     }
 
     public int remove(File item) {
         int position = mItems.indexOf(item);
         if (position == -1) return -1;
         Path.clear(item);
-        mItems.remove(position);
-        notifyItemRemoved(position);
-        return getItemCount();
+        return reload();
     }
 
     @Override

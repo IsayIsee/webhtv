@@ -8,9 +8,9 @@ import androidx.annotation.NonNull;
 import androidx.media3.common.C;
 import androidx.media3.common.Effect;
 import androidx.media3.common.Format;
+import androidx.media3.common.MediaEdition;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MediaMetadata;
-import androidx.media3.common.MediaTitle;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.Tracks;
@@ -61,6 +61,7 @@ public class PlayerManager implements ParseCallback {
 
     private static final long LOCAL_PROXY_READY_TIMEOUT_MS = 5000;
     private static final long LOCAL_PROXY_RETRY_DELAY_MS = 1000;
+    private static final long HARD_DECODE_SWITCH_RETRY_DELAY_MS = 1200;
     private static final int LOCAL_PROXY_MAX_RETRY = 2;
     private static final int LUT_WARMUP_RECOVERED_ERROR_REFRESH_THRESHOLD = 3;
     private static final long DANMAKU_FORCE_RELOAD_DEBOUNCE_MS = 10000;
@@ -97,6 +98,7 @@ public class PlayerManager implements ParseCallback {
     private boolean lutWarmupRecoveryActive;
     private boolean lutWarmupRefreshRequested;
     private boolean lutWarmupReloadPreviewPending;
+    private boolean hardDecodeSwitchRetryArmed;
     private boolean lutAllowed = true;
     private int playerType;
     private int retry;
@@ -174,8 +176,8 @@ public class PlayerManager implements ParseCallback {
         return engine.getCurrentTracks();
     }
 
-    public List<MediaTitle> getCurrentMediaTitles() {
-        return engine.getCurrentMediaTitles();
+    public List<MediaEdition> getCurrentMediaEditions() {
+        return engine.getCurrentMediaEditions();
     }
 
     public MediaItem getCurrentMediaItem() {
@@ -356,8 +358,9 @@ public class PlayerManager implements ParseCallback {
         setMediaItem();
     }
 
-    public void setTitle(MediaTitle title) {
-        if (spec != null) spec.setUrl(spec.getUri().buildUpon().fragment("title=" + title.index).build().toString());
+    public void setTitle(MediaEdition edition) {
+        if (spec != null) spec.setUrl(spec.getUri().buildUpon().fragment("edition=" + edition.index).build().toString());
+        if (engine.selectEdition(edition)) return;
         setMediaItem();
         seekTo(0);
     }
@@ -486,6 +489,7 @@ public class PlayerManager implements ParseCallback {
         App.removeCallbacks(runnable);
         retry = 0;
         localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
     }
 
     public void clear() {
@@ -507,8 +511,11 @@ public class PlayerManager implements ParseCallback {
     }
 
     public void toggleDecode() {
-        engine.setDecode(engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD);
-        rebuildPlayer();
+        int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
+        boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
+        hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
+        engine.setDecode(next);
+        rebuildPlayer(resetVideoSurface);
         setMediaItem();
     }
 
@@ -540,7 +547,7 @@ public class PlayerManager implements ParseCallback {
         if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player type=%d persist=%s position=%d spec=%s", type, persist, position, debugSpec());
         engine = buildEngine(playerType, decode);
         player = engine.getPlayer();
-        callback.onPlayerRebuild(player);
+        callback.onPlayerRebuild(player, false);
         if (spec == null || spec.getUrl() == null) return;
         this.playWhenReady = wasPlayWhenReady;
         setMediaItem(Constant.TIMEOUT_PLAY);
@@ -550,6 +557,10 @@ public class PlayerManager implements ParseCallback {
     }
 
     private void rebuildPlayer() {
+        rebuildPlayer(false);
+    }
+
+    private void rebuildPlayer(boolean resetVideoSurface) {
         player = engine.rebuild(listener);
         videoEffectsActive = false;
         videoEffectsDirty = false;
@@ -559,7 +570,7 @@ public class PlayerManager implements ParseCallback {
         lutPipelinePrepareInProgress = false;
         pendingLutPreview = false;
         waitingLutBeforePlay = false;
-        callback.onPlayerRebuild(player);
+        callback.onPlayerRebuild(player, resetVideoSurface);
     }
 
     private PlayerEngine buildEngine(int type, int decode) {
@@ -584,6 +595,7 @@ public class PlayerManager implements ParseCallback {
         exoFallbackTried = false;
         realtimeFallbackTried = false;
         localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
         clearDanmakuState();
         setMediaItem(timeout);
     }
@@ -600,6 +612,7 @@ public class PlayerManager implements ParseCallback {
         exoFallbackTried = false;
         realtimeFallbackTried = false;
         localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
         clearDanmakuState();
         parseJob = ParseJob.create(this).start(result, useParse);
     }
@@ -1171,7 +1184,7 @@ public class PlayerManager implements ParseCallback {
 
         void onReload(String msg);
 
-        void onPlayerRebuild(Player newPlayer);
+        void onPlayerRebuild(Player newPlayer, boolean resetVideoSurface);
     }
 
     private final Player.Listener listener = new Player.Listener() {
@@ -1181,6 +1194,7 @@ public class PlayerManager implements ParseCallback {
             if (state != Player.STATE_IDLE) App.removeCallbacks(runnable);
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "state=%s spec=%s", stateName(state), debugSpec());
             if (state == Player.STATE_READY) {
+                hardDecodeSwitchRetryArmed = false;
                 clearLutWarmupRecovery();
                 applyLutForCurrentItem();
             }
@@ -1203,7 +1217,7 @@ public class PlayerManager implements ParseCallback {
         }
 
         @Override
-        public void onMediaTitlesChanged(@NonNull List<MediaTitle> titles) {
+        public void onMediaEditionsChanged(@NonNull List<MediaEdition> editions) {
             callback.onTitlesChanged();
         }
 
@@ -1215,6 +1229,7 @@ public class PlayerManager implements ParseCallback {
             LocalProxyDebug.dumpIfLocalFailure(spec == null ? null : spec.getUrl(), e);
             if (retryLutFailure(e)) return;
             if (retryLutWarmupByRefresh(action, e)) return;
+            if (action == PlayerEngine.ErrorAction.DECODE && retryHardDecodeSwitch(e)) return;
             if (action == PlayerEngine.ErrorAction.FATAL && retryLocalProxy(e)) return;
             if (action == PlayerEngine.ErrorAction.FATAL && retryRealtimeFallback(e)) return;
             if (action == PlayerEngine.ErrorAction.FATAL && retryExoFallback(e)) return;
@@ -1233,6 +1248,40 @@ public class PlayerManager implements ParseCallback {
             }
         }
     };
+
+    private boolean retryHardDecodeSwitch(PlaybackException e) {
+        if (!hardDecodeSwitchRetryArmed || engine == null || player == null || spec == null || !engine.isHard()) return false;
+        if (e.errorCode != PlaybackException.ERROR_CODE_DECODER_INIT_FAILED && e.errorCode != PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED && e.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED) return false;
+        hardDecodeSwitchRetryArmed = false;
+        int seq = ++prepareSeq;
+        PlaySpec target = spec;
+        long position = Math.max(0, getPosition());
+        float speed = getSpeed();
+        boolean repeat = isRepeatOne();
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        App.removeCallbacks(runnable);
+        resetLutRuntimeState("hard_decode_switch_retry", true);
+        engine.release();
+        engine = buildEngine(playerType, PlayerEngine.HARD);
+        player = engine.getPlayer();
+        callback.onPlayerRebuild(player, true);
+        this.playWhenReady = wasPlayWhenReady;
+        initTrack = false;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "hard decode switch retry delay=%d position=%d spec=%s cause=%s", HARD_DECODE_SWITCH_RETRY_DELAY_MS, position, debugSpec(), causeChain(e));
+        App.post(() -> {
+            if (seq != prepareSeq || spec != target || engine == null || player == null || !engine.isHard()) return;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "hard decode switch retry start position=%d spec=%s", position, debugSpec());
+            setDanmakus(target.getDanmakus());
+            initTrack = false;
+            waitingLutBeforePlay = false;
+            engine.start(target.checkUa(), position, wasPlayWhenReady);
+            if (speed != 1f) setSpeed(speed);
+            setRepeatOne(repeat);
+            App.post(runnable, Constant.TIMEOUT_PLAY);
+            callback.onPrepare();
+        }, HARD_DECODE_SWITCH_RETRY_DELAY_MS);
+        return true;
+    }
 
     private boolean retryLutFailure(PlaybackException e) {
         if (!LutSetting.isEnabled()) return false;

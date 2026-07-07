@@ -28,6 +28,7 @@ import com.fongmi.android.tv.player.PlayerManager;
 import com.fongmi.android.tv.player.engine.PlaySpec;
 import com.fongmi.android.tv.player.exo.ExoUtil;
 import com.fongmi.android.tv.service.PlaybackService;
+import com.fongmi.android.tv.setting.PlaybackPerformanceSetting;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.ui.base.BaseActivity;
 import com.fongmi.android.tv.ui.custom.CustomSeekView;
@@ -307,13 +308,19 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         if (mService == null) return;
         View surface = getExoView().getVideoSurfaceView();
         if (!(surface instanceof SurfaceView surfaceView)) return;
-        if (!PlayerSetting.isExoEnhanced() || getRender() != PlayerSetting.RENDER_SURFACE || player().isIjk()) {
+        if (!PlaybackPerformanceSetting.isSurfaceFixedSizeEnabled() || getRender() != PlayerSetting.RENDER_SURFACE || player().isIjk()) {
             surfaceView.getHolder().setSizeFromLayout();
             return;
         }
         int width = size != null && size.width > 0 ? size.width : player().getVideoWidth();
         int height = size != null && size.height > 0 ? size.height : player().getVideoHeight();
         if (width <= 0 || height <= 0) return;
+        ExoUtil.EnhancedVideoProfile profile = ExoUtil.getEnhancedVideoProfile();
+        float scale = Math.min((float) profile.width() / width, (float) profile.height() / height);
+        if (scale < 1f) {
+            width = Math.max(1, Math.round(width * scale));
+            height = Math.max(1, Math.round(height * scale));
+        }
         surfaceView.getHolder().setFixedSize(width, height);
     }
 
@@ -336,6 +343,16 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
 
     private void detachSurface() {
         getExoView().setPlayer(null);
+    }
+
+    private void resetVideoSurfaceForDecoderSwitch() {
+        int targetRender = getRender();
+        int temporaryRender = targetRender == PlayerSetting.RENDER_TEXTURE ? PlayerSetting.RENDER_SURFACE : PlayerSetting.RENDER_TEXTURE;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-flow", "reset video surface for decoder switch temp=%d target=%d", temporaryRender, targetRender);
+        getExoView().setPlayer(null);
+        getExoView().setRender(temporaryRender);
+        getExoView().setRender(targetRender);
+        render = -1;
     }
 
     protected void setRender() {
@@ -435,8 +452,9 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         }
 
         @Override
-        public void onPlayerRebuild(Player player) {
+        public void onPlayerRebuild(Player player, boolean resetVideoSurface) {
             if (isOwner()) {
+                if (resetVideoSurface) resetVideoSurfaceForDecoderSwitch();
                 setRender();
                 PlaybackActivity.this.onPlayerRebuilt();
             }

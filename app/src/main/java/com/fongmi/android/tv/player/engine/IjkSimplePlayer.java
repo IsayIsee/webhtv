@@ -431,6 +431,10 @@ class IjkSimplePlayer extends SimpleBasePlayer implements IMediaPlayer.Listener 
     private void configureOptions(Uri uri) {
         String url = uri.toString();
         ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_loop_filter", 48);
+        if (decode == PlayerEngine.SOFT) {
+            ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "fast", 1);
+            ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_CODEC, "skip_frame", 8);
+        }
         ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_clear", 1);
         ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_timeout", -1);
         ijk.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "fflags", "fastseek");

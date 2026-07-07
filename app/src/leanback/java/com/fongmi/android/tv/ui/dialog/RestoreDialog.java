@@ -8,6 +8,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.FragmentActivity;
 import androidx.viewbinding.ViewBinding;
 
+import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.databinding.DialogRestoreBinding;
 import com.fongmi.android.tv.db.AppDatabase;
 import com.fongmi.android.tv.impl.Callback;
@@ -39,7 +40,7 @@ public class RestoreDialog extends BaseAlertDialog implements RestoreAdapter.OnC
     @Override
     @NonNull
     public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
-        Dialog dialog = LightDialog.create(requireContext(), null, getBinding().getRoot());
+        Dialog dialog = LightDialog.create(requireContext(), getString(R.string.restore_select), getBinding().getRoot());
         initView();
         initEvent();
         return dialog;
@@ -72,7 +73,12 @@ public class RestoreDialog extends BaseAlertDialog implements RestoreAdapter.OnC
 
     @Override
     public void onDeleteClick(File item) {
-        if (adapter.remove(item) == 0) dismiss();
+        int count = adapter.remove(item);
+        if (count == 0) {
+            dismiss();
+            return;
+        }
+        if (count > 0) binding.recycler.post(() -> binding.recycler.scrollToPosition(0));
     }
 
     @Override
