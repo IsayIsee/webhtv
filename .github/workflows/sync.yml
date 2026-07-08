@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: my_dev
+          ref: webhtv_dev
           fetch-depth: 0
           token: ${{ secrets.GB_TOKEN }}
 
@@ -46,7 +46,7 @@ jobs:
       - name: Fetch latest main
         run: git fetch origin main
 
-      - name: Try merge main into my_dev
+      - name: Try merge main into webhtv_dev
         id: merge
         run: |
           set +e
@@ -55,7 +55,7 @@ jobs:
 
       - name: Push if merge succeeded
         if: steps.merge.outputs.status == '0'
-        run: git push origin my_dev
+        run: git push origin webhtv_dev
 
       - name: Abort merge on conflict
         if: steps.merge.outputs.status != '0'
@@ -67,5 +67,5 @@ jobs:
           curl -sS -X POST "${{ secrets.MERGE_FAIL_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -d "{
-              \"text\": \"⚠️ 自动合并冲突: main -> my_dev\n仓库: ${{ github.repository }}\n时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)\n请手动处理: https://github.com/${{ github.repository }}/compare/my_dev...main\"
+              \"text\": \"⚠️ 自动合并冲突: main -> webhtv_dev\n仓库: ${{ github.repository }}\n时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)\n请手动处理: https://github.com/${{ github.repository }}/compare/webhtv_dev...main\"
             }"
