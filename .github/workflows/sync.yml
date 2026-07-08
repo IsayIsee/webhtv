@@ -16,7 +16,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GB_TOKEN }}
 
       - name: Add upstream remote
         run: |
@@ -36,7 +36,7 @@ jobs:
         with:
           ref: my_dev
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GB_TOKEN }}
 
       - name: Configure git identity
         run: |
