@@ -812,6 +812,9 @@
     <string name="player_performance">Playback performance</string>
     <string name="player_performance_recommended">Recommended</string>
     <string name="player_performance_compatible">Compatible</string>
+    <string name="player_performance_help">Guide</string>
+    <string name="player_performance_help_title">Playback performance guide</string>
+    <string name="player_performance_help_close">Close</string>
     <string name="player_kernel">Player engine</string>
     <string name="player_scale">Scale</string>
     <string name="player_lut">LUT color</string>
@@ -822,6 +825,7 @@
     <string name="mpv_config_default">Default</string>
     <string name="mpv_config_local">Local mpv.conf</string>
     <string name="mpv_config_url">URL mpv.conf</string>
+    <string name="mpv_config_name_hint">Name (optional)</string>
     <string name="mpv_config_history">History</string>
     <string name="mpv_config_history_empty">No MPV config history</string>
     <string name="mpv_config_script_hint">Script URL or choose local script</string>

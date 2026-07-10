@@ -324,16 +324,17 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private Flag getFlag() {
-        return mFlagAdapter.getActivated();
+        return mFlagAdapter == null || mFlagAdapter.isEmpty() ? null : mFlagAdapter.getActivated();
     }
 
     private Episode getEpisode() {
-        if (mFlagAdapter != null && !mFlagAdapter.isEmpty()) {
-            List<Episode> items = getFlag().getEpisodes();
+        Flag flag = getFlag();
+        if (flag != null) {
+            List<Episode> items = flag.getEpisodes();
             for (Episode item : items) if (item.isSelected()) return item;
             if (!items.isEmpty()) return items.get(0);
         }
-        return mEpisodeAdapter.isEmpty() ? new Episode() : mEpisodeAdapter.getActivated();
+        return mEpisodeAdapter == null || mEpisodeAdapter.isEmpty() ? null : mEpisodeAdapter.getActivated();
     }
 
     private String getOsdTitle() {
@@ -1486,14 +1487,17 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private boolean refreshAndSwitchPlayerKernel() {
-        if (playerKernelSwitchRefreshing || getFlag() == null || getEpisode() == null) return false;
+        if (playerKernelSwitchRefreshing) return true;
+        Flag currentFlag = getFlag();
+        Episode currentEpisode = getEpisode();
+        if (currentFlag == null || currentEpisode == null || TextUtils.isEmpty(currentFlag.getFlag()) || TextUtils.isEmpty(currentEpisode.getUrl())) return false;
         int nextType = PlayerSetting.nextPlayer(player().getPlayerType());
         long position = player().getPosition();
         float speed = player().getSpeed();
         boolean repeat = player().isRepeatOne();
         String key = getKey();
-        String flag = getFlag().getFlag();
-        String episode = getEpisode().getUrl();
+        String flag = currentFlag.getFlag();
+        String episode = currentEpisode.getUrl();
         MediaMetadata metadata = buildMetadata();
         playerKernelSwitchRefreshing = true;
         mClock.setCallback(null);
@@ -1505,6 +1509,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             } catch (Throwable e) {
                 App.post(() -> {
                     playerKernelSwitchRefreshing = false;
+                    player().togglePlayer();
+                    setPlayerKernel();
+                    setDecode();
+                    setR1Callback();
                     Notify.show(e.getMessage());
                 });
             }

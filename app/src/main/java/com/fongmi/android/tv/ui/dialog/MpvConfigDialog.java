@@ -60,7 +60,7 @@ public class MpvConfigDialog extends BaseAlertDialog {
     @Override
     @NonNull
     public android.app.Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
-        android.app.Dialog dialog = LightDialog.create(requireContext(), getString(R.string.player_mpv_config), createContent(), getString(R.string.dialog_positive), this::applyUrl, getString(R.string.dialog_negative), null, getString(R.string.lut_reset), this::resetDefault);
+        android.app.Dialog dialog = LightDialog.create(requireContext(), getString(R.string.player_mpv_config), createContent(), getString(R.string.dialog_positive), this::applySource, getString(R.string.dialog_negative), null, getString(R.string.lut_reset), this::resetDefault);
         initView();
         initEvent();
         return dialog;
@@ -82,7 +82,7 @@ public class MpvConfigDialog extends BaseAlertDialog {
 
         root.addView(createTabs(), new androidx.appcompat.widget.LinearLayoutCompat.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(44)));
 
-        nameLayout = inputLayout(R.string.remote_trust_config_name);
+        nameLayout = inputLayout(R.string.mpv_config_name_hint);
         nameInput = editText();
         nameInput.setMaxLines(1);
         nameInput.setSingleLine(true);
@@ -205,11 +205,11 @@ public class MpvConfigDialog extends BaseAlertDialog {
             }
         });
         urlInput.setOnEditorActionListener((textView, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) applyUrl(textView);
+            if (actionId == EditorInfo.IME_ACTION_DONE) applySource(textView);
             return true;
         });
         nameInput.setOnEditorActionListener((textView, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_DONE) applyUrl(textView);
+            if (actionId == EditorInfo.IME_ACTION_DONE) applySource(textView);
             return true;
         });
     }
@@ -224,18 +224,28 @@ public class MpvConfigDialog extends BaseAlertDialog {
             Notify.show(R.string.mpv_config_history_empty);
             return;
         }
-        ChoiceDialog.showSingle(getChildFragmentManager(), getString(R.string.mpv_config_history), items, -1, which -> runAsync(() -> MpvConfigStore.applyHistory(target, which)));
+        MpvConfigHistoryDialog.show(getChildFragmentManager(), target, new MpvConfigHistoryDialog.Listener() {
+            @Override
+            public void onHistoryClick(int position) {
+                runAsync(() -> MpvConfigStore.applyHistory(target, position));
+            }
+
+            @Override
+            public void onHistoryChanged() {
+                historyButton.setEnabled(MpvConfigStore.hasHistory(target));
+            }
+        });
     }
 
-    private void applyUrl(View view) {
-        String url = Objects.toString(urlInput.getText(), "").trim();
+    private void applySource(View view) {
+        String source = Objects.toString(urlInput.getText(), "").trim();
         String name = Objects.toString(nameInput.getText(), "").trim();
-        if (TextUtils.isEmpty(url)) {
+        if (TextUtils.isEmpty(source)) {
             Notify.show(R.string.remote_trust_config_url_required);
             urlInput.requestFocus();
             return;
         }
-        runAsync(() -> MpvConfigStore.applyUrl(target, url, name));
+        runAsync(() -> MpvConfigStore.applySource(target, source, name));
     }
 
     private void resetDefault(View view) {

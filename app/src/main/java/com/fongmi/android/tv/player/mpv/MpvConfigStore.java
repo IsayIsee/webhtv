@@ -152,7 +152,7 @@ public final class MpvConfigStore {
     }
 
     public static void applyUrl(String target, String url, String name) throws IOException {
-        if (TextUtils.isEmpty(url) || !url.startsWith("http")) throw new IOException(App.get().getString(R.string.mpv_config_url_invalid));
+        if (!isHttpUrl(url)) throw new IOException(App.get().getString(R.string.mpv_config_url_invalid));
         String text = OkHttp.string(url, 15000);
         if (TextUtils.isEmpty(text)) throw new IOException(App.get().getString(R.string.mpv_config_download_empty));
         File out = TARGET_SCRIPTS.equals(target) ? scriptFile(url, name) : targetFile(target);
@@ -163,23 +163,37 @@ public final class MpvConfigStore {
         addHistory(target, TYPE_URL, TextUtils.isEmpty(name) ? fileName(url) : name, url);
     }
 
+    public static void applySource(String target, String source, String name) throws IOException {
+        if (isHttpUrl(source)) applyUrl(target, source, name);
+        else applyFile(target, source, name);
+    }
+
     public static boolean hasHistory(String target) {
-        return !getHistory(target).isEmpty();
+        return !getAvailableHistory(target).isEmpty();
     }
 
     public static CharSequence[] historyLabels(String target) {
-        List<History> items = getHistory(target);
+        List<History> items = getAvailableHistory(target);
         CharSequence[] labels = new CharSequence[items.size()];
         for (int i = 0; i < items.size(); i++) labels[i] = label(items.get(i));
         return labels;
     }
 
     public static void applyHistory(String target, int index) throws IOException {
-        List<History> items = getHistory(target);
+        List<History> items = getAvailableHistory(target);
         if (index < 0 || index >= items.size()) throw new IOException(App.get().getString(R.string.mpv_config_history_empty));
         History item = items.get(index);
         if (TYPE_FILE.equals(item.type)) applyFile(target, item.source, item.name);
         else if (TYPE_URL.equals(item.type)) applyUrl(target, item.source, item.name);
+    }
+
+    public static boolean removeHistory(String target, int index) {
+        List<History> items = getHistory(target);
+        List<History> available = getAvailableHistory(target, items);
+        if (index < 0 || index >= available.size()) return false;
+        items.remove(available.get(index));
+        Prefers.put(key(KEY_HISTORY, target), App.gson().toJson(items));
+        return true;
     }
 
     private static void putDefault(String target) {
@@ -221,6 +235,11 @@ public final class MpvConfigStore {
         return TextUtils.isEmpty(name) ? CONFIG_FILE : name;
     }
 
+    private static boolean isHttpUrl(String value) {
+        if (TextUtils.isEmpty(value)) return false;
+        return value.regionMatches(true, 0, "http://", 0, 7) || value.regionMatches(true, 0, "https://", 0, 8);
+    }
+
     private static File scriptFile(String source, String name) {
         String file = TextUtils.isEmpty(name) ? fileName(source) : name;
         if (!file.endsWith(".lua") && !file.endsWith(".js")) file = file + ".lua";
@@ -234,6 +253,21 @@ public final class MpvConfigStore {
         } catch (Exception e) {
             return new ArrayList<>();
         }
+    }
+
+    private static List<History> getAvailableHistory(String target) {
+        return getAvailableHistory(target, getHistory(target));
+    }
+
+    private static List<History> getAvailableHistory(String target, List<History> items) {
+        List<History> available = new ArrayList<>();
+        String currentType = Prefers.getString(key(KEY_TYPE, target), TYPE_DEFAULT);
+        String currentSource = getSource(target);
+        for (History item : items) {
+            boolean current = TextUtils.equals(item.type, currentType) && TextUtils.equals(item.source, currentSource);
+            if (!current) available.add(item);
+        }
+        return available;
     }
 
     private static void addHistory(String target, String type, String name, String source) {
