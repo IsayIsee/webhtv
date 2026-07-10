@@ -114,16 +114,8 @@ public class SiteApi {
         SpiderDebug.log("detail", "key=%s,id=%s", key, id);
         if (WebHomeInlineVodStore.KEY.equals(key)) return WebHomeInlineVodStore.detail(id);
         Site site = VodConfig.get().getSite(key);
-        if (site.isEmpty() && PUSH.equals(key)) {
-            Vod vod = new Vod();
-            vod.setId(id);
-            vod.setName(id);
-            vod.setPlayUrl(id);
-            vod.setPlayFrom(ResUtil.getString(R.string.push));
-            vod.setPic(ResUtil.getString(R.string.push_image));
-            Source.get().parse(vod.setFlags());
-            return Result.vod(vod);
-        } else if (isSpider(site)) {
+        if (site.isEmpty() && PUSH.equals(key)) return pushDetail(id);
+        if (isSpider(site)) {
             String detailContent = site.recent().spider().detailContent(Arrays.asList(id));
             SpiderDebug.log("detail", detailContent);
             Result result = Result.fromJson(detailContent);
@@ -146,6 +138,7 @@ public class SiteApi {
         SpiderDebug.log("player", "key=%s,flag=%s,id=%s", key, flag, id);
         Source.get().stop();
         if (WebHomeInlineVodStore.KEY.equals(key)) return WebHomeInlineVodStore.player(flag, id);
+        if (PUSH.equals(key)) return pushPlayer(flag, id);
         Site site = VodConfig.get().getSite(key);
         if (site.getType() == 3) {
             String playerContent = site.recent().spider().playerContent(flag, id, VodConfig.get().getFlags());
@@ -167,14 +160,6 @@ public class SiteApi {
             result.setUrl(Source.get().fetch(result));
             result.setHeader(site.getHeader());
             return result;
-        } else if (site.isEmpty() && "push_agent".equals(key)) {
-            Result result = new Result();
-            result.setUrl(id);
-            result.setParse(0);
-            result.setFlag(flag);
-            result.setUrl(Source.get().fetch(result));
-            SpiderDebug.log("player", result.toString());
-            return result;
         } else {
             Result result = new Result();
             result.setUrl(id);
@@ -186,6 +171,27 @@ public class SiteApi {
             SpiderDebug.log("player", result.toString());
             return result;
         }
+    }
+
+    private static Result pushDetail(@NonNull String id) throws Exception {
+        Vod vod = new Vod();
+        vod.setId(id);
+        vod.setName(id);
+        vod.setPlayUrl(id);
+        vod.setPlayFrom(ResUtil.getString(R.string.push));
+        vod.setPic(ResUtil.getString(R.string.push_image));
+        Source.get().parse(vod.setFlags());
+        return Result.vod(vod);
+    }
+
+    private static Result pushPlayer(@NonNull String flag, @NonNull String id) throws Exception {
+        Result result = new Result();
+        result.setUrl(id);
+        result.setParse(0);
+        result.setFlag(flag);
+        result.setUrl(Source.get().fetch(result));
+        SpiderDebug.log("player", result.toString());
+        return result;
     }
 
     @NonNull

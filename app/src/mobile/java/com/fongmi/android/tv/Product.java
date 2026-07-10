@@ -28,6 +28,12 @@ public class Product {
         return getSpec(context, Style.rect());
     }
 
+    public static int[] getSpec(Context context, int column) {
+        Style style = Style.rect();
+        int space = ResUtil.dp2px(32) + ResUtil.dp2px(16 * (column - 1)) + getCutout(context);
+        return getSpec(context, space, column, style);
+    }
+
     public static int[] getSpec(Context context, Style style) {
         int column = getColumn(context, style);
         int space = ResUtil.dp2px(32) + ResUtil.dp2px(16 * (column - 1)) + getCutout(context);

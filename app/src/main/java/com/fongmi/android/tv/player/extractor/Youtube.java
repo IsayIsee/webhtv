@@ -1,17 +1,21 @@
 package com.fongmi.android.tv.player.extractor;
 
 import android.net.Uri;
+import android.text.TextUtils;
 import android.util.Base64;
 
 import androidx.media3.common.MimeTypes;
 
+import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.bean.Episode;
 import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.bean.Sub;
 import com.fongmi.android.tv.bean.Vod;
 import com.fongmi.android.tv.event.RefreshEvent;
+import com.fongmi.android.tv.exception.ExtractException;
 import com.fongmi.android.tv.impl.NewPipeImpl;
 import com.fongmi.android.tv.player.Source;
+import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.UrlUtil;
 
 import org.schabi.newpipe.extractor.ListExtractor;
@@ -76,16 +80,29 @@ public class Youtube implements Source.Extractor {
     public String fetch(Result result) throws Exception {
         StreamInfo info = StreamInfo.getInfo(result.getUrl().v());
         result.setSubs(getSubtitles(info.getSubtitles()));
-        return fetch(info);
+        String playUrl = fetch(info);
+        setFormat(result, info, playUrl);
+        return playUrl;
     }
 
     private String fetch(StreamInfo info) throws Exception {
         RefreshEvent.vod(convert(info).trans());
-        return getPlayUrl(info);
+        String playUrl = getPlayUrl(info);
+        if (TextUtils.isEmpty(playUrl)) throw new ExtractException(ResUtil.getString(R.string.error_play_parse));
+        return playUrl;
     }
 
     private String getPlayUrl(StreamInfo info) throws Exception {
         return isLive(info) ? getLive(info) : getMpd(info);
+    }
+
+    private void setFormat(Result result, StreamInfo info, String playUrl) {
+        if (isLive(info)) {
+            if (!TextUtils.isEmpty(info.getHlsUrl()) && info.getHlsUrl().equals(playUrl)) result.setFormat(MimeTypes.APPLICATION_M3U8);
+            else if (!TextUtils.isEmpty(info.getDashMpdUrl()) && info.getDashMpdUrl().equals(playUrl)) result.setFormat(MimeTypes.APPLICATION_MPD);
+        } else if (playUrl.startsWith("data:" + MimeTypes.APPLICATION_MPD)) {
+            result.setFormat(MimeTypes.APPLICATION_MPD);
+        }
     }
 
     private Vod convert(StreamInfo info) {
@@ -109,7 +126,7 @@ public class Youtube implements Source.Extractor {
     }
 
     private String getLive(StreamInfo info) {
-        return !info.getHlsUrl().isEmpty() ? info.getHlsUrl() : info.getDashMpdUrl();
+        return !TextUtils.isEmpty(info.getHlsUrl()) ? info.getHlsUrl() : info.getDashMpdUrl();
     }
 
     private String getMpd(StreamInfo info) throws Exception {

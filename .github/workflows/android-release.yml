@@ -67,14 +67,7 @@ jobs:
 
       - name: Install Android packages
         run: |
-          sdkmanager "platform-tools" "platforms;android-28" "build-tools;36.0.0"
-          curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r01.zip
-          rm -rf /tmp/platform-37 "$ANDROID_HOME/platforms/android-37"
-          mkdir -p /tmp/platform-37 "$ANDROID_HOME/platforms"
-          unzip -q /tmp/platform-37.zip -d /tmp/platform-37
-          platform_dir="$(dirname "$(find /tmp/platform-37 -name android.jar -print -quit)")"
-          test -n "$platform_dir"
-          mv "$platform_dir" "$ANDROID_HOME/platforms/android-37"
+          sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Resolve release tag
         id: meta

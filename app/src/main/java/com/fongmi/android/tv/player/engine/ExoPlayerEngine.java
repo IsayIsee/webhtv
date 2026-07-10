@@ -178,6 +178,11 @@ public class ExoPlayerEngine implements PlayerEngine {
     }
 
     @Override
+    public long getDroppedFrames() {
+        return PlaybackAnalyticsListener.getSnapshot().droppedFrames();
+    }
+
+    @Override
     public boolean haveTitle() {
         return !player.getCurrentMediaEditions().isEmpty();
     }

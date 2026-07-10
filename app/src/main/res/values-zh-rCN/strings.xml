@@ -70,6 +70,9 @@
     <string name="play_track_audio">音轨</string>
     <string name="play_track_video">视轨</string>
     <string name="play_track_disable_subtitle">关闭字幕</string>
+    <string name="play_track_disable_secondary_subtitle">关闭第二字幕</string>
+    <string name="play_track_secondary_subtitle">第二字幕</string>
+    <string name="play_track_primary_subtitle">主字幕</string>
     <string name="offset_text">字幕偏移</string>
     <string name="offset_audio">音轨偏移</string>
     <string name="offset_setting">偏移设置</string>
@@ -810,6 +813,22 @@
     <string name="player_kernel">播放器内核</string>
     <string name="player_scale">缩放比例</string>
     <string name="player_lut">LUT 调色</string>
+    <string name="player_mpv_config">MPV 配置管理</string>
+    <string name="player_mpv_render">MPV 渲染后端</string>
+    <string name="mpv_render_native_unavailable">当前不可用</string>
+    <string name="mpv_config_target">%1$s · %2$s</string>
+    <string name="mpv_config_default">默认</string>
+    <string name="mpv_config_local">本地 mpv.conf</string>
+    <string name="mpv_config_url">URL mpv.conf</string>
+    <string name="mpv_config_history">历史</string>
+    <string name="mpv_config_history_empty">暂无 MPV 配置历史</string>
+    <string name="mpv_config_script_hint">脚本 URL 或选择本地脚本</string>
+    <string name="mpv_config_scripts_count">%1$d 个脚本</string>
+    <string name="mpv_config_saved">MPV 配置已保存，重新进入播放后生效</string>
+    <string name="mpv_config_empty">MPV 配置为空</string>
+    <string name="mpv_config_file_invalid">mpv.conf 文件无效</string>
+    <string name="mpv_config_url_invalid">mpv.conf URL 无效</string>
+    <string name="mpv_config_download_empty">下载到的 mpv.conf 为空</string>
     <string name="player_libass">字幕渲染</string>
     <string name="player_caption">字幕样式</string>
     <string name="player_background">后台播放</string>
@@ -903,6 +922,15 @@
     <string name="error_play_parse">播放地址解析失败</string>
     <string name="error_play_drm">此设备不支持所需的 DRM scheme</string>
     <string name="error_play_url">播放地址加载失败</string>
+    <string name="error_play_mpv_hls_unsupported">MPV 播放此 HLS 失败，请手动切换播放器或更换线路</string>
+    <string name="error_play_mpv_load_failed">MPV 加载媒体失败，请检查网络或更换线路</string>
+    <string name="error_play_mpv_network_failed">MPV 网络加载失败，请检查网络、请求头或更换线路</string>
+    <string name="error_play_mpv_drm_unsupported">MPV 不支持此 DRM 保护媒体，请手动切换播放器或更换线路</string>
+    <string name="error_play_mpv_unexpected_image">MPV 加载到了图片而不是视频，请更换线路</string>
+    <string name="error_play_mpv_no_av">MPV 没有读取到可播放的音视频数据</string>
+    <string name="error_play_mpv_invalid_data">MPV 识别到异常媒体数据，请更换线路或手动切换播放器</string>
+    <string name="error_play_mpv_decode_failed">MPV 解码失败，请尝试切换软硬解或更换线路</string>
+    <string name="error_play_mpv_video_output">MPV 视频输出初始化失败，请尝试切换解码或重新进入播放</string>
     <string name="error_play_flag">暂无线路数据</string>
     <string name="error_play_timeout">连接超时</string>
     <string name="error_play_tvbus">错误代码：<xliff:g name="name">%s</xliff:g></string>
@@ -992,6 +1020,11 @@
     <string-array name="select_player_kernel">
         <item>EXO</item>
         <item>IJK</item>
+        <item>MPV</item>
+    </string-array>
+    <string-array name="select_mpv_render">
+        <item>OpenGL</item>
+        <item>Vulkan</item>
     </string-array>
     <string-array name="select_buffer_bytes">
         <item>自动</item>
@@ -1068,5 +1101,6 @@
         <item>选择视轨</item>
         <item>选择字幕</item>
     </string-array>
+    <string name="select_secondary_subtitle_track">选择第二字幕</string>
 
 </resources>

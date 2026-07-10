@@ -51,14 +51,19 @@ public class Source {
     }
 
     private void addCallable(Iterator<Episode> iterator, List<Callable<List<Episode>>> items) {
-        String url = iterator.next().getUrl();
+        Episode episode = iterator.next();
+        String url = episode.getUrl();
         if (Thunder.Parser.match(url)) {
-            items.add(Thunder.Parser.get(url));
+            items.add(() -> fallback(Thunder.Parser.get(url).call(), episode));
             iterator.remove();
         } else if (Youtube.Parser.match(url)) {
-            items.add(Youtube.Parser.get(url));
+            items.add(() -> fallback(Youtube.Parser.get(url).call(), episode));
             iterator.remove();
         }
+    }
+
+    private List<Episode> fallback(List<Episode> parsed, Episode episode) {
+        return parsed == null || parsed.isEmpty() ? List.of(episode) : parsed;
     }
 
     public void parse(Vod vod) throws Exception {

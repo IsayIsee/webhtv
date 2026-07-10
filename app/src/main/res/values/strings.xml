@@ -71,6 +71,9 @@
     <string name="play_track_audio">Audio</string>
     <string name="play_track_video">Video</string>
     <string name="play_track_disable_subtitle">Subtitle off</string>
+    <string name="play_track_disable_secondary_subtitle">Secondary subtitle off</string>
+    <string name="play_track_secondary_subtitle">Secondary</string>
+    <string name="play_track_primary_subtitle">Main</string>
     <string name="offset_text">Text offset</string>
     <string name="offset_audio">Audio offset</string>
     <string name="offset_setting">Offset settings</string>
@@ -812,6 +815,22 @@
     <string name="player_kernel">Player engine</string>
     <string name="player_scale">Scale</string>
     <string name="player_lut">LUT color</string>
+    <string name="player_mpv_config">MPV config manager</string>
+    <string name="player_mpv_render">MPV renderer</string>
+    <string name="mpv_render_native_unavailable">Unavailable</string>
+    <string name="mpv_config_target">%1$s · %2$s</string>
+    <string name="mpv_config_default">Default</string>
+    <string name="mpv_config_local">Local mpv.conf</string>
+    <string name="mpv_config_url">URL mpv.conf</string>
+    <string name="mpv_config_history">History</string>
+    <string name="mpv_config_history_empty">No MPV config history</string>
+    <string name="mpv_config_script_hint">Script URL or choose local script</string>
+    <string name="mpv_config_scripts_count">%1$d scripts</string>
+    <string name="mpv_config_saved">MPV config saved. Reopen playback to apply it.</string>
+    <string name="mpv_config_empty">MPV config is empty</string>
+    <string name="mpv_config_file_invalid">Invalid mpv.conf file</string>
+    <string name="mpv_config_url_invalid">Invalid mpv.conf URL</string>
+    <string name="mpv_config_download_empty">Downloaded mpv.conf is empty</string>
     <string name="player_libass">libass</string>
     <string name="player_caption">Caption style</string>
     <string name="player_background">Background play</string>
@@ -906,6 +925,15 @@
     <string name="error_play_parse">Unable to parse url</string>
     <string name="error_play_drm">This device does not support the required DRM scheme</string>
     <string name="error_play_url">Unable to load url</string>
+    <string name="error_play_mpv_hls_unsupported">MPV failed to play this HLS stream. Switch player manually or choose another line.</string>
+    <string name="error_play_mpv_load_failed">MPV failed to load media. Check the network or choose another line.</string>
+    <string name="error_play_mpv_network_failed">MPV network loading failed. Check the network, headers, or choose another line.</string>
+    <string name="error_play_mpv_drm_unsupported">MPV does not support this DRM protected media. Switch player manually or choose another line.</string>
+    <string name="error_play_mpv_unexpected_image">MPV loaded an image instead of video. Choose another line.</string>
+    <string name="error_play_mpv_no_av">MPV did not find playable audio or video data.</string>
+    <string name="error_play_mpv_invalid_data">MPV found invalid media data. Choose another line or switch player manually.</string>
+    <string name="error_play_mpv_decode_failed">MPV failed to decode this media. Try switching soft/hard decode or choose another line.</string>
+    <string name="error_play_mpv_video_output">MPV failed to initialize video output. Try switching decode mode or reopen playback.</string>
     <string name="error_play_flag">No flag data</string>
     <string name="error_play_timeout">Timed out</string>
     <string name="error_play_tvbus">Error code: <xliff:g name="name">%s</xliff:g></string>
@@ -1000,6 +1028,11 @@
     <string-array name="select_player_kernel">
         <item>EXO</item>
         <item>IJK</item>
+        <item>MPV</item>
+    </string-array>
+    <string-array name="select_mpv_render">
+        <item>OpenGL</item>
+        <item>Vulkan</item>
     </string-array>
     <string-array name="select_buffer_bytes">
         <item>Auto</item>
@@ -1076,5 +1109,6 @@
         <item>Select video track</item>
         <item>Select subtitle track</item>
     </string-array>
+    <string name="select_secondary_subtitle_track">Select secondary subtitle</string>
 
 </resources>
