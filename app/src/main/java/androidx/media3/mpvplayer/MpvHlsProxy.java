@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,6 +39,22 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+
+import java.io.StringReader;
+import java.io.StringWriter;
+import org.xml.sax.InputSource;
 
 import fi.iki.elonen.NanoHTTPD;
 import fi.iki.elonen.NanoHTTPD.Response.Status;
@@ -209,6 +227,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
             String manifestUrl = response.request().url().toString();
             String text = body.string();
             if (!text.toLowerCase(Locale.US).contains("<mpd")) return error(Status.BAD_REQUEST, "invalid dash");
+            text = rewriteSegmentBase(session, manifestUrl, text);
             Matcher matcher = DASH_BASE_URL.matcher(text);
             StringBuffer rewritten = new StringBuffer();
             int count = 0;
@@ -223,6 +242,106 @@ public final class MpvHlsProxy extends NanoHTTPD {
             SpiderDebug.log(TAG, "dash manifest session=%d code=%d bytes=%d baseUrls=%d url=%s", id, response.code(), data.length, count, shortUrl(session.url));
             return noCache(newFixedLengthResponse(Status.OK, "application/dash+xml; charset=utf-8", new ByteArrayInputStream(data), data.length));
         }
+    }
+
+    private String rewriteSegmentBase(Session session, String manifestUrl, String text) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            Document document = factory.newDocumentBuilder().parse(new InputSource(new StringReader(text)));
+            pruneDashAlternatives(document);
+            NodeList representations = document.getElementsByTagNameNS("*", "Representation");
+            int converted = 0;
+            for (int i = 0; i < representations.getLength(); i++) {
+                Element representation = (Element) representations.item(i);
+                Element baseUrl = directChild(representation, "BaseURL");
+                Element segmentBase = directChild(representation, "SegmentBase");
+                Element initialization = segmentBase == null ? null : directChild(segmentBase, "Initialization");
+                if (baseUrl == null || segmentBase == null || initialization == null) continue;
+                ByteRange index = ByteRange.parse(segmentBase.getAttribute("indexRange"));
+                ByteRange init = ByteRange.parse(initialization.getAttribute("range"));
+                if (index == null || init == null) continue;
+                String target = resolve(manifestUrl, baseUrl.getTextContent().trim());
+                Sidx sidx = fetchSidx(session, target, index);
+                if (sidx == null || sidx.ranges.isEmpty()) continue;
+                List<SidxRange> groups = sidx.grouped(60_000);
+                String namespace = segmentBase.getNamespaceURI();
+                Element segmentList = document.createElementNS(namespace, "SegmentList");
+                segmentList.setAttribute("timescale", Long.toString(sidx.timescale));
+                segmentList.setAttribute("duration", Long.toString(groups.get(0).duration));
+                Element initNode = document.createElementNS(namespace, "Initialization");
+                initNode.setAttribute("range", init.start + "-" + (init.end + 1));
+                segmentList.appendChild(initNode);
+                for (SidxRange range : groups) {
+                    Element segment = document.createElementNS(namespace, "SegmentURL");
+                    segment.setAttribute("mediaRange", range.start + "-" + (range.end + 1));
+                    segmentList.appendChild(segment);
+                }
+                representation.replaceChild(segmentList, segmentBase);
+                converted++;
+            }
+            if (converted == 0) return text;
+            StringWriter output = new StringWriter();
+            Transformer transformer = TransformerFactory.newInstance().newTransformer();
+            transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+            transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+            transformer.transform(new DOMSource(document), new StreamResult(output));
+            SpiderDebug.log(TAG, "dash SegmentBase grouped representations=%d url=%s", converted, shortUrl(manifestUrl));
+            return output.toString();
+        } catch (Throwable e) {
+            SpiderDebug.log(TAG, "dash SegmentBase grouping skipped url=%s error=%s", shortUrl(manifestUrl), e.getMessage());
+            return text;
+        }
+    }
+
+    private void pruneDashAlternatives(Document document) {
+        NodeList sets = document.getElementsByTagNameNS("*", "AdaptationSet");
+        List<Node> remove = new ArrayList<>();
+        boolean videoKept = false;
+        boolean audioKept = false;
+        for (int i = 0; i < sets.getLength(); i++) {
+            Element set = (Element) sets.item(i);
+            Element representation = directChild(set, "Representation");
+            Element component = directChild(set, "ContentComponent");
+            String type = component == null ? "" : component.getAttribute("contentType");
+            if (TextUtils.isEmpty(type) && representation != null) {
+                String mime = representation.getAttribute("mimeType");
+                if (mime.startsWith("video/")) type = "video";
+                else if (mime.startsWith("audio/")) type = "audio";
+            }
+            if ("video".equals(type)) {
+                if (videoKept) remove.add(set);
+                else videoKept = true;
+            } else if ("audio".equals(type)) {
+                if (audioKept) remove.add(set);
+                else audioKept = true;
+            }
+        }
+        for (Node node : remove) if (node.getParentNode() != null) node.getParentNode().removeChild(node);
+    }
+
+    @Nullable
+    private Sidx fetchSidx(Session session, String url, ByteRange range) throws IOException {
+        try (okhttp3.Response response = fetch(session, url, "bytes=" + range.start + "-" + range.end, true)) {
+            ResponseBody body = response.body();
+            if (!response.isSuccessful() || body == null) return null;
+            byte[] data = body.bytes();
+            long absoluteStart = response.code() == 206 ? range.start : 0;
+            String contentRange = response.header("Content-Range");
+            if (contentRange != null) {
+                Matcher matcher = CONTENT_RANGE.matcher(contentRange);
+                if (matcher.find()) absoluteStart = Long.parseLong(matcher.group(1));
+            }
+            return Sidx.parse(data, absoluteStart);
+        }
+    }
+
+    @Nullable
+    private static Element directChild(Element parent, String name) {
+        for (Node node = parent.getFirstChild(); node != null; node = node.getNextSibling()) {
+            if (node instanceof Element element && name.equals(element.getLocalName())) return element;
+        }
+        return null;
     }
 
     private Response serveItem(IHTTPSession httpSession, @Nullable String forcedId) throws IOException {
@@ -282,9 +401,10 @@ public final class MpvHlsProxy extends NanoHTTPD {
             source = maybeCacheStreaming(owner, target, source, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime);
         }
         InputStream stream = new CloseResponseInputStream(source, response);
+        Response.IStatus streamingStatus = streamingStatus(response, forwardedRange);
         Response result = mayStripPngPrefix || contentLength < 0
-                ? newChunkedResponse(toStatus(response.code()), mime, stream)
-                : newFixedLengthResponse(toStatus(response.code()), mime, stream, contentLength);
+                ? newChunkedResponse(streamingStatus, mime, stream)
+                : newFixedLengthResponse(streamingStatus, mime, stream, contentLength);
         addStreamingHeaders(result, response, forwardedRange);
         SpiderDebug.log(TAG, "item id=%s code=%d range=%s contentRange=%s length=%d mime=%s url=%s",
                 id, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime, shortUrl(target.url));
@@ -994,6 +1114,13 @@ public final class MpvHlsProxy extends NanoHTTPD {
         return status != null ? status : Status.OK;
     }
 
+    private static Response.IStatus streamingStatus(okhttp3.Response upstream, @Nullable String requestedRange) {
+        if (!TextUtils.isEmpty(requestedRange) && !TextUtils.isEmpty(upstream.header("Content-Range"))) {
+            return Status.PARTIAL_CONTENT;
+        }
+        return toStatus(upstream.code());
+    }
+
     private static Map<String, String> sanitize(Map<String, String> input) {
         Map<String, String> result = new LinkedHashMap<>();
         if (input == null) return result;
@@ -1184,6 +1311,123 @@ public final class MpvHlsProxy extends NanoHTTPD {
                 out.close();
             } catch (Throwable ignored) {
             }
+        }
+    }
+
+    private record ByteRange(long start, long end) {
+
+        @Nullable
+        private static ByteRange parse(String value) {
+            if (TextUtils.isEmpty(value)) return null;
+            int separator = value.indexOf('-');
+            if (separator <= 0 || separator >= value.length() - 1) return null;
+            try {
+                long start = Long.parseLong(value.substring(0, separator).trim());
+                long end = Long.parseLong(value.substring(separator + 1).trim());
+                return start >= 0 && end >= start ? new ByteRange(start, end) : null;
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+    }
+
+    private record SidxRange(long start, long end, long duration) {
+    }
+
+    private static final class Sidx {
+
+        private final long timescale;
+        private final List<SidxRange> ranges;
+
+        private Sidx(long timescale, List<SidxRange> ranges) {
+            this.timescale = timescale;
+            this.ranges = ranges;
+        }
+
+        private List<SidxRange> grouped(long targetMs) {
+            long target = Math.max(1, targetMs * timescale / 1000);
+            List<SidxRange> result = new ArrayList<>();
+            long start = -1;
+            long end = -1;
+            long duration = 0;
+            for (SidxRange range : ranges) {
+                if (start < 0) start = range.start;
+                end = range.end;
+                duration += range.duration;
+                if (duration >= target) {
+                    result.add(new SidxRange(start, end, duration));
+                    start = -1;
+                    end = -1;
+                    duration = 0;
+                }
+            }
+            if (start >= 0) result.add(new SidxRange(start, end, duration));
+            return result;
+        }
+
+        @Nullable
+        private static Sidx parse(byte[] data, long absoluteStart) {
+            ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.BIG_ENDIAN);
+            for (int position = 0; position + 8 <= data.length; ) {
+                long size = uint32(buffer, position);
+                int headerSize = 8;
+                if (size == 1) {
+                    if (position + 16 > data.length) return null;
+                    size = buffer.getLong(position + 8);
+                    headerSize = 16;
+                } else if (size == 0) {
+                    size = data.length - position;
+                }
+                if (size < headerSize || size > data.length - position) return null;
+                if (buffer.getInt(position + 4) == 0x73696478) return parseBox(buffer, position, size, headerSize, absoluteStart + position);
+                position += (int) size;
+            }
+            return null;
+        }
+
+        @Nullable
+        private static Sidx parseBox(ByteBuffer buffer, int position, long boxSize, int headerSize, long absoluteBoxStart) {
+            int cursor = position + headerSize;
+            int limit = position + (int) boxSize;
+            if (cursor + 20 > limit) return null;
+            int version = buffer.get(cursor) & 0xFF;
+            cursor += 8;
+            long timescale = uint32(buffer, cursor);
+            cursor += 4;
+            if (timescale <= 0) return null;
+            long firstOffset;
+            if (version == 0) {
+                if (cursor + 8 > limit) return null;
+                cursor += 4;
+                firstOffset = uint32(buffer, cursor);
+                cursor += 4;
+            } else if (version == 1) {
+                if (cursor + 16 > limit) return null;
+                cursor += 8;
+                firstOffset = buffer.getLong(cursor);
+                cursor += 8;
+            } else return null;
+            if (firstOffset < 0 || cursor + 4 > limit) return null;
+            cursor += 2;
+            int count = buffer.getShort(cursor) & 0xFFFF;
+            cursor += 2;
+            long segmentStart = absoluteBoxStart + boxSize + firstOffset;
+            List<SidxRange> ranges = new ArrayList<>(count);
+            for (int i = 0; i < count; i++) {
+                if (cursor + 12 > limit) return null;
+                long reference = uint32(buffer, cursor);
+                cursor += 4;
+                long size = reference & 0x7FFFFFFFL;
+                long duration = uint32(buffer, cursor);
+                cursor += 8;
+                if ((reference & 0x80000000L) == 0 && size > 0) ranges.add(new SidxRange(segmentStart, segmentStart + size - 1, duration));
+                segmentStart += size;
+            }
+            return ranges.isEmpty() ? null : new Sidx(timescale, ranges);
+        }
+
+        private static long uint32(ByteBuffer buffer, int offset) {
+            return buffer.getInt(offset) & 0xFFFFFFFFL;
         }
     }
 
