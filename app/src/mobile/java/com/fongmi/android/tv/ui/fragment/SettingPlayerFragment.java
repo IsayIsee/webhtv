@@ -160,6 +160,7 @@ public class SettingPlayerFragment extends BaseFragment implements UaListener, B
             mBinding.kernelText.setText(kernel[which]);
             PlayerSetting.putPlayer(which);
             setMpvRows();
+            setPerformanceText();
         });
     }
 
@@ -313,8 +314,8 @@ public class SettingPlayerFragment extends BaseFragment implements UaListener, B
 
     private void onPreloadSize(View view) {
         String[] items = getPreloadSizeItems();
-        ChoiceDialog.showSingle(this, R.string.player_preload_size, items, getPreloadSizeIndex(), which -> {
-            PreloadSetting.putPreloadSizeMb(PreloadSetting.MIN_SIZE_MB + which * PreloadSetting.STEP_SIZE_MB);
+        ChoiceDialog.showSingle(this, R.string.player_preload_size, items, PreloadSetting.getPreloadSizeIndex(), which -> {
+            PreloadSetting.putPreloadSizeMb(PreloadSetting.getPreloadSizeMbAt(which));
             PlaybackPerformanceSetting.markCustom();
             setPreloadText();
             setPerformanceText();
@@ -349,8 +350,8 @@ public class SettingPlayerFragment extends BaseFragment implements UaListener, B
     }
 
     private String[] getPreloadSizeItems() {
-        String[] items = new String[getPreloadSizeCount()];
-        for (int i = 0; i < items.length; i++) items[i] = FileUtil.byteCountToDisplaySize((PreloadSetting.MIN_SIZE_MB + i * PreloadSetting.STEP_SIZE_MB) * 1024L * 1024L);
+        String[] items = new String[PreloadSetting.getPreloadSizeOptionCount()];
+        for (int i = 0; i < items.length; i++) items[i] = FileUtil.byteCountToDisplaySize(PreloadSetting.getPreloadSizeMbAt(i) * 1024L * 1024L);
         return items;
     }
 
@@ -360,16 +361,8 @@ public class SettingPlayerFragment extends BaseFragment implements UaListener, B
         return items;
     }
 
-    private int getPreloadSizeIndex() {
-        return Math.min(Math.max((PreloadSetting.getPreloadSizeMb() - PreloadSetting.MIN_SIZE_MB) / PreloadSetting.STEP_SIZE_MB, 0), getPreloadSizeCount() - 1);
-    }
-
     private int getPreloadTimeIndex() {
         return Math.min(Math.max((PreloadSetting.getPreloadTimeSeconds() - PreloadSetting.MIN_TIME_SECONDS) / PreloadSetting.STEP_TIME_SECONDS, 0), getPreloadTimeCount() - 1);
-    }
-
-    private int getPreloadSizeCount() {
-        return (PreloadSetting.MAX_SIZE_MB - PreloadSetting.MIN_SIZE_MB) / PreloadSetting.STEP_SIZE_MB + 1;
     }
 
     private int getPreloadTimeCount() {

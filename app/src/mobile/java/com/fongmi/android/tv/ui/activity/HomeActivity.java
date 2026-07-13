@@ -44,6 +44,7 @@ import com.fongmi.android.tv.ui.fragment.SettingFragment;
 import com.fongmi.android.tv.ui.fragment.SettingPlayerFragment;
 import com.fongmi.android.tv.ui.fragment.VodFragment;
 import com.fongmi.android.tv.utils.FileChooser;
+import com.fongmi.android.tv.utils.MobileWindow;
 import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.UrlUtil;
@@ -66,7 +67,7 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
     private ActivityHomeBinding mBinding;
     private WebHomeChromeController mChrome;
     private Config mStartupConfig;
-    private int orientation;
+    private boolean wideWindow;
     private int currentPosition;
     private boolean returnVodFromEnhance;
 
@@ -89,11 +90,12 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
 
     @Override
     protected void initView(Bundle savedInstanceState) {
-        orientation = getResources().getConfiguration().orientation;
+        wideWindow = MobileWindow.isWide(this);
         returnVodFromEnhance = savedInstanceState != null && savedInstanceState.getBoolean(STATE_RETURN_VOD_FROM_ENHANCE);
         currentPosition = savedInstanceState == null ? 0 : savedInstanceState.getInt(STATE_CURRENT_POSITION, 0);
         mStartupConfig = Config.vod();
         mChrome = new WebHomeChromeController(this, mBinding, this, savedInstanceState, WebHomeChromeStartup.restore(mStartupConfig));
+        mBinding.getRoot().addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> checkWindowShape(right - left, bottom - top));
         mBinding.navigation.setOnItemSelectedListener(this);
         PermissionUtil.requestFile(this, allGranted -> PermissionUtil.requestNotify(this));
         initFragment(savedInstanceState);
@@ -387,7 +389,7 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         if (mChrome != null) mChrome.onConfigurationChanged();
-        App.post(() -> checkOrientation(newConfig), 100);
+        App.post(this::checkWindowShape, 100);
     }
 
     @Override
@@ -396,9 +398,15 @@ public class HomeActivity extends BaseActivity implements NavigationBarView.OnIt
         if (mChrome != null) mChrome.onWindowFocusChanged(hasFocus);
     }
 
-    private void checkOrientation(Configuration newConfig) {
-        if (orientation != newConfig.orientation) {
-            orientation = newConfig.orientation;
+    private void checkWindowShape() {
+        checkWindowShape(MobileWindow.getWidth(this), MobileWindow.getHeight(this));
+    }
+
+    private void checkWindowShape(int width, int height) {
+        if (width <= 0 || height <= 0) return;
+        boolean wide = width > height;
+        if (wideWindow != wide) {
+            wideWindow = wide;
             RefreshEvent.home();
         }
     }

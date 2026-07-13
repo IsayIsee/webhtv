@@ -700,6 +700,40 @@ public class PlayerManager implements ParseCallback {
         setRepeatOne(repeat);
     }
 
+    public void switchPlayer(int type, Result result, String key, MediaMetadata metadata, boolean useParse, long position, float speed, boolean repeat) {
+        if (engine == null || player == null || result == null || result.hasMsg() || result.getRealUrl().isEmpty()) return;
+        type = PlayerSetting.sanitizePlayer(type);
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        int decode = engine.getDecode();
+        prepareSeq++;
+        resetLutRuntimeState("switch_player_result", true);
+        stopNativeAudioSession();
+        stopParse();
+        engine.release();
+        playerType = type;
+        PlayerSetting.putPlayer(type);
+        engine = buildEngine(playerType, decode);
+        player = engine.getPlayer();
+        playWhenReady = wasPlayWhenReady;
+        callback.onPlayerRebuild(player, false);
+        if (result.needParse() || useParse) {
+            pendingSwitchRestore = true;
+            pendingSwitchPositionMs = position;
+            pendingSwitchSpeed = speed;
+            pendingSwitchRepeat = repeat;
+            spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh parse type=%d position=%d useParse=%s spec=%s", type, position, useParse, debugSpec());
+            parseJob = ParseJob.create(this).start(result, useParse);
+        } else {
+            spec = PlaySpec.from(result, key, metadata);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh result type=%d position=%d spec=%s", type, position, debugSpec());
+            setMediaItem(Constant.TIMEOUT_PLAY);
+            if (position > 0) seekTo(position);
+            if (speed != 1f) setSpeed(speed);
+            setRepeatOne(repeat);
+        }
+    }
+
     private void switchPlayer(int type, boolean persist) {
         if (engine == null || player == null) return;
         type = PlayerSetting.sanitizePlayer(type);
@@ -824,7 +858,7 @@ public class PlayerManager implements ParseCallback {
         if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player refresh direct type=%d key=%s flag=%s url=%s", playerType, key, result.getFlag(), summarizeUrl(result.getUrl().v()));
         Task.execute(() -> {
             try {
-                Result refreshed = SiteApi.playerContent(key, result.getFlag(), result.getUrl().v());
+                Result refreshed = SiteApi.playerContent(key, result.getFlag(), result.getUrl().v(), playerType);
                 App.post(() -> startRefreshedSwitchResult(refreshed, key, metadata));
             } catch (Throwable e) {
                 App.post(() -> {

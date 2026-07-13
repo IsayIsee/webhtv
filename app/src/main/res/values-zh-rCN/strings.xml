@@ -373,7 +373,7 @@
     <string name="site_health_clear_done">站点健康记录已清空</string>
     <string name="setting_web_home_extension">WebHome 扩展</string>
     <string name="setting_web_home_fullscreen">WebHome 主页全屏</string>
-    <string name="setting_csp_warmup">CSP init 预热</string>
+    <string name="setting_csp_warmup">CSP预热</string>
     <string name="setting_csp_warmup_default">默认</string>
     <string name="setting_csp_warmup_custom">自定义</string>
     <string name="setting_csp_warmup_custom_count">自定义 · %1$d 个</string>
@@ -810,6 +810,7 @@
     <string name="player_performance">播放性能</string>
     <string name="player_performance_recommended">推荐</string>
     <string name="player_performance_compatible">兼容</string>
+    <string name="player_performance_lightweight">轻量</string>
     <string name="player_performance_help">说明</string>
     <string name="player_performance_help_title">播放性能参数说明</string>
     <string name="player_performance_help_close">关闭</string>

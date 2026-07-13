@@ -591,7 +591,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void setVideoView() {
-        mBinding.control.action.danmaku.setVisibility(DanmakuSetting.isLoad() ? View.VISIBLE : View.GONE);
+        mBinding.control.action.danmaku.setVisibility(View.VISIBLE);
         mBinding.control.action.reset.setText(ResUtil.getStringArray(R.array.select_reset)[Setting.getReset()]);
         setupActionButtons();
         mBinding.video.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
@@ -754,14 +754,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mFlagAdapter.addAll(item.getFlags());
         App.removeCallbacks(mR4);
         checkHistory(item);
-        if (item.getFlags().isEmpty()) {
-            mBinding.flag.setVisibility(View.GONE);
-            mBinding.episode.setVisibility(View.GONE);
-            showError(getString(R.string.error_play_flag));
-            setText(item);
-            updateKeep();
-            return;
-        }
         checkFlag(item);
         checkKeepImg();
         setText(item);
@@ -823,18 +815,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private void setPlayer(Result result) {
         if (isFinishing() || isDestroyed()) return;
-        mBinding.swipeLayout.setRefreshing(false);
-        if (result == null) {
-            onError(getString(R.string.error_play_url));
-            return;
-        }
         SpiderDebug.log("video-flow", "player finish cost=%dms useParse=%s multi=%s msg=%s", System.currentTimeMillis() - playerStartTime, result.shouldUseParse(), result.getUrl().isMulti(), result.getMsg());
-        if (result.hasMsg() || result.getRealUrl().isEmpty()) {
-            onError(result.hasMsg() ? result.getMsg() : getString(R.string.error_play_url));
-            return;
-        }
         mQualityAdapter.addAll(result);
         setUseParse(result.shouldUseParse());
+        mBinding.swipeLayout.setRefreshing(false);
         setQualityVisible(result.getUrl().isMulti());
         result.getUrl().set(mQualityAdapter.getPosition());
         if (result.hasArtwork() && !shouldKeepPushArtwork()) setArtwork(result.getArtwork());
@@ -1504,12 +1488,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         SpiderDebug.log("video-flow", "switch player refresh start type=%d key=%s flag=%s episode=%s", nextType, key, flag, episode);
         Task.execute(() -> {
             try {
-                Result result = SiteApi.playerContent(key, flag, episode);
+                Result result = SiteApi.playerContent(key, flag, episode, nextType);
                 App.post(() -> switchPlayerKernelWithResult(nextType, result, position, speed, repeat, metadata));
             } catch (Throwable e) {
                 App.post(() -> {
                     playerKernelSwitchRefreshing = false;
-                    player().togglePlayer();
                     setPlayerKernel();
                     setDecode();
                     setR1Callback();
@@ -1522,10 +1505,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private void switchPlayerKernelWithResult(int type, Result result, long position, float speed, boolean repeat, MediaMetadata metadata) {
         playerKernelSwitchRefreshing = false;
-        if (result == null || result.hasMsg() || result.getRealUrl().isEmpty() || result.needParse() || isUseParse()) {
-            player().togglePlayer();
+        if (result == null || result.hasMsg() || result.getRealUrl().isEmpty()) {
+            Notify.show(result != null && result.hasMsg() ? result.getMsg() : getString(R.string.error_play_url));
         } else {
-            player().switchPlayer(type, PlaySpec.from(result, getHistoryKey(), metadata), position, speed, repeat);
+            player().switchPlayer(type, result, getHistoryKey(), metadata, isUseParse(), position, speed, repeat);
         }
         setPlayerKernel();
         setDecode();

@@ -1,5 +1,7 @@
 package com.fongmi.android.tv.bean;
 
+import android.content.SharedPreferences;
+
 import androidx.annotation.NonNull;
 
 import com.fongmi.android.tv.App;
@@ -37,6 +39,10 @@ public class Backup {
     private List<Config> config;
     @SerializedName("history")
     private List<History> history;
+    @SerializedName("track")
+    private List<Track> track;
+    @SerializedName("device")
+    private List<Device> device;
     @SerializedName("prefers")
     private Map<String, ?> prefers;
 
@@ -48,6 +54,8 @@ public class Backup {
         backup.setKeep(AppDatabase.get().getKeepDao().findAll());
         backup.setConfig(AppDatabase.get().getConfigDao().findAll());
         backup.setHistory(AppDatabase.get().getHistoryDao().findAll());
+        backup.setTrack(AppDatabase.get().getTrackDao().findAll());
+        backup.setDevice(AppDatabase.get().getDeviceDao().findAll());
         return backup;
     }
 
@@ -81,7 +89,9 @@ public class Backup {
         AppDatabase.get().getKeepDao().insertOrUpdate(getKeep());
         AppDatabase.get().getConfigDao().insertOrUpdate(getConfig());
         AppDatabase.get().getHistoryDao().insertOrUpdate(getHistory());
-        for (Map.Entry<String, ?> entry : getPrefers().entrySet()) Prefers.put(entry.getKey(), entry.getValue());
+        AppDatabase.get().getTrackDao().insertOrUpdate(getTrack());
+        AppDatabase.get().getDeviceDao().insertOrUpdate(getDevice());
+        restorePrefers(getPrefers(), true);
     }
 
     public void restore(SyncOptions options, boolean force) {
@@ -106,7 +116,7 @@ public class Backup {
             for (History item : getHistory()) if (cids.containsKey(item.getCid())) item.setCid(cids.get(item.getCid()));
             AppDatabase.get().getHistoryDao().insertOrUpdate(getHistory());
         }
-        for (Map.Entry<String, ?> entry : filter(getPrefers(), options).entrySet()) Prefers.put(entry.getKey(), entry.getValue());
+        restorePrefers(filter(getPrefers(), options), false);
         if (options.isSpider() || options.isLoginState()) BaseLoader.get().clear();
         if (options.isConfig() || options.isSpider() || options.isLoginState()) reloadConfig();
         if (options.isKeep()) RefreshEvent.keep();
@@ -155,7 +165,26 @@ public class Backup {
     }
 
     private static boolean isAppPref(String key) {
-        return APP_PREFS.contains(key) || key.startsWith("danmaku_");
+        return APP_PREFS.contains(key) || key.startsWith("danmaku_") || key.startsWith("playback_performance_") || key.startsWith("perf_exo_") || key.startsWith("perf_mpv_") || key.startsWith("perf_ijk_") || key.startsWith("perf_kernel_");
+    }
+
+    private static void restorePrefers(Map<String, ?> values, boolean clear) {
+        SharedPreferences.Editor editor = Prefers.getPrefers().edit();
+        if (clear) editor.clear();
+        for (Map.Entry<String, ?> entry : values.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof String) editor.putString(entry.getKey(), (String) value);
+            else if (value instanceof Boolean) editor.putBoolean(entry.getKey(), (Boolean) value);
+            else if (value instanceof Float) editor.putFloat(entry.getKey(), (Float) value);
+            else if (value instanceof Integer) editor.putInt(entry.getKey(), (Integer) value);
+            else if (value instanceof Long) editor.putLong(entry.getKey(), (Long) value);
+            else if (value instanceof Number) {
+                Number number = (Number) value;
+                if (number.toString().contains(".")) editor.putFloat(entry.getKey(), number.floatValue());
+                else editor.putInt(entry.getKey(), number.intValue());
+            }
+        }
+        editor.commit();
     }
 
     public List<Site> getSite() {
@@ -196,6 +225,22 @@ public class Backup {
 
     public void setHistory(List<History> history) {
         this.history = history;
+    }
+
+    public List<Track> getTrack() {
+        return track == null ? Collections.emptyList() : track;
+    }
+
+    public void setTrack(List<Track> track) {
+        this.track = track;
+    }
+
+    public List<Device> getDevice() {
+        return device == null ? Collections.emptyList() : device;
+    }
+
+    public void setDevice(List<Device> device) {
+        this.device = device;
     }
 
     public Map<String, ?> getPrefers() {

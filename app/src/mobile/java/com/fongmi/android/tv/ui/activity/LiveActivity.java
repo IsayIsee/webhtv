@@ -607,7 +607,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private int getFullscreenOrient() {
-        return ResUtil.isPad() ? ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE : PlaybackOrientation.getEnterFullscreenOrientation(false);
+        return ResUtil.isPad() ? ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE : PlaybackOrientation.getEnterFullscreenOrientation(player().isPortrait());
     }
 
     private int getEmbeddedOrient() {
@@ -1385,6 +1385,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         videoSize = size;
         updateVideoHeight(size);
         applyLiveResizeMode(LiveSetting.getScale());
+        if (!isEmbeddedLiveUi() && !isLock() && !ResUtil.isPad()) setRequestedOrientation(getFullscreenOrient());
         setSizeText();
     }
 
@@ -1691,6 +1692,28 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     @Override
     public void onSingleTap() {
         onToggle();
+    }
+
+    @Override
+    public void onSingleTap(float x, float width) {
+        if (width <= 0 || isEmbeddedLiveUi()) {
+            onToggle();
+            return;
+        }
+        hideInfo();
+        if (x < width / 2f) {
+            if (isVisible(mBinding.recycler)) hideUI();
+            else {
+                hideControl();
+                showUI();
+            }
+        } else {
+            if (isVisible(mBinding.control.getRoot())) hideControl();
+            else {
+                hideUI(false);
+                showControl();
+            }
+        }
     }
 
     @Override

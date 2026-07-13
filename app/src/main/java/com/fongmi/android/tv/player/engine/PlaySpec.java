@@ -95,6 +95,10 @@ public class PlaySpec {
         this.format = format;
     }
 
+    public PlaySpec copyWithFormat(String format) {
+        return new PlaySpec(key, url, headers, format, drm, subs, danmakus, metadata).setSource(parseResult, parseSource, parseUseParse);
+    }
+
     public Drm getDrm() {
         return drm;
     }

@@ -59,9 +59,11 @@ public final class MpvHlsProxy extends NanoHTTPD {
     private static final byte[] PNG_SIGNATURE = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
     private static final byte[] PNG_IEND = new byte[]{0x49, 0x45, 0x4E, 0x44, (byte) 0xAE, 0x42, 0x60, (byte) 0x82};
     private static final Pattern URI_ATTR = Pattern.compile("URI=\"([^\"]+)\"");
+    private static final Pattern DASH_BASE_URL = Pattern.compile("(<BaseURL\\b[^>]*>)(.*?)(</BaseURL>)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
     private final OkHttpClient client;
+    private final int kernel;
     private final Map<Integer, Session> sessions;
     private final Map<Integer, SessionStats> sessionStats;
     private final Map<String, Target> targets;
@@ -73,7 +75,12 @@ public final class MpvHlsProxy extends NanoHTTPD {
     private volatile boolean started;
 
     public MpvHlsProxy() {
+        this(PlayerSetting.MPV);
+    }
+
+    public MpvHlsProxy(int kernel) {
         super("127.0.0.1", 0);
+        this.kernel = PlayerSetting.sanitizePlayer(kernel);
         client = OkHttp.player().newBuilder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
@@ -96,6 +103,18 @@ public final class MpvHlsProxy extends NanoHTTPD {
         pruneCache();
         String proxyUrl = baseUrl() + "/mpv/index.m3u8?s=" + sessionId;
         SpiderDebug.log(TAG, "enabled session=%d url=%s headers=%s proxy=%s", sessionId, shortUrl(url), session.headers.keySet(), proxyUrl);
+        return proxyUrl;
+    }
+
+    public synchronized String proxyDash(String url, Map<String, String> headers) throws IOException {
+        ensureStarted();
+        int id = ++this.sessionId;
+        Session session = new Session(url, sanitize(headers), System.currentTimeMillis());
+        sessions.put(id, session);
+        sessionStats.put(id, new SessionStats());
+        pruneExpiredSessions(session.createdAtMs);
+        String proxyUrl = baseUrl() + "/mpv/index.mpd?s=" + id;
+        SpiderDebug.log(TAG, "dash enabled session=%d url=%s headers=%s proxy=%s", id, shortUrl(url), session.headers.keySet(), proxyUrl);
         return proxyUrl;
     }
 
@@ -134,7 +153,9 @@ public final class MpvHlsProxy extends NanoHTTPD {
             String path = session.getUri();
             if (path == null) return error(Status.NOT_FOUND, "missing path");
             if (path.startsWith("/mpv/index.m3u8")) return servePlaylist(session);
-            if (path.startsWith("/mpv/item")) return serveItem(session);
+            if (path.startsWith("/mpv/index.mpd")) return serveDash(session);
+            if (path.startsWith("/mpv/dash-item/")) return serveItem(session, dashItemId(path));
+            if (path.startsWith("/mpv/item")) return serveItem(session, null);
             return error(Status.NOT_FOUND, "not found");
         } catch (Throwable e) {
             SpiderDebug.log(TAG, e);
@@ -178,8 +199,35 @@ public final class MpvHlsProxy extends NanoHTTPD {
         }
     }
 
-    private Response serveItem(IHTTPSession httpSession) throws IOException {
-        String id = httpSession.getParms().get("id");
+    private Response serveDash(IHTTPSession httpSession) throws IOException {
+        int id = parseSessionId(httpSession);
+        Session session = sessions.get(id);
+        if (session == null || TextUtils.isEmpty(session.url)) return error(Status.NOT_FOUND, "expired dash");
+        try (okhttp3.Response response = fetch(session, session.url, null, false)) {
+            ResponseBody body = response.body();
+            if (!response.isSuccessful() || body == null) return error(toStatus(response.code()), "dash http " + response.code());
+            String manifestUrl = response.request().url().toString();
+            String text = body.string();
+            if (!text.toLowerCase(Locale.US).contains("<mpd")) return error(Status.BAD_REQUEST, "invalid dash");
+            Matcher matcher = DASH_BASE_URL.matcher(text);
+            StringBuffer rewritten = new StringBuffer();
+            int count = 0;
+            while (matcher.find()) {
+                String target = resolve(manifestUrl, decodeXml(matcher.group(2).trim()));
+                String local = proxyDashItemUrl(target, id).replace("&", "&amp;");
+                matcher.appendReplacement(rewritten, Matcher.quoteReplacement(matcher.group(1) + local + matcher.group(3)));
+                count++;
+            }
+            matcher.appendTail(rewritten);
+            byte[] data = rewritten.toString().getBytes(StandardCharsets.UTF_8);
+            SpiderDebug.log(TAG, "dash manifest session=%d code=%d bytes=%d baseUrls=%d url=%s", id, response.code(), data.length, count, shortUrl(session.url));
+            return noCache(newFixedLengthResponse(Status.OK, "application/dash+xml; charset=utf-8", new ByteArrayInputStream(data), data.length));
+        }
+    }
+
+    private Response serveItem(IHTTPSession httpSession, @Nullable String forcedId) throws IOException {
+        String id = forcedId == null ? httpSession.getParms().get("id") : forcedId;
+        if (id != null && id.endsWith("/")) id = id.substring(0, id.length() - 1);
         Target target = id == null ? null : targets.get(id);
         Session owner = target == null ? null : sessions.get(target.sessionId);
         if (target == null || owner == null) return error(Status.NOT_FOUND, "expired item");
@@ -421,6 +469,25 @@ public final class MpvHlsProxy extends NanoHTTPD {
         return baseUrl() + "/mpv/item?s=" + session + "&id=" + id;
     }
 
+    private String proxyDashItemUrl(String targetUrl, int session) {
+        String id = Long.toString(nextId.incrementAndGet());
+        targets.put(id, new Target(session, targetUrl, System.currentTimeMillis(), true));
+        return baseUrl() + "/mpv/dash-item/" + id + "/media.m4s";
+    }
+
+    @Nullable
+    private String dashItemId(String path) {
+        String prefix = "/mpv/dash-item/";
+        if (path == null || !path.startsWith(prefix)) return null;
+        String value = path.substring(prefix.length());
+        int slash = value.indexOf('/');
+        return slash < 0 ? value : value.substring(0, slash);
+    }
+
+    private String decodeXml(String value) {
+        return value.replace("&amp;", "&").replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">");
+    }
+
     @Nullable
     private Response serveCached(Session session, String url, @Nullable String rangeHeader) throws IOException {
         if (!isCacheEnabled()) return null;
@@ -482,13 +549,13 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     private void preloadSegments(Session session, List<Segment> segments, double startSeconds) {
-        if (!PreloadSetting.isPreload() || !isCacheEnabled() || segments.isEmpty()) return;
+        if (!PreloadSetting.isPreload(kernel) || !isCacheEnabled() || segments.isEmpty()) return;
         double seconds = 0;
         for (Segment segment : segments) {
             if (segment.endSeconds() <= startSeconds) continue;
             if (segment.startSeconds <= startSeconds && segment.endSeconds() > startSeconds) continue;
             if (segment.byteRange) continue;
-            if (seconds >= PreloadSetting.getPreloadTimeSeconds()) break;
+            if (seconds >= PreloadSetting.getPreloadTimeSeconds(kernel)) break;
             seconds += Math.max(0, segment.durationSeconds);
             preloadSegment(session, segment.url);
         }
@@ -512,7 +579,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     private synchronized ExecutorService getPreloadExecutor() {
-        int threads = PreloadSetting.getPreloadThreads();
+        int threads = PreloadSetting.getPreloadThreads(kernel);
         if (preloadExecutor != null && preloadThreads == threads) return preloadExecutor;
         releasePreloadExecutor();
         preloadThreads = threads;
@@ -583,8 +650,8 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     private long cacheLimitBytes() {
-        long playCache = Math.max(0, PlayerSetting.getPlayCacheSize());
-        long preloadCache = PreloadSetting.isPreload() ? Math.max(0, PreloadSetting.getPreloadSizeBytes()) : playCache;
+        long playCache = Math.max(0, PlayerSetting.getPlayCacheSize(kernel));
+        long preloadCache = PreloadSetting.isPreload(kernel) ? Math.max(0, PreloadSetting.getPreloadSizeBytes(kernel)) : playCache;
         return Math.max(0, Math.min(playCache, preloadCache));
     }
 

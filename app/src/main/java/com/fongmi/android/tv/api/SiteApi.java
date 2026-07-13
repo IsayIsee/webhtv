@@ -13,6 +13,7 @@ import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.bean.Vod;
 import com.fongmi.android.tv.player.Source;
+import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Sniffer;
 import com.fongmi.android.tv.web.WebHomeInlineVodStore;
@@ -114,8 +115,16 @@ public class SiteApi {
         SpiderDebug.log("detail", "key=%s,id=%s", key, id);
         if (WebHomeInlineVodStore.KEY.equals(key)) return WebHomeInlineVodStore.detail(id);
         Site site = VodConfig.get().getSite(key);
-        if (site.isEmpty() && PUSH.equals(key)) return pushDetail(id);
-        if (isSpider(site)) {
+        if (site.isEmpty() && PUSH.equals(key)) {
+            Vod vod = new Vod();
+            vod.setId(id);
+            vod.setName(id);
+            vod.setPlayUrl(id);
+            vod.setPlayFrom(ResUtil.getString(R.string.push));
+            vod.setPic(ResUtil.getString(R.string.push_image));
+            Source.get().parse(vod.setFlags());
+            return Result.vod(vod);
+        } else if (isSpider(site)) {
             String detailContent = site.recent().spider().detailContent(Arrays.asList(id));
             SpiderDebug.log("detail", detailContent);
             Result result = Result.fromJson(detailContent);
@@ -135,17 +144,21 @@ public class SiteApi {
 
     @NonNull
     public static Result playerContent(@NonNull String key, @NonNull String flag, @NonNull String id) throws Exception {
+        return playerContent(key, flag, id, PlayerSetting.getPlayer());
+    }
+
+    @NonNull
+    public static Result playerContent(@NonNull String key, @NonNull String flag, @NonNull String id, int playerType) throws Exception {
         SpiderDebug.log("player", "key=%s,flag=%s,id=%s", key, flag, id);
         Source.get().stop();
         if (WebHomeInlineVodStore.KEY.equals(key)) return WebHomeInlineVodStore.player(flag, id);
-        if (PUSH.equals(key)) return pushPlayer(flag, id);
         Site site = VodConfig.get().getSite(key);
         if (site.getType() == 3) {
             String playerContent = site.recent().spider().playerContent(flag, id, VodConfig.get().getFlags());
             SpiderDebug.log("player", playerContent);
             Result result = Result.fromJson(playerContent);
             if (result.getFlag().isEmpty()) result.setFlag(flag);
-            result.setUrl(Source.get().fetch(result));
+            result.setUrl(Source.get().fetch(result, playerType));
             result.setHeader(site.getHeader());
             result.setKey(key);
             return result;
@@ -157,8 +170,16 @@ public class SiteApi {
             SpiderDebug.log("player", playerContent);
             Result result = Result.fromJson(playerContent);
             if (result.getFlag().isEmpty()) result.setFlag(flag);
-            result.setUrl(Source.get().fetch(result));
+            result.setUrl(Source.get().fetch(result, playerType));
             result.setHeader(site.getHeader());
+            return result;
+        } else if (site.isEmpty() && "push_agent".equals(key)) {
+            Result result = new Result();
+            result.setUrl(id);
+            result.setParse(0);
+            result.setFlag(flag);
+            result.setUrl(Source.get().fetch(result, playerType));
+            SpiderDebug.log("player", result.toString());
             return result;
         } else {
             Result result = new Result();
@@ -167,31 +188,10 @@ public class SiteApi {
             result.setHeader(site.getHeader());
             result.setPlayUrl(site.getPlayUrl());
             result.setParse(Sniffer.isVideoFormat(id) && result.getPlayUrl().isEmpty() ? 0 : 1);
-            result.setUrl(Source.get().fetch(result));
+            result.setUrl(Source.get().fetch(result, playerType));
             SpiderDebug.log("player", result.toString());
             return result;
         }
-    }
-
-    private static Result pushDetail(@NonNull String id) throws Exception {
-        Vod vod = new Vod();
-        vod.setId(id);
-        vod.setName(id);
-        vod.setPlayUrl(id);
-        vod.setPlayFrom(ResUtil.getString(R.string.push));
-        vod.setPic(ResUtil.getString(R.string.push_image));
-        Source.get().parse(vod.setFlags());
-        return Result.vod(vod);
-    }
-
-    private static Result pushPlayer(@NonNull String flag, @NonNull String id) throws Exception {
-        Result result = new Result();
-        result.setUrl(id);
-        result.setParse(0);
-        result.setFlag(flag);
-        result.setUrl(Source.get().fetch(result));
-        SpiderDebug.log("player", result.toString());
-        return result;
     }
 
     @NonNull

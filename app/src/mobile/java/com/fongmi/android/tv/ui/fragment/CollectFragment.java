@@ -38,6 +38,7 @@ import com.fongmi.android.tv.ui.adapter.CollectAdapter;
 import com.fongmi.android.tv.ui.adapter.SearchAdapter;
 import com.fongmi.android.tv.ui.base.BaseFragment;
 import com.fongmi.android.tv.ui.custom.CustomScroller;
+import com.fongmi.android.tv.utils.MobileWindow;
 import com.fongmi.android.tv.utils.ResUtil;
 
 import java.util.ArrayList;
@@ -184,7 +185,7 @@ public class CollectFragment extends BaseFragment implements MenuProvider, Colle
 
     private int getSpanCount() {
         if (!isGrid()) return 1;
-        if (!ResUtil.isLand(requireActivity())) return 2;
+        if (!MobileWindow.isWide(requireActivity())) return 2;
         int column = Product.getColumn(requireActivity());
         int targetWidth = Product.getSpec(requireActivity(), column)[0];
         int available = getResultWidth() - getResultPadding();
