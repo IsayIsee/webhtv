@@ -53,19 +53,35 @@ jobs:
           git merge origin/main --no-edit
           echo "status=$?" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve README.md-only conflict
+        id: resolve-readme
+        if: steps.merge.outputs.status != '0'
+        run: |
+          CONFLICT_FILES=$(git diff --name-only --diff-filter=U | xargs)
+          echo "Conflicting files: $CONFLICT_FILES"
+          if [ "$CONFLICT_FILES" = "README.md" ]; then
+            echo "Only README.md conflicts — accepting current branch version..."
+            git checkout --ours README.md
+            git add README.md
+            git commit --no-edit
+            echo "resolved=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Push if merge succeeded
-        if: steps.merge.outputs.status == '0'
+        if: steps.merge.outputs.status == '0' || steps.resolve-readme.outputs.resolved == 'true'
         run: git push origin webhtv_dev
 
-      - name: Abort merge on conflict
-        if: steps.merge.outputs.status != '0'
-        run: git merge --abort
-
       - name: Notify webhook on conflict
-        if: steps.merge.outputs.status != '0'
+        if: steps.merge.outputs.status != '0' && steps.resolve-readme.outputs.resolved != 'true'
         run: |
           curl -sS -X POST "${{ secrets.MERGE_FAIL_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
             -d "{
               \"text\": \"⚠️ 自动合并冲突: main -> webhtv_dev\n仓库: ${{ github.repository }}\n时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)\n请手动处理: https://github.com/${{ github.repository }}/compare/webhtv_dev...main\"
             }"
+
+      - name: Abort merge on unresolved conflict
+        if: steps.merge.outputs.status != '0' && steps.resolve-readme.outputs.resolved != 'true'
+        run: git merge --abort || true
