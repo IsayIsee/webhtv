@@ -443,11 +443,11 @@ public class Setting {
 
     private static float getUiScaleFactor(int scale) {
         return switch (scale) {
-            case UI_SCALE_STANDARD -> 0.9f;
-            case UI_SCALE_MILD_COMPACT -> 0.85f;
-            case UI_SCALE_COMPACT -> 0.8f;
-            case UI_SCALE_MORE_COMPACT -> 0.75f;
-            case UI_SCALE_SMALLER -> 0.7f;
+            case UI_SCALE_STANDARD -> 0.8f;
+            case UI_SCALE_MILD_COMPACT -> 0.75f;
+            case UI_SCALE_COMPACT -> 0.7f;
+            case UI_SCALE_MORE_COMPACT -> 0.65f;
+            case UI_SCALE_SMALLER -> 0.6f;
             default -> 1.0f;
         };
     }

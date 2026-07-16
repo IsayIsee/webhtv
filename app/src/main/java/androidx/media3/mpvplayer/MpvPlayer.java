@@ -84,6 +84,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private static final int RECENT_LOG_LIMIT = 32;
     private static final String HEADER_ACCEPT = "Accept";
     private static final String HEADER_ORIGIN = "Origin";
+    private static final Object NATIVE_CONTEXT_LOCK = new Object();
+    @Nullable
+    private static MpvPlayer nativeContextOwner;
 
     public static final String ERROR_HLS_PLAYBACK_FAILED = "MPV_HLS_PLAYBACK_FAILED";
     public static final String ERROR_LOAD_FAILED = "MPV_LOAD_FAILED";
@@ -138,6 +141,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private MpvLutShader lutShader;
     private String currentPlayableUri;
     private String currentIsoUri;
+    private boolean isoTrackListDumped;
     private String appliedLutShaderPath;
     private PlaybackParameters playbackParameters;
     private PlaybackException playerError;
@@ -385,15 +389,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         clearVideoOutput();
         mainHandler.removeCallbacks(stateRefreshRunnable);
         mainHandler.removeCallbacks(endFileValidationRunnable);
-        if (initialized) {
-            try {
-                MPVLib.removeObserver(this);
-                MPVLib.removeLogObserver(this);
-                MPVLib.destroy();
-            } catch (Throwable ignored) {
-            }
-            initialized = false;
-        }
+        releaseNativeContext("release");
         return Futures.immediateVoidFuture();
     }
 
@@ -627,7 +623,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             currentPlayableUri = playableUri(mediaItem);
             logSourceDiagnostics(mediaItem, currentPlayableUri, headers);
             boolean declaredIso = isLikelyIso(mediaItem, currentPlayableUri);
-            if (!declaredIso && isOpaqueLocalProxy(currentPlayableUri)) {
+            if (!declaredIso && shouldProbeOpaqueIso(mediaItem, currentPlayableUri)) {
                 String probingUri = currentPlayableUri;
                 IsoSessionManager.probeAndCreateAsync(probingUri, headers, isoUri -> mainHandler.post(() -> {
                     if (released || stopping || !TextUtils.equals(currentPlayableUri, probingUri)) {
@@ -679,23 +675,33 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     private void ensureInitialized() throws IOException {
-        if (initialized) return;
-        if (!MPVLib.ensureLoaded(context)) {
-            Throwable e = MPVLib.getLoadError();
-            if (e instanceof IOException io) throw io;
-            if (e instanceof RuntimeException runtime) throw runtime;
-            throw new IOException(e == null ? "MPV native libraries are unavailable" : e.getMessage(), e);
+        synchronized (NATIVE_CONTEXT_LOCK) {
+            if (initialized && nativeContextOwner == this) return;
+            if (nativeContextOwner != null && nativeContextOwner != this) {
+                SpiderDebug.log("mpv", "native context takeover old=%s new=%s", identity(nativeContextOwner), identity(this));
+                nativeContextOwner.released = true;
+                nativeContextOwner.releaseNativeContextLocked("takeover");
+            }
+            if (!MPVLib.ensureLoaded(context)) {
+                Throwable e = MPVLib.getLoadError();
+                if (e instanceof IOException io) throw io;
+                if (e instanceof RuntimeException runtime) throw runtime;
+                throw new IOException(e == null ? "MPV native libraries are unavailable" : e.getMessage(), e);
+            }
+            copySupportAssets();
+            nativeContextOwner = this;
+            if (!MPVLib.tryCreate(context)) {
+                throw new IOException("MPV native context creation is already in progress");
+            }
+            applyPreInitOptions();
+            MPVLib.init();
+            initialized = true;
+            MPVLib.addObserver(this);
+            MPVLib.addLogObserver(this);
+            applyPostInitOptions();
+            applyShaderPipeline(true);
+            observeProperties();
         }
-        copySupportAssets();
-        MPVLib.create(context);
-        applyPreInitOptions();
-        MPVLib.init();
-        initialized = true;
-        MPVLib.addObserver(this);
-        MPVLib.addLogObserver(this);
-        applyPostInitOptions();
-        applyShaderPipeline(true);
-        observeProperties();
     }
 
     private void applyPreInitOptions() {
@@ -742,7 +748,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private void applyPostInitOptions() {
         setRuntimeString("save-position-on-quit", "no");
         setRuntimeString("force-window", "no");
-        setRuntimeString("idle", "once");
+        setRuntimeString("idle", "yes");
     }
 
     private void observeProperties() {
@@ -847,13 +853,12 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             }
             case "eof-reached" -> {
                 eofReached = Boolean.TRUE.equals(value);
-                if (eofReached) {
-                    playbackState = Player.STATE_ENDED;
-                    loading = false;
-                    stopStateRefresh();
-                }
+                if (eofReached) markPlaybackEnded("property:eof-reached");
             }
-            case "idle-active" -> idleActive = Boolean.TRUE.equals(value);
+            case "idle-active" -> {
+                idleActive = Boolean.TRUE.equals(value);
+                if (idleActive && fileLoaded && !stopping) markPlaybackEnded("property:idle-active");
+            }
             case "width", "height", "video-params/w", "video-params/h", "video-params/dw", "video-params/dh", "video-out-params/w", "video-out-params/h", "video-out-params/dw", "video-out-params/dh", "current-tracks/video/demux-w", "current-tracks/video/demux-h" -> {
                 updateVideoSize("property:" + property);
                 refreshTracks();
@@ -924,6 +929,21 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         }
         refreshTracks();
         invalidateState();
+    }
+
+    public void restoreVideoTrackSelection() {
+        if (!initialized) return;
+        int count = Math.max(0, intProperty("track-list/count", 0));
+        for (int index = 0; index < count; index++) {
+            TrackInfo info = readTrackInfo(index, C.INDEX_UNSET);
+            if (info == null || info.type != C.TRACK_TYPE_VIDEO) continue;
+            setMpvTrack(C.TRACK_TYPE_VIDEO, info.id);
+            SpiderDebug.log("mpv", "restore video track id=%s codec=%s", info.id, info.codec);
+            refreshTracks();
+            invalidateState();
+            return;
+        }
+        SpiderDebug.log("mpv", "restore video track skipped no video track");
     }
 
     public void setSecondarySubtitleTrackSelection(String mpvId) {
@@ -1070,7 +1090,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 return;
             }
             case MPVLib.MpvEvent.MPV_EVENT_IDLE -> {
-                if (loading && !fileLoaded && !stopping) {
+                if (fileLoaded && !stopping) {
+                    markPlaybackEnded("event:idle");
+                } else if (loading && !stopping) {
                     playbackState = Player.STATE_BUFFERING;
                     mainHandler.removeCallbacks(endFileValidationRunnable);
                     mainHandler.postDelayed(endFileValidationRunnable, END_FILE_VALIDATION_DELAY_MS);
@@ -1078,9 +1100,13 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 }
             }
             case MPVLib.MpvEvent.MPV_EVENT_SHUTDOWN -> {
-                playbackState = Player.STATE_IDLE;
-                loading = false;
-                stopStateRefresh();
+                if (fileLoaded && !stopping) {
+                    markPlaybackEnded("event:shutdown");
+                } else {
+                    playbackState = Player.STATE_IDLE;
+                    loading = false;
+                    stopStateRefresh();
+                }
             }
             default -> {
             }
@@ -1103,11 +1129,13 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         } else if (reason == MPVLib.MpvEndFileReason.MPV_END_FILE_REASON_ERROR) {
             fail(nativeEndFileError(reason, error, errorText), nativeEndFilePlaybackExceptionCode(error));
             return;
+        } else if (isSuccessfulNaturalEof(reason, error)) {
+            playbackState = Player.STATE_ENDED;
         } else if (isFailedLoadedMedia()) {
             fail(new IOException(failedLoadedMediaMessage()), PlaybackException.ERROR_CODE_DECODING_FAILED);
             return;
         } else if (fileLoaded || eofReached) {
-            playbackState = Player.STATE_ENDED;
+            markPlaybackEnded("event:end-file");
         } else {
             loading = true;
             playbackState = Player.STATE_BUFFERING;
@@ -1116,6 +1144,27 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             startStateRefresh();
         }
         invalidateState();
+    }
+
+    private void markPlaybackEnded(String reason) {
+        if (playbackState == Player.STATE_ENDED) return;
+        eofReached = true;
+        loading = false;
+        playbackState = Player.STATE_ENDED;
+        stopStateRefresh();
+        mainHandler.removeCallbacks(endFileValidationRunnable);
+        mainHandler.removeCallbacks(loadStartRetryRunnable);
+        SpiderDebug.log("mpv", "playback ended reason=%s position=%d duration=%d", reason, cachedPositionMs, cachedDurationMs);
+    }
+
+    private boolean isSuccessfulNaturalEof(int reason, int error) {
+        if (reason != MPVLib.MpvEndFileReason.MPV_END_FILE_REASON_EOF || error != MPVLib.MpvError.MPV_ERROR_SUCCESS || !fileLoaded) return false;
+        if (eofReached) return true;
+        long duration = cachedDurationMs;
+        long position = cachedPositionMs;
+        if (duration == C.TIME_UNSET || duration <= 0) return playbackRestarted && position > 0 && !sawNetworkError && !sawDecodeError && !sawDrmError;
+        long tolerance = Math.max(3000L, Math.min(15000L, duration / 100L));
+        return position >= Math.max(0, duration - tolerance);
     }
 
     private boolean isLikelyHls(MediaItem item, String uri) {
@@ -1596,28 +1645,45 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     private void resetMpvContextForNewMedia() {
-        if (!initialized) return;
         mainHandler.removeCallbacks(stateRefreshRunnable);
         mainHandler.removeCallbacks(endFileValidationRunnable);
         mainHandler.removeCallbacks(loadStartRetryRunnable);
+        releaseNativeContext("new media");
+    }
+
+    private void releaseNativeContext(String reason) {
+        synchronized (NATIVE_CONTEXT_LOCK) {
+            releaseNativeContextLocked(reason);
+        }
+    }
+
+    private void releaseNativeContextLocked(String reason) {
+        if (!initialized) return;
+        boolean ownsNativeContext = nativeContextOwner == this;
         try {
-            if (surfaceAttached) MPVLib.detachSurface();
+            if (ownsNativeContext && surfaceAttached) MPVLib.detachSurface();
         } catch (Throwable ignored) {
         }
         try {
             MPVLib.removeObserver(this);
             MPVLib.removeLogObserver(this);
-            MPVLib.destroy();
+            if (ownsNativeContext) MPVLib.destroyCreatedContext();
         } catch (Throwable ignored) {
+        } finally {
+            if (ownsNativeContext) nativeContextOwner = null;
+            initialized = false;
+            surfaceAttached = false;
+            attachedSurface = null;
+            attachedVo = null;
+            stopping = false;
+            loadStarted = false;
+            loadStartRetryCount = 0;
         }
-        initialized = false;
-        surfaceAttached = false;
-        attachedSurface = null;
-        attachedVo = null;
-        stopping = false;
-        loadStarted = false;
-        loadStartRetryCount = 0;
-        SpiderDebug.log("mpv", "context reset for new media");
+        SpiderDebug.log("mpv", "context released reason=%s owner=%s player=%s", reason, ownsNativeContext, identity(this));
+    }
+
+    private static String identity(MpvPlayer player) {
+        return Integer.toHexString(System.identityHashCode(player));
     }
 
     private void seekMpv(long positionMs) {
@@ -2048,6 +2114,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private long bufferedPositionMs(long position, long duration) {
         if (duration == C.TIME_UNSET || duration <= 0) return position;
         if (cachedCacheDurationMs > 0) return Math.min(duration, position + cachedCacheDurationMs);
+        if (!TextUtils.isEmpty(currentIsoUri)) return position;
         return playbackState == Player.STATE_READY || playbackState == Player.STATE_ENDED ? duration : position;
     }
 
@@ -2065,9 +2132,17 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             currentTracks = Tracks.EMPTY;
             return;
         }
+        if (!isoTrackListDumped && !TextUtils.isEmpty(currentIsoUri)) {
+            isoTrackListDumped = true;
+            MPVLib.dumpTrackList();
+        }
         List<TrackInfo> infos = new ArrayList<>();
+        int audioIndex = 0;
+        int subtitleIndex = 0;
         for (int i = 0; i < count; i++) {
-            TrackInfo info = readTrackInfo(i);
+            String mpvType = stringProperty("track-list/" + i + "/type", "");
+            int typeIndex = "audio".equals(mpvType) ? audioIndex++ : "sub".equals(mpvType) ? subtitleIndex++ : C.INDEX_UNSET;
+            TrackInfo info = readTrackInfo(i, typeIndex);
             if (info == null) continue;
             infos.add(info);
         }
@@ -2237,7 +2312,12 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             builder.append(" id=").append(info.id);
             builder.append(" rawSelected=").append(info.selected);
             builder.append(" finalSelected=").append(isTrackSelectedInSnapshot(tracks, info));
+            builder.append(" title=").append(info.title);
+            builder.append(" lang=").append(info.lang);
             builder.append(" codec=").append(info.codec);
+            Format format = info.toFormat();
+            builder.append(" label=").append(format.label);
+            builder.append(" formatLang=").append(format.language);
             builder.append(" size=").append(info.width).append("x").append(info.height);
             builder.append(" fps=").append(info.frameRate);
             builder.append(" sr=").append(info.sampleRate);
@@ -2341,7 +2421,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     @Nullable
-    private TrackInfo readTrackInfo(int index) {
+    private TrackInfo readTrackInfo(int index, int typeIndex) {
         String prefix = "track-list/" + index + "/";
         String mpvType = stringProperty(prefix + "type", "");
         int type = mediaTrackType(mpvType);
@@ -2351,6 +2431,12 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (TextUtils.isEmpty(id)) id = String.valueOf(intProperty(prefix + "id", index + 1));
         String title = stringProperty(prefix + "title", "");
         String lang = stringProperty(prefix + "lang", "");
+        if (TextUtils.isEmpty(lang) && typeIndex >= 0 && !TextUtils.isEmpty(currentIsoUri)) {
+            int isoTrackType = type == C.TRACK_TYPE_AUDIO ? 1 : type == C.TRACK_TYPE_TEXT ? 2 : 0;
+            if (isoTrackType != 0) {
+                lang = MPVLib.getIsoTrackLanguage(IsoSessionManager.parseId(currentIsoUri), isoTrackType, typeIndex);
+            }
+        }
         String codec = stringProperty(prefix + "codec", "");
         boolean selected = booleanProperty(prefix + "selected", false);
         int width = intProperty(prefix + "demux-w", C.LENGTH_UNSET);
@@ -2896,6 +2982,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (TextUtils.isEmpty(currentIsoUri)) return;
         IsoSessionManager.closeUri(currentIsoUri);
         currentIsoUri = null;
+        isoTrackListDumped = false;
     }
 
     private boolean isLikelyIso(MediaItem item, String uri) {
@@ -2958,6 +3045,15 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         } catch (Throwable ignored) {
             return false;
         }
+    }
+
+    private boolean shouldProbeOpaqueIso(MediaItem item, String uri) {
+        if (!isOpaqueLocalProxy(uri)) return false;
+        if (containsIso(uri)) return true;
+        if (item == null) return false;
+        if (containsIso(item.mediaId)) return true;
+        CharSequence title = item.mediaMetadata.title;
+        return title != null && containsIso(title.toString());
     }
 
     private void copySupportAssets() throws IOException {
@@ -3058,7 +3154,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         }
 
         Format toFormat() {
-            String label = TextUtils.isEmpty(title) ? trackLabel() : title;
+            String label = TextUtils.isEmpty(title) ? (TextUtils.isEmpty(lang) ? trackLabel() : null) : title;
             Format.Builder builder = new Format.Builder()
                     .setId(type + ":" + id)
                     .setLabel(label)

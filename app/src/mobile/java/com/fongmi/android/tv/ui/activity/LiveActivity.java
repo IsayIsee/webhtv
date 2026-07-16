@@ -10,6 +10,7 @@ import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -104,6 +105,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     private static final int LIVE_PIP_WIDTH = 16;
     private static final int LIVE_PIP_HEIGHT = 9;
+    private static final String ORIENTATION_TAG = "LiveOrientation";
 
     private ActivityLiveBinding mBinding;
     private ChannelAdapter mChannelAdapter;
@@ -227,7 +229,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        setRequestedOrientation(getLaunchOrient());
+        requestOrientation("launch", getLaunchOrient());
         super.onCreate(savedInstanceState);
         updateSystemUI();
     }
@@ -565,14 +567,16 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void onLock() {
+        int requested = getRequestedOrientation();
         setLock(!isLock());
-        setRequestedOrientation(getLockOrient());
+        Log.i(ORIENTATION_TAG, "lock changed locked=" + isLock() + " requestedUnchanged=" + requested + " " + orientationState());
         mKeyDown.setLock(isLock());
         checkLockImg();
         showControl();
     }
 
     private void onRotate() {
+        Log.i(ORIENTATION_TAG, "rotate clicked embedded=" + isEmbeddedLiveUi() + " " + orientationState());
         if (isEmbeddedLiveUi()) enterFullscreenLive();
         else exitFullscreenLive();
     }
@@ -584,12 +588,12 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         hideUI();
         updateEmbeddedUiMode();
         Util.hideSystemUI(this);
-        setRequestedOrientation(getFullscreenOrient());
+        requestOrientation("enter-fullscreen", getFullscreenOrient());
     }
 
     private void enterFullscreenLiveOnPad() {
         if (!isPadLiveFullscreenMode() || isRotate() || isInPictureInPictureMode()) return;
-        setRequestedOrientation(getFullscreenOrient());
+        requestOrientation("enter-fullscreen-pad", getFullscreenOrient());
         if (!ResUtil.isLand(this)) return;
         enterFullscreenLive();
     }
@@ -598,7 +602,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         setRotate(false);
         hideInfo();
         hideControl();
-        setRequestedOrientation(getEmbeddedOrient());
+        requestOrientation("exit-fullscreen", getEmbeddedOrient());
     }
 
     private int getLaunchOrient() {
@@ -615,6 +619,18 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         return PlaybackOrientation.getPortraitVideoSizeOrientation();
     }
 
+    private void requestOrientation(String reason, int orientation) {
+        Log.i(ORIENTATION_TAG, "request reason=" + reason + " from=" + getRequestedOrientation() + " to=" + orientation + " " + orientationState());
+        setRequestedOrientation(orientation);
+    }
+
+    private String orientationState() {
+        return "config=" + getResources().getConfiguration().orientation
+                + " displayRotation=" + ResUtil.getDisplay(this).getRotation()
+                + " rotate=" + isRotate()
+                + " locked=" + isLock();
+    }
+
     private boolean isPadLiveFullscreenMode() {
         return ResUtil.isPad() && PlayerSetting.isPadLiveFullscreen();
     }
@@ -624,7 +640,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         if (PlayerSetting.isPadLiveFullscreen()) {
             enterFullscreenLiveOnPad();
         } else if (!isRotate()) {
-            setRequestedOrientation(getEmbeddedOrient());
+            requestOrientation("apply-pad-embedded", getEmbeddedOrient());
         }
     }
 
@@ -763,11 +779,6 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     private boolean onActionTouch(View v, MotionEvent e) {
         if (e.getAction() == MotionEvent.ACTION_UP) setR1Callback();
         return false;
-    }
-
-    private int getLockOrient() {
-        if (ResUtil.isPad() && !isLock() && (PlayerSetting.isPadLiveFullscreen() || isRotate())) return ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE;
-        return PlaybackOrientation.getLockOrientation(this, isLock(), isRotate());
     }
 
     private void hideUI() {
@@ -1385,7 +1396,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
         videoSize = size;
         updateVideoHeight(size);
         applyLiveResizeMode(LiveSetting.getScale());
-        if (!isEmbeddedLiveUi() && !isLock() && !ResUtil.isPad()) setRequestedOrientation(getFullscreenOrient());
+        if (!isEmbeddedLiveUi() && !isLock() && !ResUtil.isPad()) requestOrientation("video-size-fullscreen", getFullscreenOrient());
         setSizeText();
     }
 
@@ -1594,6 +1605,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     public void setRotate(boolean rotate) {
         this.rotate = rotate;
+        Log.i(ORIENTATION_TAG, "rotate state=" + rotate + " " + orientationState());
         updateSystemUI();
         if (rotate) {
             noPadding(mBinding.recycler);
@@ -1691,11 +1703,23 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     @Override
     public void onSingleTap() {
+        if (isLock()) {
+            Log.i(ORIENTATION_TAG, "single tap blocked while locked " + orientationState());
+            showControl();
+            return;
+        }
         onToggle();
     }
 
     @Override
     public void onSingleTap(float x, float width) {
+        if (isLock()) {
+            Log.i(ORIENTATION_TAG, "split tap blocked while locked x=" + x + " width=" + width + " " + orientationState());
+            hideInfo();
+            hideUI(false);
+            showControl();
+            return;
+        }
         if (width <= 0 || isEmbeddedLiveUi()) {
             onToggle();
             return;
@@ -1718,6 +1742,11 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
 
     @Override
     public void onDoubleTap() {
+        if (isLock()) {
+            Log.i(ORIENTATION_TAG, "double tap blocked while locked " + orientationState());
+            showControl();
+            return;
+        }
         if (isVisible(mBinding.recycler)) hideUI();
         if (isVisible(mBinding.control.getRoot())) hideControl();
         else showControl();
@@ -1795,6 +1824,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        Log.i(ORIENTATION_TAG, "configuration changed new=" + newConfig.orientation + " " + orientationState());
         updateSystemUI();
         applyPadLiveMode();
     }

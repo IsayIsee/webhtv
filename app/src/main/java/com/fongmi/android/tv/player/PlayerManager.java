@@ -605,6 +605,10 @@ public class PlayerManager implements ParseCallback {
         engine.resetTrack();
     }
 
+    public void restoreVideoTrack() {
+        if (engine != null) engine.restoreVideoTrack();
+    }
+
     public void toggleDecode() {
         int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
         boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;

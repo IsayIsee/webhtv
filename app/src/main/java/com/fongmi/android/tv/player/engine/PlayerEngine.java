@@ -61,6 +61,9 @@ public interface PlayerEngine {
 
     void resetTrack();
 
+    default void restoreVideoTrack() {
+    }
+
     boolean haveTrack(int type);
 
     Tracks getCurrentTracks();

@@ -165,6 +165,11 @@ public class ExoPlayerEngine implements PlayerEngine {
     }
 
     @Override
+    public void restoreVideoTrack() {
+        TrackUtil.enable(player, C.TRACK_TYPE_VIDEO);
+    }
+
+    @Override
     public boolean haveTrack(int type) {
         return TrackUtil.count(getCurrentTracks(), type) > 0;
     }

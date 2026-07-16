@@ -51,6 +51,7 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
     private PlayerManager player;
     private History history;
     private boolean parse;
+    private boolean ready;
     private int scrollBasePaddingBottom;
 
     public ControlDialog() {
@@ -120,6 +121,11 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
 
     @Override
     protected void initView() {
+        ready = resolveHostDependencies();
+        if (!ready) {
+            binding.getRoot().post(this::dismissAllowingStateLoss);
+            return;
+        }
         scrollBasePaddingBottom = binding.controlScroll.getPaddingBottom();
         setControlPadding();
         setSheetBackground();
@@ -128,6 +134,7 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         binding.ending.setText(parent.control.action.ending.getText());
         binding.opening.setText(parent.control.action.opening.getText());
         binding.repeat.setSelected(parent.control.action.repeat.isSelected());
+        binding.immersiveAudio.setSelected(PlayerSetting.isImmersiveAudioMode());
         binding.timer.setSelected(Timer.get().isRunning());
         setTrackVisible();
         setTitleVisible();
@@ -145,7 +152,9 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
 
     @Override
     protected void initEvent() {
+        if (!ready) return;
         binding.timer.setOnClickListener(this::onTimer);
+        binding.immersiveAudio.setOnClickListener(v -> setImmersiveAudio());
         binding.speed.addOnChangeListener(this::setSpeed);
         for (TextView view : speeds) view.setOnClickListener(this::setSpeedPreset);
         for (TextView view : scales) view.setOnClickListener(this::setScale);
@@ -173,6 +182,12 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
 
     private void onTimer(View view) {
         TimerDialog.create().show(getActivity());
+    }
+
+    private void setImmersiveAudio() {
+        PlayerSetting.putImmersiveAudioMode(!PlayerSetting.isImmersiveAudioMode());
+        binding.immersiveAudio.setSelected(PlayerSetting.isImmersiveAudioMode());
+        ((Listener) requireActivity()).onImmersiveAudioModeChanged();
     }
 
     private void onTrack(View view) {
@@ -273,7 +288,7 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
     }
 
     public void setPlayer() {
-        if (binding == null || parent == null) return;
+        if (binding == null || !resolveHostDependencies()) return;
         binding.speed.setValue(Math.max(player.getSpeed(), 0.5f));
         setSpeedPresets();
         binding.player.setText(parent.control.action.player.getText());
@@ -286,8 +301,19 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
     }
 
     public void setLut() {
-        if (binding == null || parent == null) return;
+        if (binding == null || !resolveHostDependencies()) return;
         binding.lut.setText(parent.control.action.lut.getText());
+    }
+
+    private boolean resolveHostDependencies() {
+        FragmentActivity activity = getActivity();
+        if (activity instanceof Listener listener) {
+            if (parent == null) parent = listener.getControlBinding();
+            if (player == null) player = listener.getControlPlayer();
+            if (history == null) history = listener.getControlHistory();
+            parse = listener.isControlParseEnabled();
+        }
+        return parent != null && player != null;
     }
 
     public void setParseVisible(boolean visible) {
@@ -383,6 +409,17 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
 
     public interface Listener {
 
+        @Nullable
+        ActivityVideoBinding getControlBinding();
+
+        @Nullable
+        PlayerManager getControlPlayer();
+
+        @Nullable
+        History getControlHistory();
+
+        boolean isControlParseEnabled();
+
         void onScale(int tag);
 
         void onEpisodeColumn(int column);
@@ -404,6 +441,12 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         void onTitlePanel();
 
         void onDanmakuPanel();
+
+        void onImmersiveAudioModeChanged();
+
+        void onKaraokeModeChanged();
+
+        void onKaraokeTrackPanel();
 
         void onCodecCapabilityPanel();
     }

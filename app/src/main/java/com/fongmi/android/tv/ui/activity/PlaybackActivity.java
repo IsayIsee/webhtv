@@ -176,6 +176,12 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     protected void onPlayerRebuilt() {
     }
 
+    protected void onControllerReady(Player controller) {
+    }
+
+    protected void onPlayerPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
+    }
+
     protected void onError(String msg) {
     }
 
@@ -288,6 +294,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         try {
             mController = mControllerFuture.get();
             getSeekView().setPlayer(mController);
+            onControllerReady(mController);
             mController.addListener(this);
         } catch (Exception ignored) {
         }
@@ -543,6 +550,11 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     }
 
     @Override
+    public void onPositionDiscontinuity(Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
+        if (isOwner()) onPlayerPositionDiscontinuity(oldPosition, newPosition, reason);
+    }
+
+    @Override
     public void onPlaybackStateChanged(int state) {
         if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "state changed state=%d %s", state, lifecycleState());
         if (isOwner()) onStateChanged(state);
@@ -562,6 +574,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         mService = ((PlaybackService.LocalBinder) binder).getService();
         mService.replaceBinding(this::closePiP);
         mService.setSessionActivity(buildSessionIntent());
+        mService.setPlaybackForeground(true);
         mService.setNavigationCallback(getNavigationCallback(), getPlaybackKey());
         mService.addPlayerCallback(mPlayerCallback);
         player().setLutAllowed(isLutAllowed());
@@ -579,6 +592,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     @Override
     protected void onResume() {
         super.onResume();
+        if (mService != null) mService.setPlaybackForeground(true);
         if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "activity resume %s", lifecycleState());
         playbackExiting = false;
         setRedirect(false);
@@ -597,6 +611,7 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
 
     @Override
     protected void onStop() {
+        if (mService != null) mService.setPlaybackForeground(false);
         if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "activity stop backgroundOff=%s %s", PlayerSetting.isBackgroundOff(), lifecycleState());
         super.onStop();
         if (isOwner() && !isAudioOnly() && PlayerSetting.isBackgroundOff() && mController != null) mController.pause();
@@ -612,6 +627,12 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     protected void onDestroy() {
         if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "activity destroy beforeRelease %s", lifecycleState());
         super.onDestroy();
+        if (isChangingConfigurations()) {
+            if (mService != null) mService.removePlayerCallback(mPlayerCallback);
+            detach();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "activity destroy configuration change preserved service key=%s", getPlaybackKey());
+            return;
+        }
         releasePlaybackService();
         if (SpiderDebug.isEnabled()) SpiderDebug.log("playback-lifecycle", "activity destroy afterRelease activity=%s key=%s", getClass().getSimpleName(), getPlaybackKey());
     }

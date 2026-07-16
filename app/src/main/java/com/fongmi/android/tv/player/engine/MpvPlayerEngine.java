@@ -165,6 +165,11 @@ public class MpvPlayerEngine implements PlayerEngine {
     }
 
     @Override
+    public void restoreVideoTrack() {
+        player.restoreVideoTrackSelection();
+    }
+
+    @Override
     public boolean haveTrack(int type) {
         return TrackUtil.count(getCurrentTracks(), type) > 0;
     }

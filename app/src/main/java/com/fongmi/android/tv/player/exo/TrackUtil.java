@@ -42,6 +42,10 @@ public class TrackUtil {
         player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon().clearOverrides().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).build());
     }
 
+    public static void enable(Player player, int type) {
+        player.setTrackSelectionParameters(player.getTrackSelectionParameters().buildUpon().setTrackTypeDisabled(type, false).build());
+    }
+
     private static TrackInfo find(Player player, Track track) {
         if (track.getFormat() == null) return null;
         Tracks currentTracks = player.getCurrentTracks();
