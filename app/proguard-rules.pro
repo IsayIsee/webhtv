@@ -12,6 +12,7 @@
     public static long length(long);
     public static int readAt(long, long, java.nio.ByteBuffer, int);
     public static void close(long);
+    public static void prepareTrackMetadata(long, int);
 }
 
 # MPV owns one process-wide native context. Keep its lifecycle code intact so

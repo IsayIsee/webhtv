@@ -23,7 +23,7 @@ bash gradlew :app:assembleMobileArm64_v8aDebug
 scripts/build_mpv_native.sh
 ```
 
-该脚本没有挂接到 Gradle，也不会被 GitHub Actions 自动执行。
+该脚本没有挂接到 Gradle，也不会被 GitHub Actions 自动执行。Android Release Action 只对仓库已提交的 native assets 做完整性和 ELF 依赖校验，不会现场重新编译 MPV。
 
 ## 固定输入
 
@@ -32,6 +32,8 @@ scripts/build_mpv_native.sh
 ```text
 third_party/mpv-native-lock.json
 ```
+
+构建包装脚本还会对当前选择的完整 lock 文件计算 SHA-256，并用它覆盖上游构建框架的 prefix cache 标识，避免升级 FFmpeg、字体栈、curl 或 nghttp2 后误复用旧缓存；使用 `--lock-file` 测试其他组合时也会生成独立缓存身份。
 
 当前已对 `arm64-v8a` 和 `armeabi-v7a` 做过从源码到最终 `.so` 的完整实编验证，核心组合如下：
 
@@ -109,6 +111,20 @@ bash gradlew :app:assembleMobileArm64_v8aRelease -PfastRelease=true
 scripts/build_mpv_native.sh --abi all --install
 ```
 
+不重新编译，只校验仓库已经提交的两套 native assets：
+
+```bash
+bash scripts/verify_mpv_native_assets.sh
+```
+
+发布或提交 native 更新前使用完整 ELF 校验模式：
+
+```bash
+bash scripts/verify_mpv_native_assets.sh --require-elf
+```
+
+Linux 可使用系统 `readelf`；macOS 会尝试从 `ANDROID_NDK_HOME`、`ANDROID_HOME` 或 lock 指定的 NDK 目录寻找 `llvm-readelf`。普通模式在找不到 ELF 工具时仍会检查文件集合、ABI 和嵌入版本字符串，并明确提示跳过了 `SONAME`/`DT_NEEDED` 检查。
+
 只下载并核对源码，不编译：
 
 ```bash
@@ -136,6 +152,8 @@ scripts/build_mpv_native.sh --abi arm64-v8a --jobs 8 --work-dir /tmp/webhtv-mpv-
 7. 把 FFmpeg 的文件名、ELF `SONAME` 和 `DT_NEEDED` 从 `libav*`/`libsw*` 等长修改为 `libmv*`/`libmw*`。
 8. 使用 NDK `llvm-strip --strip-unneeded` 处理最终库。
 9. 使用 NDK `llvm-readelf` 检查每个 SONAME、MPV 的完整依赖和 Vulkan 依赖，并检查 MPV/libplacebo/curl 版本字符串、HTTP/2 标记及光盘控制补丁标识。
+
+`scripts/verify_mpv_native_assets.sh` 对已提交 assets 执行同类校验，Android Release Action 会在 Gradle 打包四个 APK 前以 `--require-elf` 模式调用它，防止 lock、arm64/armv7 assets 或静态网络能力不一致的二进制进入 Release。
 
 未指定 `--install` 时，输出位于：
 
@@ -227,6 +245,7 @@ mpv-libcurl-http2-armv7-20260717-123347
 | 错误 | 处理 |
 | --- | --- |
 | `missing command: pkg-config` | macOS 安装 `brew install pkg-config`；Debian/Ubuntu 安装 `pkg-config` |
+| `missing llvm-readelf/readelf` | Linux 安装 `binutils`；macOS 安装 NDK r28c，或设置 `ANDROID_NDK_HOME`/`READELF` |
 | `Android NDK ... not found` | 安装 `ndk;28.2.13676358` 或设置 `ANDROID_NDK_HOME` |
 | 下载 commit/tar 包失败 | 检查代理；重新执行会复用已校验缓存 |
 | tar 包 `SHA-256 mismatch` | 不要绕过检查；确认下载地址或 lock 是否经过审核 |

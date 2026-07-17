@@ -33,6 +33,7 @@ gson = "2.14.0"
 guava = "33.6.0-android"
 jna = "5.18.1"
 jupnp = "3.0.4"
+junit = "4.13.2"
 juniversalchardet = "1.0.3"
 jgit = "6.10.0.202406032230-r"
 jsoup = "1.22.2"
@@ -124,6 +125,7 @@ okhttp-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-i
 org-jupnp = { group = "org.jupnp", name = "org.jupnp", version.ref = "jupnp" }
 org-jupnp-android = { group = "org.jupnp", name = "org.jupnp.android", version.ref = "jupnp" }
 org-jupnp-support = { group = "org.jupnp", name = "org.jupnp.support", version.ref = "jupnp" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 permissionx = { group = "com.guolindev.permissionx", name = "permissionx", version.ref = "permissionx" }
 quickjs-android = { group = "wang.harlon.quickjs", name = "wrapper-android", version.ref = "quickjs" }
 quickjs-java = { group = "wang.harlon.quickjs", name = "wrapper-java", version.ref = "quickjs" }

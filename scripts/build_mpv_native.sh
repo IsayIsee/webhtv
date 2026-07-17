@@ -291,6 +291,10 @@ prepare_framework() {
   cp "$OVERRIDE_DIR/nghttp2.sh" "$BUILDSCRIPTS/scripts/nghttp2.sh"
   cp "$OVERRIDE_DIR/curl.sh" "$BUILDSCRIPTS/scripts/curl.sh"
   cp "$OVERRIDE_DIR/mpv.sh" "$BUILDSCRIPTS/scripts/mpv.sh"
+  local lock_hash
+  lock_hash="$(sha256_file "$LOCK_FILE")"
+  printf '\n# WebHTV wrapper cache identity: exact selected lock file.\nci_tarball="prefix-webhtv-%s.tgz"\n' \
+    "$lock_hash" >> "$BUILDSCRIPTS/include/depinfo.sh"
   chmod +x "$BUILDSCRIPTS/scripts/libass.sh" "$BUILDSCRIPTS/scripts/lua.sh" \
     "$BUILDSCRIPTS/scripts/libplacebo.sh" "$BUILDSCRIPTS/scripts/nghttp2.sh" \
     "$BUILDSCRIPTS/scripts/curl.sh" "$BUILDSCRIPTS/scripts/mpv.sh"
@@ -329,7 +333,7 @@ prepare_sources() {
   fi
   checkout_repo mpv "$MPV_REPO" "$MPV_COMMIT" "$deps/mpv"
   # The initial exact-commit fetch is shallow. Fetch enough ancestry and the
-  # release tag so MPV embeds the stable v0.41.0-556-g... version string.
+  # release tag so MPV embeds the version string recorded by the selected lock.
   if [ "$(git -C "$deps/mpv" describe --abbrev=9 --tags --match "$MPV_DESCRIBE_TAG" HEAD 2>/dev/null || true)" != "v$MPV_VERSION" ]; then
     git -C "$deps/mpv" fetch --deepen="$MPV_HISTORY_DEPTH" origin "$MPV_COMMIT"
     git -C "$deps/mpv" fetch --depth=1 origin \
