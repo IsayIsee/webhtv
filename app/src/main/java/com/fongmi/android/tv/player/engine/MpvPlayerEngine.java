@@ -384,6 +384,8 @@ public class MpvPlayerEngine implements PlayerEngine {
                 .demuxerMaxBackBytes(getDemuxerMaxBackBytes())
                 .cacheSeconds(getDemuxerReadAheadSeconds())
                 .demuxerReadaheadSeconds(getDemuxerReadAheadSeconds())
+                .rebufferMs(MpvPerformanceSetting.getRebufferMs())
+                .performanceOptionsPriority(MpvPerformanceSetting.isPerformancePriority())
                 .option("framedrop", MpvPerformanceSetting.getFrameDropOption())
                 .option("video-sync", MpvPerformanceSetting.getSyncOption())
                 .option("interpolation", MpvPerformanceSetting.isInterpolation() ? "yes" : "no")

@@ -725,6 +725,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         setOption("cache-secs", String.valueOf(config.cacheSeconds()));
         setOption("cache-pause", "yes");
         setOption("cache-pause-initial", "no");
+        setOption("cache-pause-wait", String.format(Locale.US, "%.3f", config.rebufferMs() / SECONDS_TO_MS));
         setOption("demuxer-thread", "yes");
         setOption("demuxer-seekable-cache", "auto");
         setOption("demuxer-max-bytes", String.valueOf(config.demuxerMaxBytes()));
@@ -749,6 +750,30 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         setRuntimeString("save-position-on-quit", "no");
         setRuntimeString("force-window", "no");
         setRuntimeString("idle", "yes");
+        if (config.performanceOptionsPriority()) applyPerformanceOptionOverlay();
+        SpiderDebug.log("mpv", "option priority=%s effective cache maxBytes=%s backBytes=%s cacheSecs=%s readaheadSecs=%s initial=%s rebufferWait=%s", config.performanceOptionsPriority() ? "performance" : "mpv.conf", stringProperty("demuxer-max-bytes", "?"), stringProperty("demuxer-max-back-bytes", "?"), stringProperty("cache-secs", "?"), stringProperty("demuxer-readahead-secs", "?"), stringProperty("cache-pause-initial", "?"), stringProperty("cache-pause-wait", "?"));
+    }
+
+    private void applyPerformanceOptionOverlay() {
+        setRuntimeString("vo", config.vo());
+        setRuntimeString("gpu-context", config.gpuContext());
+        if (!TextUtils.isEmpty(config.gpuApi())) setRuntimeString("gpu-api", config.gpuApi());
+        if (config.openglEs()) setRuntimeString("opengl-es", "yes");
+        setRuntimeString("hwdec", config.hwdec());
+        setRuntimeString("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
+        setRuntimeString("ao", config.ao());
+        setRuntimeString("audio-spdif", config.audioSpdif());
+        setRuntimeString("cache", config.cache() ? "yes" : "no");
+        setRuntimeString("cache-secs", String.valueOf(config.cacheSeconds()));
+        setRuntimeString("cache-pause", "yes");
+        setRuntimeString("cache-pause-initial", "no");
+        setRuntimeString("cache-pause-wait", String.format(Locale.US, "%.3f", config.rebufferMs() / SECONDS_TO_MS));
+        setRuntimeString("demuxer-thread", "yes");
+        setRuntimeString("demuxer-seekable-cache", "auto");
+        setRuntimeString("demuxer-max-bytes", String.valueOf(config.demuxerMaxBytes()));
+        setRuntimeString("demuxer-max-back-bytes", String.valueOf(config.demuxerMaxBackBytes()));
+        setRuntimeString("demuxer-readahead-secs", String.valueOf(config.demuxerReadaheadSeconds()));
+        for (Map.Entry<String, String> entry : config.extraOptions().entrySet()) setRuntimeString(entry.getKey(), entry.getValue());
     }
 
     private void observeProperties() {
@@ -1252,13 +1277,18 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         Map<String, String> headers = new LinkedHashMap<>(extractHeaders(item));
         String userAgent = findHeader(headers, HttpHeaders.USER_AGENT);
         String referer = findHeader(headers, HttpHeaders.REFERER);
+        boolean explicitReferer = !TextUtils.isEmpty(referer);
+        boolean localProxy = item.localConfiguration != null && isOpaqueLocalProxy(item.localConfiguration.uri.toString());
         if (TextUtils.isEmpty(userAgent)) userAgent = config.userAgent();
-        if (TextUtils.isEmpty(referer)) referer = config.referer();
-        if (TextUtils.isEmpty(referer) && item.localConfiguration != null) referer = originOf(item.localConfiguration.uri);
+        // Loopback media URLs are opaque proxy endpoints. Deriving their origin as
+        // the upstream Referer can make the proxy forward 127.0.0.1 to providers
+        // which reject it. Preserve only Referer values supplied by the source.
+        if (TextUtils.isEmpty(referer) && !localProxy) referer = config.referer();
+        if (TextUtils.isEmpty(referer) && !localProxy && item.localConfiguration != null) referer = originOf(item.localConfiguration.uri);
         String origin = findHeader(headers, HEADER_ORIGIN);
         if (!TextUtils.isEmpty(userAgent)) putHeader(headers, HttpHeaders.USER_AGENT, userAgent);
         if (!TextUtils.isEmpty(referer)) putHeader(headers, HttpHeaders.REFERER, referer);
-        if (TextUtils.isEmpty(origin)) origin = originOf(referer);
+        if (TextUtils.isEmpty(origin) && (!localProxy || explicitReferer)) origin = originOf(referer);
         if (!TextUtils.isEmpty(origin)) putHeader(headers, HEADER_ORIGIN, origin);
         if (TextUtils.isEmpty(findHeader(headers, HEADER_ACCEPT))) putHeader(headers, HEADER_ACCEPT, "*/*");
         String headerFields = buildHeaderFields(headers);
@@ -1266,8 +1296,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         setRuntimeString("referrer", referer == null ? "" : referer);
         setRuntimeString("http-header-fields", headerFields);
         if (item.mediaMetadata.title != null) setRuntimeString("force-media-title", item.mediaMetadata.title.toString());
-        SpiderDebug.log("mpv", "media options uaEmpty=%s refererEmpty=%s originEmpty=%s headerNames=%s headerFields=%s",
-                TextUtils.isEmpty(userAgent), TextUtils.isEmpty(referer), TextUtils.isEmpty(origin), headerNames(headers), !TextUtils.isEmpty(headerFields));
+        SpiderDebug.log("mpv", "media options localProxy=%s uaEmpty=%s refererEmpty=%s originEmpty=%s headerNames=%s headerFields=%s",
+                localProxy, TextUtils.isEmpty(userAgent), TextUtils.isEmpty(referer), TextUtils.isEmpty(origin), headerNames(headers), !TextUtils.isEmpty(headerFields));
         return headers;
     }
 

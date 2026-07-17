@@ -1111,9 +1111,11 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     @Override
     public void onItemClick(Flag item) {
         if (mFlagAdapter.getItemCount() == 0 || item.isSelected()) return;
+        int oldPosition = mFlagAdapter.getSelectedPosition();
         mFlagAdapter.setSelected(item);
-        mBinding.flag.setSelectedPosition(mFlagAdapter.indexOf(item));
-        notifyItemChanged(mBinding.flag, mFlagAdapter);
+        int newPosition = mFlagAdapter.getSelectedPosition();
+        if (newPosition != RecyclerView.NO_POSITION) mBinding.flag.setSelectedPosition(newPosition);
+        notifyItemsChanged(mBinding.flag, mFlagAdapter, oldPosition, newPosition);
         setEpisodeAdapter(item.getEpisodes());
         setQualityVisible(false);
         seamless(item);
@@ -5648,6 +5650,11 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
 
     public void onDanmakuPanel() {
         onDanmaku();
+    }
+
+    @Override
+    public boolean isControlAudioContent() {
+        return isAudioOnly() || isMusicLike();
     }
 
     public void onKaraokeModeChanged() {

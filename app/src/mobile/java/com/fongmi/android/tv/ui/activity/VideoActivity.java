@@ -3534,6 +3534,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     @Override
+    public boolean isControlAudioContent() {
+        return isAudioOnly() || isMusicLike();
+    }
+
+    @Override
     public boolean isDanmakuFullscreen() {
         return isFullscreen();
     }

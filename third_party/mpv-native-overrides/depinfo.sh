@@ -24,7 +24,9 @@ dep_libass=(freetype2 fribidi harfbuzz unibreak)
 dep_lua=()
 dep_shaderc=()
 dep_libplacebo=(shaderc)
-dep_mpv=(ffmpeg libass lua libplacebo)
+dep_nghttp2=()
+dep_curl=(mbedtls nghttp2)
+dep_mpv=(ffmpeg libass lua libplacebo curl)
 dep_mpv_android=(mpv)
 
 v_ci_ffmpeg=5ba2525c7affc29cbd99e6266946b382d3fffe8b

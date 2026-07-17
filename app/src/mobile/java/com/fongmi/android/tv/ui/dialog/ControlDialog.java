@@ -135,6 +135,7 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         binding.opening.setText(parent.control.action.opening.getText());
         binding.repeat.setSelected(parent.control.action.repeat.isSelected());
         binding.immersiveAudio.setSelected(PlayerSetting.isImmersiveAudioMode());
+        setImmersiveAudioVisible();
         binding.timer.setSelected(Timer.get().isRunning());
         setTrackVisible();
         setTitleVisible();
@@ -297,6 +298,7 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         setEpisodeColumn();
         binding.decode.setVisibility(parent.control.action.decode.getVisibility());
         binding.danmaku.setVisibility(parent.control.action.danmaku.getVisibility());
+        setImmersiveAudioVisible();
         setTrackVisible();
     }
 
@@ -328,6 +330,12 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         boolean visible = binding.text.getVisibility() != View.GONE || binding.audio.getVisibility() != View.GONE || binding.video.getVisibility() != View.GONE || binding.title.getVisibility() != View.GONE || binding.danmaku.getVisibility() != View.GONE;
         binding.trackText.setVisibility(visible ? View.VISIBLE : View.GONE);
         binding.trackRow.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private void setImmersiveAudioVisible() {
+        FragmentActivity activity = getActivity();
+        boolean visible = activity instanceof Listener listener && listener.isControlAudioContent();
+        binding.immersiveAudio.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     @Override
@@ -419,6 +427,8 @@ public class ControlDialog extends BaseBottomSheetDialog implements ParseAdapter
         History getControlHistory();
 
         boolean isControlParseEnabled();
+
+        boolean isControlAudioContent();
 
         void onScale(int tag);
 
