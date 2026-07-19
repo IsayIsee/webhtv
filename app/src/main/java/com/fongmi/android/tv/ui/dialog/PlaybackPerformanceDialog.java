@@ -37,6 +37,7 @@ import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.tabs.TabLayout;
 import com.google.android.material.textview.MaterialTextView;
 
 import is.xyz.mpv.MPVLib;
@@ -46,6 +47,8 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
     private Runnable callback;
     private Dialog helpDialog;
     private LinearLayout list;
+    private TabLayout profileTabs;
+    private boolean syncingProfileTabs;
 
     public static void show(Fragment fragment, Runnable callback) {
         PlaybackPerformanceDialog dialog = new PlaybackPerformanceDialog();
@@ -112,15 +115,10 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
         titleBar.addView(help, helpParams);
         root.addView(titleBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
 
-        LinearLayout actions = new LinearLayout(requireContext());
-        actions.setOrientation(LinearLayout.HORIZONTAL);
-        actions.setGravity(Gravity.CENTER);
-        actions.addView(actionButton(R.string.player_performance_recommended, view -> apply(PlaybackPerformanceSetting.PROFILE_RECOMMENDED)), actionParams(true));
-        actions.addView(actionButton(R.string.player_performance_compatible, view -> apply(PlaybackPerformanceSetting.PROFILE_COMPATIBLE)), actionParams(false));
-        actions.addView(actionButton(R.string.player_performance_lightweight, view -> apply(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT)), actionParams(false));
-        LinearLayout.LayoutParams actionLayout = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
-        actionLayout.topMargin = dp(14);
-        root.addView(actions, actionLayout);
+        profileTabs = createProfileTabs();
+        LinearLayout.LayoutParams tabLayout = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        tabLayout.topMargin = dp(12);
+        root.addView(profileTabs, tabLayout);
 
         ScrollView scroll = new ScrollView(requireContext());
         scroll.setFillViewport(false);
@@ -175,7 +173,7 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
         scrollParams.topMargin = dp(10);
         root.addView(scroll, scrollParams);
 
-        addHelpIntro(content, "当前播放器内核：" + playerName() + "。参数列表和本说明由同一份内核能力定义生成；切换内核后，两处内容会同步变化。推荐先使用当前内核的“推荐”预设，出现兼容性或内存问题时再调整。多数底层参数需要重新进入播放或重建播放器后生效。");
+        addHelpIntro(content, "当前播放器内核：" + playerName() + "。参数列表和本说明由同一份内核能力定义生成；切换内核后，两处内容会同步变化。默认使用“自动”档；EXO会根据缓冲、码率和带宽在安全范围内调整预载，并把重缓冲恢复值用于下一播放会话。MPV和IJK当前使用均衡基线。多数底层参数需要重新进入播放或重建播放器后生效。");
         String section = "";
         for (PlaybackPerformanceOption option : options()) {
             if (!section.equals(option.section())) {
@@ -314,30 +312,78 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
         button.setStrokeWidth(dp(1));
     }
 
-    private LinearLayout.LayoutParams actionParams(boolean first) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36));
-        params.leftMargin = first ? 0 : dp(8);
-        return params;
-    }
-
     private void apply(int profile) {
-        if (profile == PlaybackPerformanceSetting.PROFILE_COMPATIBLE) PlaybackPerformanceSetting.applyCompatible();
+        if (profile == PlaybackPerformanceSetting.PROFILE_AUTO) PlaybackPerformanceSetting.applyAuto();
+        else if (profile == PlaybackPerformanceSetting.PROFILE_COMPATIBLE) PlaybackPerformanceSetting.applyCompatible();
         else if (profile == PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT) PlaybackPerformanceSetting.applyLightweight();
         else PlaybackPerformanceSetting.applyRecommended();
         refresh();
     }
 
     private void reset() {
-        int profile = PlaybackPerformanceSetting.getProfile();
-        if (profile == PlaybackPerformanceSetting.PROFILE_COMPATIBLE) PlaybackPerformanceSetting.applyCompatible();
-        else if (profile == PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT) PlaybackPerformanceSetting.applyLightweight();
-        else PlaybackPerformanceSetting.applyRecommended();
+        PlaybackPerformanceSetting.applyAuto();
         refresh();
     }
 
     private void refresh() {
         refreshRows();
+        syncProfileTabs();
         if (callback != null) callback.run();
+    }
+
+    private TabLayout createProfileTabs() {
+        TabLayout tabs = new TabLayout(requireContext());
+        tabs.setBackgroundColor(Color.TRANSPARENT);
+        tabs.setTabMode(TabLayout.MODE_FIXED);
+        tabs.setTabGravity(TabLayout.GRAVITY_FILL);
+        tabs.setSelectedTabIndicatorColor(Color.parseColor("#1A73E8"));
+        tabs.setTabTextColors(Color.parseColor("#5F6368"), Color.parseColor("#1A73E8"));
+        tabs.setTabRippleColor(ColorStateList.valueOf(Color.TRANSPARENT));
+        tabs.setUnboundedRipple(false);
+        int[] labels = {R.string.player_performance_auto, R.string.player_performance_recommended, R.string.player_performance_compatible, R.string.player_performance_lightweight};
+        for (int label : labels) tabs.addTab(tabs.newTab().setText(label), false);
+        tabs.addOnTabSelectedListener(new TabLayout.OnTabSelectedListener() {
+            @Override
+            public void onTabSelected(TabLayout.Tab tab) {
+                if (syncingProfileTabs) return;
+                apply(profileAt(tab.getPosition()));
+            }
+
+            @Override public void onTabUnselected(TabLayout.Tab tab) { }
+            @Override public void onTabReselected(TabLayout.Tab tab) { }
+        });
+        syncProfileTabs(tabs);
+        return tabs;
+    }
+
+    private void syncProfileTabs() {
+        if (profileTabs != null) syncProfileTabs(profileTabs);
+    }
+
+    private void syncProfileTabs(TabLayout tabs) {
+        syncingProfileTabs = true;
+        int position = profilePosition(PlaybackPerformanceSetting.getProfile());
+        tabs.selectTab(position < 0 ? null : tabs.getTabAt(position));
+        syncingProfileTabs = false;
+    }
+
+    private int profileAt(int position) {
+        return switch (position) {
+            case 1 -> PlaybackPerformanceSetting.PROFILE_RECOMMENDED;
+            case 2 -> PlaybackPerformanceSetting.PROFILE_COMPATIBLE;
+            case 3 -> PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT;
+            default -> PlaybackPerformanceSetting.PROFILE_AUTO;
+        };
+    }
+
+    private int profilePosition(int profile) {
+        return switch (profile) {
+            case PlaybackPerformanceSetting.PROFILE_AUTO -> 0;
+            case PlaybackPerformanceSetting.PROFILE_RECOMMENDED -> 1;
+            case PlaybackPerformanceSetting.PROFILE_COMPATIBLE -> 2;
+            case PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT -> 3;
+            default -> -1;
+        };
     }
 
     private void refreshRows() {
@@ -387,10 +433,10 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
             case PlaybackPerformanceCatalog.BACK_BUFFER -> backBufferText();
             case PlaybackPerformanceCatalog.PLAY_CACHE -> playCacheText();
             case PlaybackPerformanceCatalog.LOAD_SELECTED_TRACKS -> onOff(PlaybackPerformanceSetting.isLoadOnlySelectedTracksEnabled());
-            case PlaybackPerformanceCatalog.PRELOAD -> onOff(PreloadSetting.isPreload());
-            case PlaybackPerformanceCatalog.PRELOAD_THREADS -> PreloadSetting.getPreloadThreads() + " 条";
+            case PlaybackPerformanceCatalog.PRELOAD -> PlaybackPerformanceSetting.isAuto() ? "自动" : onOff(PreloadSetting.isPreload());
+            case PlaybackPerformanceCatalog.PRELOAD_THREADS -> PlaybackPerformanceSetting.isAuto() ? "自动 · 0～2 条" : PreloadSetting.getPreloadThreads() + " 条";
             case PlaybackPerformanceCatalog.PRELOAD_SIZE -> FileUtil.byteCountToDisplaySize(PreloadSetting.getPreloadSizeBytes());
-            case PlaybackPerformanceCatalog.PRELOAD_TIME -> PreloadSetting.getPreloadTimeSeconds() + " 秒";
+            case PlaybackPerformanceCatalog.PRELOAD_TIME -> PlaybackPerformanceSetting.isAuto() ? "自动 · 10～30 秒" : PreloadSetting.getPreloadTimeSeconds() + " 秒";
             case PlaybackPerformanceCatalog.CODEC_ASYNC -> ExoPerformanceSetting.getCodecQueueText();
             case PlaybackPerformanceCatalog.DYNAMIC_SCHEDULING -> onOff(PlaybackPerformanceSetting.isDynamicSchedulingEnabled());
             case PlaybackPerformanceCatalog.DURATION_PROGRESS -> ExoPerformanceSetting.getCodecQueueMode() == ExoPerformanceSetting.CODEC_QUEUE_SYNC ? "同步队列不可用" : onOff(PlaybackPerformanceSetting.isVideoDurationProgressEnabled());
@@ -426,7 +472,7 @@ public final class PlaybackPerformanceDialog extends DialogFragment {
             case PlaybackPerformanceCatalog.IJK_RECONNECT -> onOff(IjkPerformanceSetting.isReconnect());
             case PlaybackPerformanceCatalog.EXO_FRAME_RATE -> ExoPerformanceSetting.getFrameRateText();
             case PlaybackPerformanceCatalog.EXO_START_BUFFER -> formatSeconds(ExoPerformanceSetting.getStartBufferMs());
-            case PlaybackPerformanceCatalog.EXO_REBUFFER -> formatSeconds(ExoPerformanceSetting.getRebufferMs());
+            case PlaybackPerformanceCatalog.EXO_REBUFFER -> PlaybackPerformanceSetting.isAuto() ? "自动 · " + formatSeconds(ExoPerformanceSetting.getRebufferMs()) + "（2～8秒）" : formatSeconds(ExoPerformanceSetting.getRebufferMs());
             case PlaybackPerformanceCatalog.EXO_PRIORITIZE_TIME -> onOff(ExoPerformanceSetting.isPrioritizeTime());
             default -> "";
         };

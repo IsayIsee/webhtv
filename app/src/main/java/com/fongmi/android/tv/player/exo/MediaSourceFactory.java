@@ -5,6 +5,7 @@ import static androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_EN
 import androidx.annotation.NonNull;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PriorityTaskManager;
 import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.DataSource;
 import androidx.media3.datasource.DefaultDataSource;
@@ -44,6 +45,7 @@ public class MediaSourceFactory implements MediaSource.Factory {
     private static final String CONCAT_SOURCE_SEPARATOR_REGEX = "\\*\\*\\*";
     private static final String CONCAT_DURATION_SEPARATOR = "|||";
     private static final String CONCAT_DURATION_SEPARATOR_REGEX = "\\|\\|\\|";
+    private static final PriorityTaskManager PLAYBACK_PRIORITY_MANAGER = new PriorityTaskManager();
 
     private static StandaloneDatabaseProvider databaseProvider;
     private static Cache cache;
@@ -60,7 +62,8 @@ public class MediaSourceFactory implements MediaSource.Factory {
     static DataSource.Factory createUpstreamDataSourceFactory(Map<String, String> headers) {
         OkHttpDataSource.Factory factory = new OkHttpDataSource.Factory(OkHttp.player());
         applyHeaders(factory, headers);
-        return new DefaultDataSource.Factory(App.get(), factory);
+        DataSource.Factory upstream = new DefaultDataSource.Factory(App.get(), factory);
+        return new PriorityTaskDataSource.Factory(upstream, PLAYBACK_PRIORITY_MANAGER, C.PRIORITY_PLAYBACK_PRELOAD, true);
     }
 
     static synchronized Cache getCache() {
@@ -79,6 +82,10 @@ public class MediaSourceFactory implements MediaSource.Factory {
         long availableBytes = Math.max(0, FileUtil.getAvailableStorageSpace(dir));
         long storageBudget = (usedBytes + availableBytes) * CACHE_SPACE_PERCENT / 100;
         return Math.min(PreloadSetting.getPreloadSizeBytes(PlayerSetting.EXO), storageBudget);
+    }
+
+    static long getCacheCapacityBytes() {
+        return getMaxCacheSize(Path.exoCache());
     }
 
     static boolean isConcatenatingUrl(String url) {
@@ -127,7 +134,10 @@ public class MediaSourceFactory implements MediaSource.Factory {
     }
 
     private DataSource.Factory getDataSourceFactory() {
-        if (dataSourceFactory == null) dataSourceFactory = getCacheDataSource(new DefaultDataSource.Factory(App.get(), getHttpDataSourceFactory()));
+        if (dataSourceFactory == null) {
+            DataSource.Factory cacheDataSource = getCacheDataSource(new DefaultDataSource.Factory(App.get(), getHttpDataSourceFactory()));
+            dataSourceFactory = new PriorityTaskDataSource.Factory(cacheDataSource, PLAYBACK_PRIORITY_MANAGER, C.PRIORITY_PLAYBACK, false);
+        }
         return dataSourceFactory;
     }
 
