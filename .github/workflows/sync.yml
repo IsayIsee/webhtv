@@ -78,9 +78,12 @@ jobs:
         run: |
           curl -sS -X POST "${{ secrets.MERGE_FAIL_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"text\": \"⚠️ 自动合并冲突: main -> webhtv_dev\n仓库: ${{ github.repository }}\n时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)\n请手动处理: https://github.com/${{ github.repository }}/compare/webhtv_dev...main\"
-            }"
+            -d '{
+              "msgtype": "markdown",
+              "markdown": {
+                "content": "## ⚠️ 自动合并冲突: main → webhtv_dev\n> 仓库: <font color=\"warning\">${{ github.repository }}</font>\n> 时间: '"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'\n\n请手动处理: [查看冲突](https://github.com/${{ github.repository }}/compare/webhtv_dev...main)"
+              }
+            }'
 
       - name: Abort merge on unresolved conflict
         if: steps.merge.outputs.status != '0' && steps.resolve-readme.outputs.resolved != 'true'
