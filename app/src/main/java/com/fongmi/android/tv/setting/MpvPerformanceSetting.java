@@ -4,6 +4,9 @@ import com.github.catvod.utils.Prefers;
 
 public final class MpvPerformanceSetting {
 
+    public static final int OUTPUT_AUTO = 0;
+    public static final int OUTPUT_GPU = 1;
+    public static final int OUTPUT_SURFACE_DIRECT = 2;
     public static final int HWDEC_AUTO = 0;
     public static final int HWDEC_DIRECT = 1;
     public static final int HWDEC_COPY = 2;
@@ -21,7 +24,10 @@ public final class MpvPerformanceSetting {
     public static final int HLS_15_MBPS = 1;
     public static final int HLS_8_MBPS = 2;
     public static final int HLS_LOWEST = 3;
+    public static final int PRIORITY_PERFORMANCE = 0;
+    public static final int PRIORITY_CONFIG = 1;
 
+    private static final String KEY_OUTPUT_MODE = "perf_mpv_output_mode";
     private static final String KEY_HWDEC = "perf_mpv_hwdec";
     private static final String KEY_SYNC = "perf_mpv_sync";
     private static final String KEY_FRAME_DROP = "perf_mpv_frame_drop";
@@ -30,8 +36,40 @@ public final class MpvPerformanceSetting {
     private static final String KEY_VERBOSE_LOG = "perf_mpv_verbose_log";
     private static final String KEY_FRAME_RATE = "perf_mpv_frame_rate";
     private static final String KEY_HLS_BITRATE = "perf_mpv_hls_bitrate";
+    private static final String KEY_REBUFFER_MS = "perf_mpv_rebuffer_ms";
+    private static final String KEY_OPTION_PRIORITY = "perf_mpv_option_priority";
 
     private MpvPerformanceSetting() {
+    }
+
+    public static int getOutputMode() {
+        return clamp(Prefers.getInt(KEY_OUTPUT_MODE, OUTPUT_AUTO), OUTPUT_AUTO, OUTPUT_SURFACE_DIRECT);
+    }
+
+    public static void putOutputMode(int value) {
+        Prefers.put(KEY_OUTPUT_MODE, clamp(value, OUTPUT_AUTO, OUTPUT_SURFACE_DIRECT));
+        PlaybackPerformanceSetting.markCustom();
+    }
+
+    public static String getOutputModeText() {
+        return switch (getOutputMode()) {
+            case OUTPUT_GPU -> "GPU完整";
+            case OUTPUT_SURFACE_DIRECT -> "电视直出";
+            default -> "自动";
+        };
+    }
+
+    public static boolean shouldUseSurfaceDirect(boolean autoEligible, boolean leanback, boolean hardDecode) {
+        return resolveSurfaceDirect(getOutputMode(), autoEligible, leanback, hardDecode);
+    }
+
+    static boolean resolveSurfaceDirect(int outputMode, boolean autoEligible, boolean leanback, boolean hardDecode) {
+        if (!hardDecode) return false;
+        return switch (clamp(outputMode, OUTPUT_AUTO, OUTPUT_SURFACE_DIRECT)) {
+            case OUTPUT_SURFACE_DIRECT -> true;
+            case OUTPUT_GPU -> false;
+            default -> leanback && autoEligible;
+        };
     }
 
     public static int getHwdecMode() {
@@ -171,12 +209,52 @@ public final class MpvPerformanceSetting {
         };
     }
 
+    public static int getRebufferMs() {
+        PlaybackPerformanceSetting.ensureInitialized();
+        return normalizeRebuffer(Prefers.getInt(KEY_REBUFFER_MS, rebufferForPreset(PlaybackPerformanceSetting.PROFILE_RECOMMENDED)));
+    }
+
+    public static void putRebufferMs(int value) {
+        Prefers.put(KEY_REBUFFER_MS, normalizeRebuffer(value));
+        PlaybackPerformanceSetting.markCustom();
+    }
+
+    public static int nextRebufferMs() {
+        return switch (getRebufferMs()) {
+            case 1_000 -> 2_000;
+            case 2_000 -> 3_000;
+            case 3_000 -> 5_000;
+            case 5_000 -> 8_000;
+            case 8_000 -> 10_000;
+            case 10_000 -> 15_000;
+            case 15_000 -> 1_000;
+            default -> 1_000;
+        };
+    }
+
+    public static int getOptionPriority() {
+        return clamp(Prefers.getInt(KEY_OPTION_PRIORITY, PRIORITY_PERFORMANCE), PRIORITY_PERFORMANCE, PRIORITY_CONFIG);
+    }
+
+    public static void putOptionPriority(int value) {
+        Prefers.put(KEY_OPTION_PRIORITY, clamp(value, PRIORITY_PERFORMANCE, PRIORITY_CONFIG));
+    }
+
+    public static boolean isPerformancePriority() {
+        return getOptionPriority() == PRIORITY_PERFORMANCE;
+    }
+
+    public static String getOptionPriorityText() {
+        return isPerformancePriority() ? "播放性能优先" : "mpv.conf优先";
+    }
+
     public static void putVerboseLog(boolean value) {
         Prefers.put(KEY_VERBOSE_LOG, value);
         PlaybackPerformanceSetting.markCustom();
     }
 
     public static void applyRecommended() {
+        Prefers.put(KEY_OUTPUT_MODE, OUTPUT_AUTO);
         Prefers.put(KEY_HWDEC, HWDEC_AUTO);
         Prefers.put(KEY_SYNC, SYNC_AUDIO);
         Prefers.put(KEY_FRAME_DROP, FRAME_DROP_OUTPUT);
@@ -185,9 +263,11 @@ public final class MpvPerformanceSetting {
         Prefers.put(KEY_VERBOSE_LOG, false);
         Prefers.put(KEY_FRAME_RATE, FRAME_RATE_SEAMLESS);
         Prefers.put(KEY_HLS_BITRATE, HLS_HIGHEST);
+        applyRebufferPreset(PlaybackPerformanceSetting.PROFILE_RECOMMENDED);
     }
 
     public static void applyCompatible() {
+        Prefers.put(KEY_OUTPUT_MODE, OUTPUT_GPU);
         Prefers.put(KEY_HWDEC, HWDEC_COPY);
         Prefers.put(KEY_SYNC, SYNC_AUDIO);
         Prefers.put(KEY_FRAME_DROP, FRAME_DROP_OUTPUT);
@@ -196,9 +276,11 @@ public final class MpvPerformanceSetting {
         Prefers.put(KEY_VERBOSE_LOG, false);
         Prefers.put(KEY_FRAME_RATE, FRAME_RATE_OFF);
         Prefers.put(KEY_HLS_BITRATE, HLS_HIGHEST);
+        applyRebufferPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE);
     }
 
     public static void applyLightweight() {
+        Prefers.put(KEY_OUTPUT_MODE, OUTPUT_AUTO);
         Prefers.put(KEY_HWDEC, HWDEC_AUTO);
         Prefers.put(KEY_SYNC, SYNC_AUDIO);
         Prefers.put(KEY_FRAME_DROP, FRAME_DROP_OUTPUT);
@@ -207,6 +289,29 @@ public final class MpvPerformanceSetting {
         Prefers.put(KEY_VERBOSE_LOG, false);
         Prefers.put(KEY_FRAME_RATE, FRAME_RATE_SEAMLESS);
         Prefers.put(KEY_HLS_BITRATE, HLS_8_MBPS);
+        applyRebufferPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT);
+    }
+
+    static void applyRebufferPreset(int profile) {
+        Prefers.put(KEY_REBUFFER_MS, rebufferForPreset(profile));
+    }
+
+    static int rebufferForPreset(int profile) {
+        return switch (profile) {
+            case PlaybackPerformanceSetting.PROFILE_COMPATIBLE -> 3_000;
+            case PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT -> 1_000;
+            default -> 2_000;
+        };
+    }
+
+    static int normalizeRebuffer(int value) {
+        if (value <= 1_000) return 1_000;
+        if (value <= 2_000) return 2_000;
+        if (value <= 3_000) return 3_000;
+        if (value <= 5_000) return 5_000;
+        if (value <= 8_000) return 8_000;
+        if (value <= 10_000) return 10_000;
+        return 15_000;
     }
 
     private static int clamp(int value, int min, int max) {

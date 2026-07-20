@@ -26,9 +26,9 @@ on:
         default: false
         type: boolean
       sync_cnb:
-        description: "Upload APKs to CNB Release and sync JSON manifests"
+        description: "Optionally mirror APKs to CNB Release and sync CNB manifests"
         required: false
-        default: true
+        default: false
         type: boolean
 
 permissions:
@@ -38,8 +38,8 @@ env:
   TZ: Asia/Shanghai
   CNB_API_ENDPOINT: https://api.cnb.cool
   CNB_WEB_ENDPOINT: https://cnb.cool
-  CNB_REPO_SLUG: fish2018/webhtv-release
-  CNB_REPO_URL: https://cnb.cool/fish2018/webhtv-release.git
+  CNB_REPO_SLUG: fish2035/webhtv-release
+  CNB_REPO_URL: https://cnb.cool/fish2035/webhtv-release.git
 
 jobs:
   release:
@@ -65,12 +65,23 @@ jobs:
         with:
           python-version: "3.10"
 
+      - name: Verify bundled MPV native assets
+        run: bash scripts/verify_mpv_native_assets.sh --require-elf
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install Android packages
         run: |
           sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+
+      - name: Run WebSocket danmaku tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew \
+            :app:testMobileArm64_v8aDebugUnitTest \
+            --tests 'com.fongmi.android.tv.player.danmaku.*' \
+            --no-daemon
 
       - name: Resolve release tag
         id: meta
@@ -199,7 +210,7 @@ jobs:
       - name: Generate update manifests
         env:
           RELEASE_NOTES: ${{ steps.release_notes.outputs.notes }}
-          CNB_RELEASE_DOWNLOAD_BASE: ${{ env.CNB_WEB_ENDPOINT }}/${{ env.CNB_REPO_SLUG }}/-/releases/download/${{ steps.meta.outputs.tag }}
+          GITHUB_RELEASE_DOWNLOAD_BASE: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}
         run: |
           python3 - <<'PY'
           import glob
@@ -209,7 +220,7 @@ jobs:
 
           tag = "${{ steps.meta.outputs.tag }}"
           notes = os.environ.get("RELEASE_NOTES", "").strip()
-          cnb_release_download_base = os.environ["CNB_RELEASE_DOWNLOAD_BASE"]
+          release_download_base = os.environ["GITHUB_RELEASE_DOWNLOAD_BASE"]
           for apk in glob.glob("dist/*.apk"):
               base = os.path.splitext(os.path.basename(apk))[0]
               with open(apk, "rb") as fh:
@@ -219,7 +230,7 @@ jobs:
                   "desc": f"{tag} - ${{ steps.meta.outputs.short_sha }}",
                   "channel": "${{ steps.meta.outputs.channel }}",
                   "code": int("${{ steps.meta.outputs.version_code }}"),
-                  "apk": f"{cnb_release_download_base}/{base}.apk",
+                  "apk": f"{release_download_base}/{base}.apk",
                   "size": len(content),
                   "sha256": hashlib.sha256(content).hexdigest(),
               }

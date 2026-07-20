@@ -1,5 +1,6 @@
 package com.fongmi.android.tv.ui.adapter;
 
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
@@ -123,7 +124,7 @@ public class SearchAdapter extends RecyclerView.Adapter<SearchAdapter.ViewHolder
     @Override
     public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
         Vod item = items.get(position);
-        holder.binding.name.setText(item.getName());
+        holder.bindName(item.getName());
         holder.binding.site.setText(item.getSiteName());
         holder.binding.remark.setText(item.getRemarks());
         holder.binding.site.setVisibility(item.getSiteVisible());
@@ -136,6 +137,7 @@ public class SearchAdapter extends RecyclerView.Adapter<SearchAdapter.ViewHolder
     @Override
     public void onViewRecycled(@NonNull ViewHolder holder) {
         Glide.with(holder.binding.image).clear(holder.binding.image);
+        holder.setMarquee(false);
     }
 
     public static class ViewHolder extends RecyclerView.ViewHolder {
@@ -145,6 +147,20 @@ public class SearchAdapter extends RecyclerView.Adapter<SearchAdapter.ViewHolder
         ViewHolder(@NonNull AdapterSearchBinding binding) {
             super(binding.getRoot());
             this.binding = binding;
+            binding.name.setSingleLine(true);
+            binding.name.setHorizontallyScrolling(true);
+            binding.name.setMarqueeRepeatLimit(-1);
+            binding.getRoot().setOnFocusChangeListener((view, hasFocus) -> setMarquee(hasFocus));
+        }
+
+        private void bindName(String name) {
+            binding.name.setText(name);
+            setMarquee(binding.getRoot().hasFocus());
+        }
+
+        private void setMarquee(boolean focused) {
+            binding.name.setEllipsize(focused ? TextUtils.TruncateAt.MARQUEE : TextUtils.TruncateAt.END);
+            binding.name.setSelected(focused);
         }
     }
 }

@@ -8,6 +8,7 @@ public class PlaybackPerformanceSetting {
     public static final int PROFILE_COMPATIBLE = 1;
     public static final int PROFILE_CUSTOM = 2;
     public static final int PROFILE_LIGHTWEIGHT = 3;
+    public static final int PROFILE_AUTO = 4;
 
     public static final String KEY_PROFILE = "playback_performance_profile";
     private static final String KEY_PROFILE_MIGRATED = "playback_performance_profile_per_kernel";
@@ -15,6 +16,12 @@ public class PlaybackPerformanceSetting {
     private static final String KEY_PROFILE_MPV = "perf_mpv_profile";
     private static final String KEY_PROFILE_IJK = "perf_ijk_profile";
     private static final String KEY_INITIALIZED = "playback_performance_initialized";
+    private static final String KEY_BUFFER_WATERMARKS_MIGRATED = "playback_performance_buffer_watermarks_v2";
+    private static final String KEY_EXO_SIZE_PRIORITY_MIGRATED = "playback_performance_exo_size_priority_v1";
+    private static final String KEY_PRELOAD_DEFAULTS_MIGRATED = "playback_performance_preload_defaults_v1";
+    private static final String KEY_EXO_LOAD_CONTROL_MIGRATED = "playback_performance_exo_load_control_v1";
+    private static final String KEY_EXO_REBUFFER_MIGRATED = "playback_performance_exo_rebuffer_v3";
+    private static final String KEY_MPV_REBUFFER_MIGRATED = "playback_performance_mpv_rebuffer_v1";
     private static final String KEY_CODEC_ASYNC_QUEUEING = "perf_codec_async_queueing";
     private static final String KEY_DYNAMIC_SCHEDULING = "perf_dynamic_scheduling";
     private static final String KEY_VIDEO_DURATION_PROGRESS = "perf_video_duration_progress";
@@ -30,15 +37,42 @@ public class PlaybackPerformanceSetting {
 
     public static void ensureInitialized() {
         if (!Prefers.getPrefers().contains(KEY_INITIALIZED)) {
-            applyRecommendedValues();
+            applyAutoValues();
             Prefers.put(KEY_INITIALIZED, true);
         }
         migrateProfiles();
+        migrateBufferWatermarks();
+        migrateExoSizePriority();
+        migratePreloadDefaults();
+        migrateExoLoadControl();
+        migrateExoRebuffer();
+        migrateMpvRebuffer();
     }
 
     public static int getProfile() {
+        return getProfile(PlayerSetting.getPlayer());
+    }
+
+    public static int getProfile(int kernel) {
         ensureInitialized();
-        return clampProfile(Prefers.getInt(profileKey(PlayerSetting.getPlayer()), Prefers.getInt(KEY_PROFILE, PROFILE_RECOMMENDED)));
+        return clampProfile(Prefers.getInt(profileKey(PlayerSetting.sanitizePlayer(kernel)), Prefers.getInt(KEY_PROFILE, PROFILE_RECOMMENDED)));
+    }
+
+    public static void applyAuto() {
+        int kernel = PlayerSetting.getPlayer();
+        KernelPerformanceSetting.applyPreset(kernel, PROFILE_AUTO);
+        if (kernel == PlayerSetting.EXO) {
+            putRecommendedFlags();
+            ExoPerformanceSetting.applyAuto();
+            Prefers.put("render", PlayerSetting.RENDER_SURFACE);
+            Prefers.put("tunnel", false);
+            Prefers.put("exo_4k_compat", true);
+        } else if (kernel == PlayerSetting.MPV) {
+            MpvPerformanceSetting.applyRecommended();
+        } else {
+            IjkPerformanceSetting.applyRecommended();
+        }
+        putCurrentProfile(PROFILE_AUTO);
     }
 
     public static void applyRecommended() {
@@ -58,6 +92,21 @@ public class PlaybackPerformanceSetting {
         Prefers.put("render", PlayerSetting.RENDER_SURFACE);
         Prefers.put("tunnel", false);
         Prefers.put("exo_4k_compat", true);
+    }
+
+    private static void applyAutoValues() {
+        for (int kernel : new int[]{PlayerSetting.EXO, PlayerSetting.MPV, PlayerSetting.IJK}) {
+            KernelPerformanceSetting.applyPreset(kernel, PROFILE_AUTO);
+            Prefers.put(profileKey(kernel), PROFILE_AUTO);
+        }
+        putRecommendedFlags();
+        ExoPerformanceSetting.applyAuto();
+        MpvPerformanceSetting.applyRecommended();
+        IjkPerformanceSetting.applyRecommended();
+        Prefers.put("render", PlayerSetting.RENDER_SURFACE);
+        Prefers.put("tunnel", false);
+        Prefers.put("exo_4k_compat", true);
+        Prefers.put(KEY_PROFILE, PROFILE_AUTO);
     }
 
     public static void applyCompatible() {
@@ -121,15 +170,24 @@ public class PlaybackPerformanceSetting {
 
     public static String getProfileName() {
         return switch (getProfile()) {
+            case PROFILE_AUTO -> "自动";
             case PROFILE_COMPATIBLE -> "兼容";
             case PROFILE_LIGHTWEIGHT -> "轻量";
             case PROFILE_CUSTOM -> "自定义";
-            default -> "推荐";
+            default -> "均衡";
         };
     }
 
     public static boolean isRecommended() {
         return getProfile() == PROFILE_RECOMMENDED;
+    }
+
+    public static boolean isAuto() {
+        return isAuto(PlayerSetting.getPlayer());
+    }
+
+    public static boolean isAuto(int kernel) {
+        return getProfile(kernel) == PROFILE_AUTO;
     }
 
     public static boolean isCompatible() {
@@ -253,7 +311,7 @@ public class PlaybackPerformanceSetting {
         String preload = PreloadSetting.isPreload() ? "预载开" : "预载关";
         return switch (PlayerSetting.getPlayer()) {
             case PlayerSetting.IJK -> getProfileName() + " · IJK · " + preload;
-            case PlayerSetting.MPV -> getProfileName() + " · MPV · " + preload;
+            case PlayerSetting.MPV -> getProfileName() + " · MPV · " + MpvPerformanceSetting.getOptionPriorityText() + " · " + preload;
             default -> getProfileName() + " · " + (isTrackLimitEnabled() ? "轨道限制" : "不限轨道") + " · " + preload;
         };
     }
@@ -264,8 +322,9 @@ public class PlaybackPerformanceSetting {
                 + "\n渲染：" + (PlayerSetting.getRender() == PlayerSetting.RENDER_SURFACE ? "SurfaceView" : "TextureView")
                 + "\n轨道限制：" + onOff(isTrackLimitEnabled()) + "，自适应降级：" + onOff(isAdaptiveDowngradeEnabled())
                 + "\n缓冲：" + PlayerSetting.getBuffer() + "/10，容量：" + bufferBytesText() + "，回退：" + backBufferText()
+                + bufferWatermarksText()
                 + "\n播放缓存：" + playCacheText()
-                + "\n预载：" + onOff(PreloadSetting.isPreload()) + "，线程：" + PreloadSetting.getPreloadThreads() + "，容量：" + PreloadSetting.getPreloadSizeMb() + "MB，时间：" + PreloadSetting.getPreloadTimeSeconds() + "秒"
+                + preloadDetailText()
                 + "\nMediaCodec异步：" + onOff(isCodecAsyncQueueingEnabled()) + "，动态调度：" + onOff(isDynamicSchedulingEnabled())
                 + "\n解码耗时推进：" + onOff(isVideoDurationProgressEnabled()) + "，输入丢帧阈值：" + onOff(isLateDropInputEnabled())
                 + "\n只加载选中轨道：" + onOff(isLoadOnlySelectedTracksEnabled()) + "，Surface固定尺寸：" + onOff(isSurfaceFixedSizeEnabled())
@@ -290,7 +349,7 @@ public class PlaybackPerformanceSetting {
     }
 
     private static int clampProfile(int profile) {
-        return profile == PROFILE_COMPATIBLE || profile == PROFILE_CUSTOM || profile == PROFILE_LIGHTWEIGHT ? profile : PROFILE_RECOMMENDED;
+        return profile == PROFILE_COMPATIBLE || profile == PROFILE_CUSTOM || profile == PROFILE_LIGHTWEIGHT || profile == PROFILE_AUTO ? profile : PROFILE_RECOMMENDED;
     }
 
     private static void put(String key, boolean value) {
@@ -315,10 +374,80 @@ public class PlaybackPerformanceSetting {
         Prefers.put(KEY_PROFILE_MIGRATED, true);
     }
 
+    private static void migrateBufferWatermarks() {
+        if (Prefers.getBoolean(KEY_BUFFER_WATERMARKS_MIGRATED)) return;
+        int exoProfile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.EXO), PROFILE_RECOMMENDED));
+        int mpvProfile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.MPV), PROFILE_RECOMMENDED));
+        if (exoProfile != PROFILE_CUSTOM) ExoPerformanceSetting.applyRebufferPreset(exoProfile);
+        if (mpvProfile != PROFILE_CUSTOM) MpvPerformanceSetting.applyRebufferPreset(mpvProfile);
+        Prefers.put(KEY_BUFFER_WATERMARKS_MIGRATED, true);
+    }
+
+    private static void migrateExoSizePriority() {
+        if (Prefers.getBoolean(KEY_EXO_SIZE_PRIORITY_MIGRATED)) return;
+        int exoProfile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.EXO), PROFILE_RECOMMENDED));
+        if (shouldMigrateExoSizePriority(exoProfile)) ExoPerformanceSetting.applyPrioritizeTimePreset(exoProfile);
+        Prefers.put(KEY_EXO_SIZE_PRIORITY_MIGRATED, true);
+    }
+
+    static boolean shouldMigrateExoSizePriority(int profile) {
+        return clampProfile(profile) != PROFILE_CUSTOM;
+    }
+
+    private static void migratePreloadDefaults() {
+        if (Prefers.getBoolean(KEY_PRELOAD_DEFAULTS_MIGRATED)) return;
+        for (int kernel : new int[]{PlayerSetting.EXO, PlayerSetting.MPV, PlayerSetting.IJK}) {
+            int profile = clampProfile(Prefers.getInt(profileKey(kernel), PROFILE_RECOMMENDED));
+            if (shouldMigratePreloadDefaults(profile)) KernelPerformanceSetting.applyPreloadPreset(kernel, profile);
+        }
+        Prefers.put(KEY_PRELOAD_DEFAULTS_MIGRATED, true);
+    }
+
+    static boolean shouldMigratePreloadDefaults(int profile) {
+        return clampProfile(profile) != PROFILE_CUSTOM;
+    }
+
+    private static void migrateExoLoadControl() {
+        if (Prefers.getBoolean(KEY_EXO_LOAD_CONTROL_MIGRATED)) return;
+        int profile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.EXO), PROFILE_RECOMMENDED));
+        if (shouldMigrateExoLoadControl(profile)) {
+            KernelPerformanceSetting.applyExoLoadControlPreset(profile);
+            ExoPerformanceSetting.applyPrioritizeTimePreset(profile);
+        }
+        Prefers.put(KEY_EXO_LOAD_CONTROL_MIGRATED, true);
+    }
+
+    static boolean shouldMigrateExoLoadControl(int profile) {
+        return clampProfile(profile) != PROFILE_CUSTOM;
+    }
+
+    private static void migrateExoRebuffer() {
+        if (Prefers.getBoolean(KEY_EXO_REBUFFER_MIGRATED)) return;
+        int profile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.EXO), PROFILE_RECOMMENDED));
+        if (shouldMigrateExoRebuffer(profile)) ExoPerformanceSetting.applyRebufferPreset(profile);
+        Prefers.put(KEY_EXO_REBUFFER_MIGRATED, true);
+    }
+
+    static boolean shouldMigrateExoRebuffer(int profile) {
+        return clampProfile(profile) != PROFILE_CUSTOM;
+    }
+
+    private static void migrateMpvRebuffer() {
+        if (Prefers.getBoolean(KEY_MPV_REBUFFER_MIGRATED)) return;
+        int profile = clampProfile(Prefers.getInt(profileKey(PlayerSetting.MPV), PROFILE_RECOMMENDED));
+        if (shouldMigrateMpvRebuffer(profile)) MpvPerformanceSetting.applyRebufferPreset(profile);
+        Prefers.put(KEY_MPV_REBUFFER_MIGRATED, true);
+    }
+
+    static boolean shouldMigrateMpvRebuffer(int profile) {
+        return clampProfile(profile) != PROFILE_CUSTOM;
+    }
+
     private static void applyKernelSpecificPreset(int kernel, int profile) {
         if (kernel == PlayerSetting.EXO) {
             if (profile == PROFILE_COMPATIBLE) ExoPerformanceSetting.applyCompatible();
             else if (profile == PROFILE_LIGHTWEIGHT) ExoPerformanceSetting.applyLightweight();
+            else if (profile == PROFILE_AUTO) ExoPerformanceSetting.applyAuto();
             else ExoPerformanceSetting.applyRecommended();
         } else if (kernel == PlayerSetting.MPV) {
             if (profile == PROFILE_COMPATIBLE) MpvPerformanceSetting.applyCompatible();
@@ -375,5 +504,24 @@ public class PlaybackPerformanceSetting {
             case 4 -> "2GB";
             default -> "128MB";
         };
+    }
+
+    private static String bufferWatermarksText() {
+        return switch (PlayerSetting.getPlayer()) {
+            case PlayerSetting.EXO -> "\n起播阈值：" + secondsText(ExoPerformanceSetting.getStartBufferMs()) + "，重缓冲恢复：" + secondsText(ExoPerformanceSetting.getRebufferMs());
+            case PlayerSetting.MPV -> "\n参数优先级：" + MpvPerformanceSetting.getOptionPriorityText() + "，重缓冲恢复：" + secondsText(MpvPerformanceSetting.getRebufferMs());
+            default -> "";
+        };
+    }
+
+    private static String preloadDetailText() {
+        if (!isAuto()) {
+            return "\n预载：" + onOff(PreloadSetting.isPreload()) + "，线程：" + PreloadSetting.getPreloadThreads() + "，容量：" + PreloadSetting.getPreloadSizeMb() + "MB，时间：" + PreloadSetting.getPreloadTimeSeconds() + "秒";
+        }
+        return "\n预载：自动，线程：0～2，容量：" + PreloadSetting.getPreloadSizeMb() + "MB，单次时间：10～30秒";
+    }
+
+    private static String secondsText(int milliseconds) {
+        return milliseconds % 1000 == 0 ? milliseconds / 1000 + "秒" : String.format(java.util.Locale.US, "%.1f秒", milliseconds / 1000f);
     }
 }

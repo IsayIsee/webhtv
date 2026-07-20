@@ -24,6 +24,7 @@ import androidx.media3.common.VideoSize;
 import androidx.media3.effect.ColorLut;
 import androidx.media3.ui.danmaku.DanmakuConfig;
 import androidx.media3.ui.danmaku.DanmakuController;
+import androidx.media3.mpvplayer.MpvPlayer;
 
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.Constant;
@@ -40,6 +41,13 @@ import com.fongmi.android.tv.player.engine.MpvPlayerEngine;
 import com.fongmi.android.tv.player.engine.PlaySpec;
 import com.fongmi.android.tv.player.engine.PlayerCacheState;
 import com.fongmi.android.tv.player.engine.PlayerEngine;
+import com.fongmi.android.tv.player.danmaku.DanmakuUrlPolicy;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuBatcher;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuBuffer;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuMessage;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuMetrics;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuParser;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuWebSocketSession;
 import com.fongmi.android.tv.player.lut.DynamicLutEffect;
 import com.fongmi.android.tv.player.lut.LutEffectFactory;
 import com.fongmi.android.tv.player.lut.LutEligibility;
@@ -48,7 +56,10 @@ import com.fongmi.android.tv.player.lut.LutSetting;
 import com.fongmi.android.tv.player.lut.LutStore;
 import com.fongmi.android.tv.player.lut.MpvLutShader;
 import com.fongmi.android.tv.player.lut.MpvLutShaderFactory;
+import com.fongmi.android.tv.player.mpv.MpvAutoOutputPolicy;
+import com.fongmi.android.tv.player.mpv.MpvConfigStore;
 import com.fongmi.android.tv.setting.DanmakuSetting;
+import com.fongmi.android.tv.setting.MpvPerformanceSetting;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.utils.LocalProxyDebug;
 import com.fongmi.android.tv.utils.Notify;
@@ -61,6 +72,7 @@ import com.google.common.net.HttpHeaders;
 
 import java.io.IOException;
 import java.text.DecimalFormat;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -73,18 +85,28 @@ public class PlayerManager implements ParseCallback {
     private static final long LOCAL_PROXY_READY_TIMEOUT_MS = 5000;
     private static final long LOCAL_PROXY_RETRY_DELAY_MS = 1000;
     private static final long HARD_DECODE_SWITCH_RETRY_DELAY_MS = 1200;
+    private static final long MPV_AUTO_OUTPUT_PROBE_INTERVAL_MS = 250;
     private static final int LOCAL_PROXY_MAX_RETRY = 2;
+    private static final int MPV_AUTO_OUTPUT_PROBE_MAX_ATTEMPTS = 20;
     private static final int LUT_WARMUP_RECOVERED_ERROR_REFRESH_THRESHOLD = 3;
     private static final long DANMAKU_FORCE_RELOAD_DEBOUNCE_MS = 10000;
+    private static final long LIVE_DANMAKU_METRICS_INTERVAL_MS = 15000L;
     private static final float[] SPEED_PRESETS = new float[]{0.5f, 0.75f, 1f, 1.2f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 5f};
     private static final DecimalFormat SPEED_FORMAT = new DecimalFormat("0.##x");
 
     private final Runnable runnable;
+    private final Runnable liveDanmakuMetricsRunnable;
     private final Callback callback;
     private final DynamicLutEffect dynamicLutEffect;
     private final AudioManager.OnAudioFocusChangeListener audioFocusChangeListener;
     private final BroadcastReceiver noisyReceiver;
+    private final PlaybackBufferingTracker playbackBufferingTracker;
+    private final PlaybackTrace playbackTrace;
+    private final LiveDanmakuBatcher liveDanmakuBatcher;
+    private final LiveDanmakuBuffer liveDanmakuBuffer;
+    private final LiveDanmakuMetrics liveDanmakuMetrics;
     private DanmakuController danmakuController;
+    private LiveDanmakuWebSocketSession liveDanmakuSession;
     private PlayerEngine engine;
     private VideoSize videoSize;
     private ParseJob parseJob;
@@ -93,10 +115,14 @@ public class PlayerManager implements ParseCallback {
     private String currentDanmakuUrl;
     private String currentDanmakuKey;
     private String loadingDanmakuKey;
+    private String lastLoggedRouteTraceId = PlaybackTrace.NONE;
     private long danmakuLoadStartedAtMs;
+    private volatile long liveDanmakuGeneration;
+    private volatile boolean liveDanmakuPlaybackActive;
     private long pendingSwitchPositionMs = C.TIME_UNSET;
     private float pendingSwitchSpeed = 1f;
     private boolean danmakuLoadInProgress;
+    private boolean danmakuForeground = true;
     private boolean pendingSwitchRepeat;
     private boolean pendingSwitchRestore;
     private boolean audioFocusHeld;
@@ -119,15 +145,27 @@ public class PlayerManager implements ParseCallback {
     private boolean lutWarmupReloadPreviewPending;
     private boolean hardDecodeSwitchRetryArmed;
     private boolean lutAllowed = true;
+    private boolean mpvAutoOutputEvaluated;
+    private boolean mpvAutoOutputEvaluationScheduled;
+    private boolean mpvExplicitSubtitlePreference;
+    private boolean mpvSurfaceFallbackTried;
     private int playerType;
     private int retry;
     private int localProxyRetry;
     private int prepareSeq;
     private int lutApplySeq;
     private int lutWarmupRecoveredErrors;
+    private int mpvOutputEvaluationSeq;
+    private int mpvAutoOutputProbeAttempts;
 
     public PlayerManager(Callback callback) {
         this.runnable = this::onPlaybackTimeout;
+        this.liveDanmakuMetricsRunnable = () -> logLiveDanmakuMetrics("periodic", true);
+        this.playbackBufferingTracker = new PlaybackBufferingTracker();
+        this.playbackTrace = new PlaybackTrace();
+        this.liveDanmakuBuffer = new LiveDanmakuBuffer();
+        this.liveDanmakuMetrics = new LiveDanmakuMetrics();
+        this.liveDanmakuBatcher = new LiveDanmakuBatcher(liveDanmakuBuffer, this::onLiveDanmakuBatch);
         this.dynamicLutEffect = new DynamicLutEffect();
         this.audioFocusChangeListener = this::onNativeAudioFocusChanged;
         this.noisyReceiver = new BroadcastReceiver() {
@@ -149,6 +187,12 @@ public class PlayerManager implements ParseCallback {
         player.removeListener(listener);
         App.removeCallbacks(runnable);
         stopNativeAudioSession();
+        clearDanmaku("release");
+        releaseLiveDanmakuSession();
+        liveDanmakuBatcher.release();
+        App.removeCallbacks(liveDanmakuMetricsRunnable);
+        if (danmakuController != null) danmakuController.setListener(null);
+        danmakuController = null;
         if (engine == null) return;
         engine.release();
         engine = null;
@@ -163,7 +207,9 @@ public class PlayerManager implements ParseCallback {
         waitingLutBeforePlay = false;
         lutWarmupReloadPreviewPending = false;
         clearLutWarmupRecovery();
-        clearDanmakuState();
+        playbackBufferingTracker.reset();
+        playbackTrace.clear();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
     }
 
     private void onPlaybackTimeout() {
@@ -210,6 +256,10 @@ public class PlayerManager implements ParseCallback {
 
     public MediaItem getCurrentMediaItem() {
         return player.getCurrentMediaItem();
+    }
+
+    public String getPlaybackTraceId() {
+        return playbackTrace.current();
     }
 
     public int getPlaybackState() {
@@ -345,6 +395,14 @@ public class PlayerManager implements ParseCallback {
         return engine == null ? 0 : engine.getDroppedFrames();
     }
 
+    public int getRebufferCount() {
+        return playbackBufferingTracker.getRebufferCount();
+    }
+
+    public long getRebufferTotalMs() {
+        return playbackBufferingTracker.getRebufferTotalMs();
+    }
+
     public boolean supportsSubtitleStyle() {
         return engine != null && engine.supportsSubtitleStyle();
     }
@@ -410,6 +468,10 @@ public class PlayerManager implements ParseCallback {
         return playerType == PlayerSetting.MPV;
     }
 
+    public boolean isMpvSurfaceDirect() {
+        return engine instanceof MpvPlayerEngine mpv && mpv.isSurfaceDirect();
+    }
+
     public boolean isExo() {
         return playerType == PlayerSetting.EXO;
     }
@@ -461,10 +523,26 @@ public class PlayerManager implements ParseCallback {
     }
 
     public void setDanmakuController(DanmakuController controller) {
+        if (danmakuController == controller) {
+            configureDanmakuController(controller);
+            return;
+        }
+        if (danmakuController != null) {
+            danmakuController.setListener(null);
+            danmakuController.clearItems();
+        }
         danmakuController = controller;
-        danmakuController.setOkHttpClient(OkHttp.player());
-        danmakuController.setConfig(DanmakuSetting.getConfig());
-        danmakuController.setListener(new DanmakuController.Listener() {
+        if (danmakuController == null) return;
+        configureDanmakuController(danmakuController);
+        restoreDanmakuDataSource();
+    }
+
+    private void configureDanmakuController(DanmakuController controller) {
+        if (controller == null) return;
+        controller.setOkHttpClient(OkHttp.player());
+        controller.setConfig(DanmakuSetting.getConfig());
+        controller.setEnabled(DanmakuSetting.isShow());
+        controller.setListener(new DanmakuController.Listener() {
             @Override
             public void onLoadCompleted(Uri uri, int count) {
                 logDanmakuLoad("completed", uri, count, null);
@@ -479,16 +557,42 @@ public class PlayerManager implements ParseCallback {
         });
     }
 
+    private void restoreDanmakuDataSource() {
+        if (danmakuController == null || TextUtils.isEmpty(currentDanmakuUrl)) return;
+        if (!DanmakuUrlPolicy.classify(currentDanmakuUrl).isStatic()) return;
+        loadingDanmakuKey = currentDanmakuKey;
+        danmakuLoadStartedAtMs = SystemClock.elapsedRealtime();
+        danmakuLoadInProgress = true;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "restore controller %s key=%s", DanmakuUrlPolicy.logSummary(currentDanmakuUrl), summarizeUrl(currentDanmakuKey));
+        danmakuController.setDataSource(Uri.parse(currentDanmakuUrl));
+    }
+
     public void setDanmakuConfig(DanmakuConfig config) {
-        danmakuController.setConfig(config);
+        if (danmakuController != null) danmakuController.setConfig(config);
     }
 
     public void setDanmakuEnabled(boolean enabled) {
-        danmakuController.setEnabled(enabled);
+        if (danmakuController != null) danmakuController.setEnabled(enabled);
+        if (!enabled) {
+            stopLiveDanmakuSession("hidden");
+        } else if (danmakuForeground && DanmakuUrlPolicy.classify(currentDanmakuUrl).isLive()) {
+            connectLiveDanmakuSession(currentDanmakuUrl);
+        }
+    }
+
+    public void setDanmakuForeground(boolean foreground) {
+        if (danmakuForeground == foreground) return;
+        danmakuForeground = foreground;
+        if (!foreground) {
+            stopLiveDanmakuSession("background");
+            discardLiveDanmakuPending();
+        } else if (DanmakuSetting.isShow() && DanmakuUrlPolicy.classify(currentDanmakuUrl).isLive()) {
+            connectLiveDanmakuSession(currentDanmakuUrl);
+        }
     }
 
     public void sendDanmaku(String text) {
-        danmakuController.sendNow(text);
+        if (danmakuController != null) danmakuController.sendNow(text);
     }
 
     public String setSpeed(float speed) {
@@ -520,6 +624,11 @@ public class PlayerManager implements ParseCallback {
     }
 
     public void setTrack(List<Track> tracks) {
+        mpvExplicitSubtitlePreference = hasRequestedSubtitle(tracks);
+        if (shouldLeaveAutoSurfaceDirectForSubtitle(tracks)) {
+            rebuildAndRestartMpv(false, "subtitle-selected");
+            return;
+        }
         if (!tracks.isEmpty()) engine.setTrack(tracks);
     }
 
@@ -539,12 +648,14 @@ public class PlayerManager implements ParseCallback {
 
     public void stop() {
         stopNativeAudioSession();
+        clearDanmaku("stop");
         engine.stop();
         stopParse();
     }
 
     public void clearMediaItems() {
         stopNativeAudioSession();
+        clearDanmaku("clear_media_items");
         player.clearMediaItems();
     }
 
@@ -589,9 +700,10 @@ public class PlayerManager implements ParseCallback {
     public void clear() {
         prepareSeq++;
         lutApplySeq++;
+        resetMpvOutputRuntime();
         spec = null;
         clearPendingSwitchRestore();
-        clearDanmakuState();
+        clearDanmaku("clear");
         lutAppliedForItem = false;
         lutApplyInProgress = false;
         lutPipelineReadyForItem = false;
@@ -599,6 +711,9 @@ public class PlayerManager implements ParseCallback {
         pendingLutPreview = false;
         waitingLutBeforePlay = false;
         clearLutWarmupRecovery();
+        playbackBufferingTracker.reset();
+        playbackTrace.clear();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
     }
 
     public void resetTrack() {
@@ -613,6 +728,7 @@ public class PlayerManager implements ParseCallback {
         int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
         boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
         hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
+        beginPlaybackTrace("switch-decode");
         engine.setDecode(next);
         rebuildPlayer(resetVideoSurface);
         setMediaItem();
@@ -620,6 +736,7 @@ public class PlayerManager implements ParseCallback {
 
     public void switchDecode(PlaySpec freshSpec, long position, float speed, boolean repeat) {
         if (engine == null || player == null || freshSpec == null) return;
+        beginPlaybackTrace("switch-decode-fresh");
         int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
         boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
         boolean wasPlayWhenReady = player.getPlayWhenReady();
@@ -628,6 +745,7 @@ public class PlayerManager implements ParseCallback {
         stopNativeAudioSession();
         engine.release();
         spec = freshSpec;
+        bindPlaybackTrace();
         hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
         engine = buildEngine(playerType, next);
         player = engine.getPlayer();
@@ -642,6 +760,7 @@ public class PlayerManager implements ParseCallback {
 
     public void switchDecode(Result result, String key, MediaMetadata metadata, boolean useParse, long position, float speed, boolean repeat) {
         if (engine == null || player == null || result == null || result.hasMsg() || result.getRealUrl().isEmpty()) return;
+        beginPlaybackTrace("switch-decode-result");
         int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
         boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
         boolean wasPlayWhenReady = player.getPlayWhenReady();
@@ -661,10 +780,12 @@ public class PlayerManager implements ParseCallback {
             pendingSwitchSpeed = speed;
             pendingSwitchRepeat = repeat;
             spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch decode fresh parse decode=%d position=%d useParse=%s spec=%s", next, position, useParse, debugSpec());
             parseJob = ParseJob.create(this).start(result, useParse);
         } else {
             spec = PlaySpec.from(result, key, metadata);
+            bindPlaybackTrace();
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch decode fresh result decode=%d position=%d spec=%s", next, position, debugSpec());
             setMediaItem(Constant.TIMEOUT_PLAY);
             if (position > 0) seekTo(position);
@@ -683,6 +804,7 @@ public class PlayerManager implements ParseCallback {
 
     public void switchPlayer(int type, PlaySpec freshSpec, long position, float speed, boolean repeat) {
         if (engine == null || player == null || freshSpec == null) return;
+        beginPlaybackTrace("switch-player-fresh");
         type = PlayerSetting.sanitizePlayer(type);
         boolean wasPlayWhenReady = player.getPlayWhenReady();
         int decode = engine.getDecode();
@@ -693,6 +815,7 @@ public class PlayerManager implements ParseCallback {
         playerType = type;
         PlayerSetting.putPlayer(type);
         spec = freshSpec;
+        bindPlaybackTrace();
         playWhenReady = wasPlayWhenReady;
         if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh type=%d position=%d spec=%s", type, position, debugSpec());
         engine = buildEngine(playerType, decode);
@@ -706,6 +829,7 @@ public class PlayerManager implements ParseCallback {
 
     public void switchPlayer(int type, Result result, String key, MediaMetadata metadata, boolean useParse, long position, float speed, boolean repeat) {
         if (engine == null || player == null || result == null || result.hasMsg() || result.getRealUrl().isEmpty()) return;
+        beginPlaybackTrace("switch-player-result");
         type = PlayerSetting.sanitizePlayer(type);
         boolean wasPlayWhenReady = player.getPlayWhenReady();
         int decode = engine.getDecode();
@@ -726,10 +850,12 @@ public class PlayerManager implements ParseCallback {
             pendingSwitchSpeed = speed;
             pendingSwitchRepeat = repeat;
             spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh parse type=%d position=%d useParse=%s spec=%s", type, position, useParse, debugSpec());
             parseJob = ParseJob.create(this).start(result, useParse);
         } else {
             spec = PlaySpec.from(result, key, metadata);
+            bindPlaybackTrace();
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh result type=%d position=%d spec=%s", type, position, debugSpec());
             setMediaItem(Constant.TIMEOUT_PLAY);
             if (position > 0) seekTo(position);
@@ -742,6 +868,7 @@ public class PlayerManager implements ParseCallback {
         if (engine == null || player == null) return;
         type = PlayerSetting.sanitizePlayer(type);
         if (type == playerType) return;
+        beginPlaybackTrace("switch-player");
         long position = getPosition();
         float speed = getSpeed();
         boolean repeat = isRepeatOne();
@@ -786,10 +913,161 @@ public class PlayerManager implements ParseCallback {
         callback.onPlayerRebuild(player, resetVideoSurface);
     }
 
+    public void applyPerformanceSettings() {
+        if (!isMpv() || spec == null || TextUtils.isEmpty(spec.getUrl()) || !(engine instanceof MpvPlayerEngine mpv)) return;
+        resetMpvOutputEvaluationState();
+        mpv.setSurfaceDirectOverride(null);
+        rebuildAndRestartMpv(null, "performance-settings-changed");
+    }
+
+    private boolean rebuildAndRestartMpv(Boolean surfaceDirectOverride, String reason) {
+        if (!isMpv() || spec == null || TextUtils.isEmpty(spec.getUrl()) || !(engine instanceof MpvPlayerEngine mpv)) return false;
+        long position = Math.max(0, player.getCurrentPosition());
+        float speed = getSpeed();
+        boolean repeat = isRepeatOne();
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        prepareSeq++;
+        App.removeCallbacks(runnable);
+        mpv.setSurfaceDirectOverride(surfaceDirectOverride);
+        videoSize = null;
+        initTrack = false;
+        rebuildPlayer();
+        playWhenReady = wasPlayWhenReady;
+        applySubtitleStyle();
+        playbackTrace.mark(PlaybackTrace.Stage.PREPARE, "player=" + playerType + " decode=" + engine.getDecode() + " mpv-output=" + reason);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "rebuild reason=%s directOverride=%s position=%d play=%s speed=%s repeat=%s spec=%s", reason, surfaceDirectOverride, position, wasPlayWhenReady, speed, repeat, debugSpec());
+        engine.start(spec.checkUa(), position, wasPlayWhenReady);
+        scheduleMpvAutoOutputEvaluation();
+        startNativeAudioSession(wasPlayWhenReady);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+        App.post(runnable, Constant.TIMEOUT_PLAY);
+        return true;
+    }
+
+    private void prepareMpvOutputForNewItem() {
+        resetMpvOutputEvaluationState();
+        mpvExplicitSubtitlePreference = hasRequestedSubtitle(Track.find(getKey()));
+        if (!(engine instanceof MpvPlayerEngine mpv)) return;
+        if (MpvPerformanceSetting.getOutputMode() == MpvPerformanceSetting.OUTPUT_AUTO && mpv.isSurfaceDirect()) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "preserve direct output for new item reason=auto-sticky");
+            return;
+        }
+        mpv.setSurfaceDirectOverride(null);
+        boolean shouldStartDirect = MpvPerformanceSetting.shouldUseSurfaceDirect(false, Util.isLeanback(), engine.isHard());
+        if (mpv.isSurfaceDirect() == shouldStartDirect) return;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "prepare new item rebuild currentDirect=%s desiredDirect=%s mode=%s", mpv.isSurfaceDirect(), shouldStartDirect, MpvPerformanceSetting.getOutputModeText());
+        rebuildPlayer();
+    }
+
+    private void resetMpvOutputRuntime() {
+        resetMpvOutputEvaluationState();
+        if (engine instanceof MpvPlayerEngine mpv) mpv.setSurfaceDirectOverride(null);
+    }
+
+    private void resetMpvOutputEvaluationState() {
+        mpvAutoOutputEvaluated = false;
+        mpvAutoOutputEvaluationScheduled = false;
+        mpvAutoOutputProbeAttempts = 0;
+        mpvSurfaceFallbackTried = false;
+        mpvOutputEvaluationSeq++;
+    }
+
+    private void scheduleMpvAutoOutputEvaluation() {
+        if (!isMpv() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO) return;
+        if (mpvAutoOutputEvaluated || mpvAutoOutputEvaluationScheduled) return;
+        mpvAutoOutputEvaluationScheduled = true;
+        int seq = ++mpvOutputEvaluationSeq;
+        App.post(() -> {
+            if (seq != mpvOutputEvaluationSeq) return;
+            mpvAutoOutputEvaluationScheduled = false;
+            mpvAutoOutputProbeAttempts++;
+            boolean evaluated = evaluateMpvAutoOutput();
+            if (!evaluated && !mpvAutoOutputEvaluated && mpvAutoOutputProbeAttempts < MPV_AUTO_OUTPUT_PROBE_MAX_ATTEMPTS) {
+                scheduleMpvAutoOutputEvaluation();
+            } else if (!evaluated && SpiderDebug.isEnabled()) {
+                SpiderDebug.log("mpv-output", "auto probe exhausted attempts=%d size=%dx%d tracksEmpty=%s", mpvAutoOutputProbeAttempts, getVideoWidth(), getVideoHeight(), engine == null || engine.getCurrentTracks() == null || engine.getCurrentTracks().isEmpty());
+            }
+        }, MPV_AUTO_OUTPUT_PROBE_INTERVAL_MS);
+    }
+
+    private boolean evaluateMpvAutoOutput() {
+        if (!isMpv() || mpvAutoOutputEvaluated || engine == null) return true;
+        Tracks tracks = engine.getCurrentTracks();
+        boolean tracksReady = tracks != null && !tracks.isEmpty();
+        Format format = tracksReady ? engine.getVideoFormat() : null;
+        VideoSize probedSize = engine instanceof MpvPlayerEngine mpv ? mpv.getVideoSizeSnapshot() : VideoSize.UNKNOWN;
+        int width = format != null && format.width > 0 ? format.width : probedSize.width > 0 ? probedSize.width : getVideoWidth();
+        int height = format != null && format.height > 0 ? format.height : probedSize.height > 0 ? probedSize.height : getVideoHeight();
+        if (width <= 0 || height <= 0) return false;
+        boolean externalSubtitleActive = spec != null && spec.getSubs() != null && !spec.getSubs().isEmpty();
+        boolean earlyEvaluation = !tracksReady;
+        if (earlyEvaluation && !MpvAutoOutputPolicy.canEvaluateWithoutTracks(width, height, externalSubtitleActive)) return false;
+        boolean subtitleActive = MpvAutoOutputPolicy.requiresGpuSubtitle(externalSubtitleActive, mpvExplicitSubtitlePreference);
+        boolean lutOrFilterActive = videoEffectsActive || videoEffectsDirty || lutAllowed && LutSetting.isEnabled() || MpvPerformanceSetting.isInterpolation();
+        boolean customGpuProcessing = MpvConfigStore.hasGpuVideoProcessing();
+        MpvAutoOutputPolicy.Decision decision = MpvAutoOutputPolicy.evaluate(width, height, engine.isHard(), Util.isLeanback(), subtitleActive, lutOrFilterActive, customGpuProcessing);
+        mpvAutoOutputEvaluated = true;
+        boolean currentlyDirect = isMpvSurfaceDirect();
+        MpvAutoOutputPolicy.Transition transition = MpvAutoOutputPolicy.transition(decision.eligible(), currentlyDirect);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "auto decision eligible=%s transition=%s reason=%s size=%dx%d tracksReady=%s early=%s subtitle=%s lutOrFilter=%s customGpu=%s direct=%s attempts=%d", decision.eligible(), transition, decision.reason(), width, height, tracksReady, earlyEvaluation, subtitleActive, lutOrFilterActive, customGpuProcessing, currentlyDirect, mpvAutoOutputProbeAttempts);
+        if (transition == MpvAutoOutputPolicy.Transition.ENTER_SURFACE_DIRECT) rebuildAndRestartMpv(true, "auto-" + decision.reason());
+        else if (transition == MpvAutoOutputPolicy.Transition.LEAVE_SURFACE_DIRECT) rebuildAndRestartMpv(false, "auto-" + decision.reason());
+        return true;
+    }
+
+    private boolean shouldLeaveAutoSurfaceDirectForSubtitle(List<Track> tracks) {
+        if (!isMpvSurfaceDirect() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO || tracks == null) return false;
+        for (Track track : tracks) {
+            if (track.getType() == C.TRACK_TYPE_TEXT && track.isSelected() && !track.isDisabled()) {
+                mpvAutoOutputEvaluated = true;
+                mpvOutputEvaluationSeq++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasRequestedSubtitle(List<Track> tracks) {
+        if (tracks == null || tracks.isEmpty()) return false;
+        for (Track track : tracks) {
+            if (track.getType() == C.TRACK_TYPE_TEXT && track.isSelected() && !track.isDisabled()) return true;
+        }
+        return false;
+    }
+
+    private void restoreTrackSelection(List<Track> tracks) {
+        if (tracks != null && !tracks.isEmpty()) engine.setTrack(tracks);
+    }
+
+    private void onMpvVideoSizeProbed(Integer width, Integer height) {
+        if (width == null || height == null || width <= 0 || height <= 0) return;
+        if (!isMpv() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO || mpvAutoOutputEvaluated) return;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "auto size probe size=%dx%d attempts=%d", width, height, mpvAutoOutputProbeAttempts);
+        mpvAutoOutputEvaluationScheduled = false;
+        mpvOutputEvaluationSeq++;
+        if (!evaluateMpvAutoOutput()) scheduleMpvAutoOutputEvaluation();
+    }
+
+    private boolean retryMpvSurfaceDirectFailure(PlaybackException error) {
+        if (!isMpvSurfaceDirect() || mpvSurfaceFallbackTried || error == null) return false;
+        String message = error.getMessage();
+        boolean outputFailure = error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                || message != null && (message.startsWith(MpvPlayer.ERROR_VIDEO_OUTPUT_FAILED) || message.startsWith(MpvPlayer.ERROR_DECODE_FAILED));
+        if (!outputFailure) return false;
+        mpvSurfaceFallbackTried = true;
+        mpvAutoOutputEvaluated = true;
+        mpvOutputEvaluationSeq++;
+        PlaybackTrace.log("mpv-output", playbackTrace.current(), "surface direct failed; fallback gpu once code=%d message=%s", error.errorCode, message);
+        return rebuildAndRestartMpv(false, "surface-direct-failure");
+    }
+
     private PlayerEngine buildEngine(int type, int decode) {
         return switch (type) {
             case PlayerSetting.IJK -> new IjkPlayerEngine(decode, listener);
-            case PlayerSetting.MPV -> new MpvPlayerEngine(decode, listener);
+            case PlayerSetting.MPV -> new MpvPlayerEngine(decode, listener, this::onMpvVideoSizeProbed);
             default -> new ExoPlayerEngine(decode, listener);
         };
     }
@@ -807,12 +1085,14 @@ public class PlayerManager implements ParseCallback {
 
     public void start(PlaySpec spec, long timeout, boolean playWhenReady) {
         clearPendingSwitchRestore();
+        clearDanmaku("start");
         this.spec = spec;
+        prepareMpvOutputForNewItem();
+        beginPlaybackTrace("start");
         this.playWhenReady = playWhenReady;
         retry = 0;
         localProxyRetry = 0;
         hardDecodeSwitchRetryArmed = false;
-        clearDanmakuState();
         setMediaItem(timeout);
     }
 
@@ -823,12 +1103,14 @@ public class PlayerManager implements ParseCallback {
     public void parse(String key, Result result, boolean useParse, MediaMetadata metadata, boolean playWhenReady) {
         stopParse();
         clearPendingSwitchRestore();
+        clearDanmaku("parse");
         spec = PlaySpec.fromParse(result, key, metadata, useParse);
+        prepareMpvOutputForNewItem();
+        beginPlaybackTrace("parse");
         this.playWhenReady = playWhenReady;
         retry = 0;
         localProxyRetry = 0;
         hardDecodeSwitchRetryArmed = false;
-        clearDanmakuState();
         parseJob = ParseJob.create(this).start(result, useParse);
     }
 
@@ -850,6 +1132,7 @@ public class PlayerManager implements ParseCallback {
         stopParse();
         if (spec.isParseSource()) {
             spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player reparse type=%d position=%d useParse=%s spec=%s", playerType, position, useParse, debugSpec());
             parseJob = ParseJob.create(this).start(result, useParse);
         } else {
@@ -881,10 +1164,12 @@ public class PlayerManager implements ParseCallback {
         }
         if (result.needParse()) {
             spec = PlaySpec.fromParse(result, key, metadata, false);
+            bindPlaybackTrace();
             parseJob = ParseJob.create(this).start(result, false);
             return;
         }
         spec = PlaySpec.from(result, key, metadata);
+        bindPlaybackTrace();
         if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player refreshed direct spec=%s", debugSpec());
         setMediaItem(Constant.TIMEOUT_PLAY);
         restoreAfterSwitchReparse();
@@ -943,6 +1228,9 @@ public class PlayerManager implements ParseCallback {
 
     private void setMediaItemNow(long timeout, boolean notifyPrepare) {
         if (spec == null || spec.getUrl() == null || engine == null) return;
+        spec.setPlaybackTraceId(playbackTrace.ensure());
+        spec.refreshPlaybackRoute();
+        logPlaybackRoute();
         if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "setMediaItem timeout=%d notify=%s spec=%s", timeout, notifyPrepare, debugSpec());
         App.removeCallbacks(runnable);
         setDanmakus(spec.getDanmakus());
@@ -950,7 +1238,9 @@ public class PlayerManager implements ParseCallback {
         initTrack = false;
         waitingLutBeforePlay = false;
         applySubtitleStyle();
+        playbackTrace.mark(PlaybackTrace.Stage.PREPARE, "player=" + playerType + " decode=" + engine.getDecode());
         engine.start(spec.checkUa(), playWhenReady);
+        scheduleMpvAutoOutputEvaluation();
         startNativeAudioSession(playWhenReady);
         App.post(runnable, timeout);
         if (notifyPrepare) callback.onPrepare();
@@ -1112,6 +1402,12 @@ public class PlayerManager implements ParseCallback {
 
     private void applyLut(boolean notify, boolean preview) {
         if (engine == null) return;
+        if (isMpvSurfaceDirect() && MpvPerformanceSetting.getOutputMode() == MpvPerformanceSetting.OUTPUT_AUTO && LutSetting.isEnabled()) {
+            mpvAutoOutputEvaluated = true;
+            mpvOutputEvaluationSeq++;
+            if (rebuildAndRestartMpv(false, "lut-enabled")) App.post(() -> applyLut(notify, preview), 200);
+            return;
+        }
         int seq = ++lutApplySeq;
         if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "request seq=%d notify=%s preview=%s enabled=%s preset=%s state=%s videoFormat=%s tracksEmpty=%s active=%s dirty=%s applied=%s applying=%s pendingPreview=%s", seq, notify, preview, LutSetting.isEnabled(), LutSetting.getPresetId(), stateName(player.getPlaybackState()), engine.getVideoFormat(), engine.getCurrentTracks() == null || engine.getCurrentTracks().isEmpty(), videoEffectsActive, videoEffectsDirty, lutAppliedForItem, lutApplyInProgress, pendingLutPreview);
         if (!lutAllowed) {
@@ -1519,32 +1815,47 @@ public class PlayerManager implements ParseCallback {
     }
 
     private void setDanmaku(Danmaku item, boolean force) {
-        if (danmakuController == null) return;
         if (item.isEmpty()) {
             if (spec != null) spec.setDanmaku(item);
-            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "clear current=%s", summarizeUrl(currentDanmakuUrl));
-            if (currentDanmakuUrl != null) danmakuController.clearItems();
-            clearDanmakuState();
+            clearDanmaku("empty_source");
             return;
         }
-        String url = item.getRealUrl();
+        if (danmakuController == null) return;
+        String url = DanmakuUrlPolicy.normalize(DanmakuSetting.getValidApiUrl(), item.getRealUrl());
+        DanmakuUrlPolicy.SourceType sourceType = DanmakuUrlPolicy.classify(url);
+        if (!sourceType.isSupported()) {
+            if (spec != null) spec.setDanmaku(item);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "reject %s", DanmakuUrlPolicy.logSummary(url));
+            clearDanmaku("unsupported_source");
+            return;
+        }
         String key = normalizeDanmakuKey(url);
         if (!force && TextUtils.equals(currentDanmakuUrl, url)) {
-            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip same url=%s", summarizeUrl(url));
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip same %s", DanmakuUrlPolicy.logSummary(url));
             return;
         }
         if (force && shouldSkipForcedDanmakuReload(key)) {
-            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip duplicate reload key=%s url=%s", summarizeUrl(key), summarizeUrl(url));
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip duplicate reload key=%s %s", summarizeUrl(key), DanmakuUrlPolicy.logSummary(url));
             return;
         }
         if (spec != null) spec.setDanmaku(item);
         if (force && currentDanmakuUrl != null) danmakuController.clearItems();
         currentDanmakuUrl = url;
         currentDanmakuKey = key;
+        if (sourceType.isLive()) {
+            danmakuController.clearItems();
+            loadingDanmakuKey = null;
+            danmakuLoadStartedAtMs = 0;
+            danmakuLoadInProgress = false;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "select live source pending websocket connection %s", DanmakuUrlPolicy.logSummary(url));
+            if (danmakuForeground && DanmakuSetting.isShow()) connectLiveDanmakuSession(url);
+            return;
+        }
+        stopLiveDanmakuSession("static_source");
         loadingDanmakuKey = key;
         danmakuLoadStartedAtMs = SystemClock.elapsedRealtime();
         danmakuLoadInProgress = true;
-        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "%s name=%s url=%s key=%s", force ? "reload" : "load", item.getName(), summarizeUrl(url), summarizeUrl(key));
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "%s name=%s %s key=%s", force ? "reload" : "load", item.getName(), DanmakuUrlPolicy.logSummary(url), summarizeUrl(key));
         danmakuController.setDataSource(Uri.parse(url));
     }
 
@@ -1570,13 +1881,125 @@ public class PlayerManager implements ParseCallback {
         danmakuLoadInProgress = false;
     }
 
+    private void clearDanmaku(String reason) {
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "clear reason=%s current=%s", reason, DanmakuUrlPolicy.logSummary(currentDanmakuUrl));
+        stopLiveDanmakuSession(reason);
+        liveDanmakuBatcher.clear();
+        liveDanmakuBuffer.clear();
+        if (danmakuController != null) danmakuController.clearItems();
+        clearDanmakuState();
+    }
+
+    private void connectLiveDanmakuSession(String url) {
+        if (TextUtils.isEmpty(url)) return;
+        if (liveDanmakuSession == null) {
+            liveDanmakuSession = new LiveDanmakuWebSocketSession(App.get(), new LiveDanmakuWebSocketSession.Listener() {
+                @Override
+                public void onStateChanged(LiveDanmakuWebSocketSession.State state, long generation, String sourceUrl, int code, String detail) {
+                    liveDanmakuGeneration = generation;
+                    liveDanmakuMetrics.onState(state, code, SystemClock.elapsedRealtime());
+                    if (state == LiveDanmakuWebSocketSession.State.CONNECTING) {
+                        liveDanmakuBuffer.reset(generation);
+                        liveDanmakuBatcher.reset(generation);
+                    } else if (state == LiveDanmakuWebSocketSession.State.RETRY_WAIT || state == LiveDanmakuWebSocketSession.State.STOPPED || state == LiveDanmakuWebSocketSession.State.RELEASED) {
+                        liveDanmakuBatcher.clear();
+                        liveDanmakuBuffer.clear();
+                    }
+                    if (state != LiveDanmakuWebSocketSession.State.OPEN) {
+                        App.post(() -> logLiveDanmakuMetrics("state_" + state, false));
+                        clearLiveDanmakuRenderer(generation);
+                    }
+                    if (state == LiveDanmakuWebSocketSession.State.CONNECTING || state == LiveDanmakuWebSocketSession.State.OPEN || state == LiveDanmakuWebSocketSession.State.RETRY_WAIT) scheduleLiveDanmakuMetrics();
+                    else App.removeCallbacks(liveDanmakuMetricsRunnable);
+                    if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku-ws", "state=%s generation=%d code=%d detail=%s %s", state, generation, code, detail, DanmakuUrlPolicy.logSummary(sourceUrl));
+                }
+
+                @Override
+                public void onMessage(long generation, String text) {
+                    if (generation != liveDanmakuGeneration) return;
+                    liveDanmakuMetrics.onFrame();
+                    long parseStartedNs = SystemClock.elapsedRealtimeNanos();
+                    LiveDanmakuParser.Result result = LiveDanmakuParser.parse(text, generation, SystemClock.elapsedRealtime());
+                    liveDanmakuMetrics.onParse(result, SystemClock.elapsedRealtimeNanos() - parseStartedNs);
+                    if (!result.isAccepted()) return;
+                    LiveDanmakuWebSocketSession session = liveDanmakuSession;
+                    if (session != null) session.markMessageAccepted(generation);
+                    if (result.kind() == LiveDanmakuParser.Kind.ONLINE) {
+                        liveDanmakuBuffer.updateOnline(generation, result.online());
+                    } else {
+                        if (!liveDanmakuPlaybackActive) return;
+                        LiveDanmakuMessage message = result.message();
+                        LiveDanmakuBuffer.OfferResult offer = liveDanmakuBuffer.offer(message);
+                        liveDanmakuMetrics.onOffer(offer);
+                        if (offer != LiveDanmakuBuffer.OfferResult.STALE) liveDanmakuBatcher.requestDrain(generation);
+                    }
+                }
+            });
+        }
+        liveDanmakuGeneration = liveDanmakuSession.connect(url);
+    }
+
+    private void stopLiveDanmakuSession(String reason) {
+        if (liveDanmakuSession != null) liveDanmakuGeneration = liveDanmakuSession.stop(reason);
+    }
+
+    private void releaseLiveDanmakuSession() {
+        if (liveDanmakuSession == null) return;
+        liveDanmakuSession.release();
+        liveDanmakuSession = null;
+    }
+
+    private void onLiveDanmakuBatch(long generation, List<LiveDanmakuMessage> messages) {
+        long scheduledAtMs = SystemClock.elapsedRealtime();
+        App.post(() -> {
+            if (generation != liveDanmakuGeneration || messages.isEmpty() || danmakuController == null || !DanmakuSetting.isShow()) return;
+            liveDanmakuMetrics.onBatch(messages.size(), SystemClock.elapsedRealtime() - scheduledAtMs);
+            List<androidx.media3.ui.danmaku.Danmaku> batch = new ArrayList<>(messages.size());
+            for (LiveDanmakuMessage message : messages) {
+                int pool = message.type() == LiveDanmakuMessage.Type.SUPER_CHAT ? androidx.media3.ui.danmaku.Danmaku.POOL_SPECIAL : androidx.media3.ui.danmaku.Danmaku.POOL_NORMAL;
+                long ttlMs = message.type() == LiveDanmakuMessage.Type.SUPER_CHAT ? LiveDanmakuBuffer.DEFAULT_PRIORITY_TTL_MS : LiveDanmakuBuffer.DEFAULT_NORMAL_TTL_MS;
+                batch.add(new androidx.media3.ui.danmaku.Danmaku(message.text(), 0L, androidx.media3.ui.danmaku.Danmaku.TYPE_SCROLL, message.colorArgb(), 0f, pool, "", 0L)
+                        .setLiveExpiryElapsedRealtimeMs(message.receivedAtMs() + ttlMs));
+            }
+            danmakuController.offerLiveBatch(batch);
+        });
+    }
+
+    private void clearLiveDanmakuRenderer(long generation) {
+        App.post(() -> {
+            if (generation != liveDanmakuGeneration || danmakuController == null) return;
+            danmakuController.clearLiveItems();
+        });
+    }
+
+    private void discardLiveDanmakuPending() {
+        liveDanmakuBuffer.discardPending();
+        liveDanmakuBatcher.reset(liveDanmakuGeneration);
+        clearLiveDanmakuRenderer(liveDanmakuGeneration);
+    }
+
+    private void scheduleLiveDanmakuMetrics() {
+        if (!SpiderDebug.isEnabled()) return;
+        App.post(liveDanmakuMetricsRunnable, LIVE_DANMAKU_METRICS_INTERVAL_MS);
+    }
+
+    private void logLiveDanmakuMetrics(String reason, boolean reschedule) {
+        if (!SpiderDebug.isEnabled()) return;
+        long nowMs = SystemClock.elapsedRealtime();
+        LiveDanmakuMetrics.Snapshot metrics = liveDanmakuMetrics.snapshotAndReset(nowMs);
+        LiveDanmakuBuffer.Snapshot buffer = liveDanmakuBuffer.snapshot();
+        androidx.media3.ui.danmaku.DanmakuView.LiveStats render = danmakuController == null ? androidx.media3.ui.danmaku.DanmakuView.LiveStats.EMPTY : danmakuController.getLiveStats();
+        SpiderDebug.log("danmaku-ws-metrics", "reason=%s state=%s stateMs=%d openMs=%d code=%d received=%d parsed=%d invalid=%d normal=%d super=%d online=%d queued=%d overflow=%d stale=%d batches=%d batchMessages=%d parseAvgUs=%d parseMaxUs=%d mainAvgMs=%d mainMaxMs=%d retries=%d appPending=%d/%d appExpired=%d appHigh=%d renderOffered=%d renderAdmitted=%d renderOverflow=%d renderExpired=%d trackWaits=%d renderPending=%d renderHigh=%d active=%d", reason, metrics.state(), metrics.stateDurationMs(), metrics.openDurationMs(), metrics.lastCode(), metrics.received(), metrics.parsed(), metrics.invalid(), metrics.normal(), metrics.superChat(), metrics.online(), metrics.queued(), metrics.overflow(), metrics.stale(), metrics.batches(), metrics.batchedMessages(), metrics.averageParseNanos() / 1000L, metrics.maxParseNanos() / 1000L, metrics.averageMainDelayMs(), metrics.maxMainDelayMs(), metrics.retryWaits(), buffer.normalPending(), buffer.priorityPending(), buffer.droppedExpired(), buffer.highWaterMark(), render.offered, render.admitted, render.droppedOverflow, render.droppedExpired, render.trackWaits, render.pending, render.highWaterMark, render.active);
+        if (reschedule && liveDanmakuSession != null && liveDanmakuSession.state() != LiveDanmakuWebSocketSession.State.STOPPED && liveDanmakuSession.state() != LiveDanmakuWebSocketSession.State.RELEASED) scheduleLiveDanmakuMetrics();
+    }
+
     private void logDanmakuLoad(String event, Uri uri, int count, IOException error) {
         if (!SpiderDebug.isEnabled()) return;
         long elapsed = danmakuLoadStartedAtMs <= 0 ? -1 : SystemClock.elapsedRealtime() - danmakuLoadStartedAtMs;
         if (error == null) {
-            SpiderDebug.log("danmaku", "load %s count=%d elapsed=%dms url=%s", event, count, elapsed, summarizeUrl(uri == null ? "" : uri.toString()));
+            SpiderDebug.log("danmaku", "load %s count=%d elapsed=%dms %s", event, count, elapsed, DanmakuUrlPolicy.logSummary(uri == null ? "" : uri.toString()));
         } else {
-            SpiderDebug.log("danmaku", "load %s elapsed=%dms url=%s error=%s", event, elapsed, summarizeUrl(uri == null ? "" : uri.toString()), error.getMessage());
+            SpiderDebug.log("danmaku", "load %s elapsed=%dms %s error=%s", event, elapsed, DanmakuUrlPolicy.logSummary(uri == null ? "" : uri.toString()), error.getMessage());
         }
     }
 
@@ -1607,7 +2030,8 @@ public class PlayerManager implements ParseCallback {
     @Override
     public void onParseSuccess(Map<String, String> headers, String url, String from) {
         if (!TextUtils.isEmpty(from)) Notify.show(ResUtil.getString(R.string.parse_from, from));
-        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "parseSuccess from=%s url=%s headers=%s", from, summarizeUrl(url), headers == null ? 0 : headers.size());
+        playbackTrace.mark(PlaybackTrace.Stage.PARSE_COMPLETE, "headers=" + (headers == null ? 0 : headers.size()));
+        PlaybackTrace.log("player", playbackTrace.current(), "parseSuccess from=%s url=%s headers=%s", from, summarizeUrl(url), headers == null ? 0 : headers.size());
         if (headers != null) headers.remove(HttpHeaders.RANGE);
         if (spec != null) spec.setHeaders(headers);
         if (spec != null) spec.setUrl(url);
@@ -1623,12 +2047,34 @@ public class PlayerManager implements ParseCallback {
 
     private String debugSpec() {
         if (spec == null) return "null";
-        return "key=" + spec.getKey() +
+        return "trace=" + playbackTrace.current() +
+                ", key=" + spec.getKey() +
                 ", url=" + summarizeUrl(spec.getUrl()) +
                 ", format=" + spec.getFormat() +
                 ", headers=" + (spec.getHeaders() == null ? 0 : spec.getHeaders().size()) +
                 ", subs=" + (spec.getSubs() == null ? 0 : spec.getSubs().size()) +
                 ", danmakus=" + (spec.getDanmakus() == null ? 0 : spec.getDanmakus().size());
+    }
+
+    private void beginPlaybackTrace(String reason) {
+        playbackBufferingTracker.reset();
+        playbackTrace.begin();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
+        bindPlaybackTrace();
+        playbackTrace.mark(PlaybackTrace.Stage.REQUEST, "reason=" + reason + " player=" + playerType + " decode=" + (engine == null ? -1 : engine.getDecode()));
+    }
+
+    private void bindPlaybackTrace() {
+        if (spec != null) spec.setPlaybackTraceId(playbackTrace.current());
+    }
+
+    private void logPlaybackRoute() {
+        if (spec == null) return;
+        String traceId = playbackTrace.current();
+        if (traceId.equals(lastLoggedRouteTraceId)) return;
+        PlaybackRoute.Resolution resolution = spec.getPlaybackRoute();
+        PlaybackTrace.log("playback-route", traceId, "%s", resolution.logSummary());
+        lastLoggedRouteTraceId = traceId;
     }
 
     private static String summarizeUrl(String url) {
@@ -1654,6 +2100,77 @@ public class PlayerManager implements ParseCallback {
             case Player.STATE_ENDED -> "ENDED";
             default -> String.valueOf(state);
         };
+    }
+
+    private void markStartupCompletion(boolean ready, Tracks tracks) {
+        if (tracks == null) return;
+        boolean hasVideo = tracks.containsType(C.TRACK_TYPE_VIDEO);
+        boolean hasAudio = tracks.containsType(C.TRACK_TYPE_AUDIO);
+        PlaybackStartupPolicy.Completion completion = PlaybackStartupPolicy.resolve(ready, playerType == PlayerSetting.MPV, hasVideo, hasAudio);
+        if (completion == PlaybackStartupPolicy.Completion.FIRST_FRAME) {
+            playbackTrace.mark(PlaybackTrace.Stage.FIRST_FRAME, "source=mpv-playback-restart player=" + playerType);
+        } else if (completion == PlaybackStartupPolicy.Completion.AUDIO_PLAYABLE) {
+            playbackTrace.mark(PlaybackTrace.Stage.AUDIO_PLAYABLE, "source=ready player=" + playerType);
+        }
+    }
+
+    private void recordBufferingState(int state) {
+        if (player == null || (playerType != PlayerSetting.EXO && playerType != PlayerSetting.MPV)) return;
+        boolean startupComplete = playbackTrace.hasStage(PlaybackTrace.Stage.FIRST_FRAME) || playbackTrace.hasStage(PlaybackTrace.Stage.AUDIO_PLAYABLE);
+        PlaybackBufferingTracker.Event event = playbackBufferingTracker.update(
+                state == Player.STATE_BUFFERING,
+                startupComplete,
+                SystemClock.elapsedRealtime(),
+                state,
+                currentPositionSnapshot(),
+                forwardBufferedSnapshot(),
+                loadingSnapshot());
+        if (event == null) return;
+        PlaybackTrace.log("playback-buffer", playbackTrace.current(),
+                "event=%s phase=%s outcome=%s duration=%dms count=%d total=%dms position=%d forward=%d state=%s loading=%s",
+                event.type().label(), event.phase().label(), bufferingOutcome(event), event.durationMs(), event.rebufferCount(), event.rebufferTotalMs(),
+                event.positionMs(), event.forwardBufferedMs(), stateName(event.playbackState()), event.loading());
+    }
+
+    private long currentPositionSnapshot() {
+        try {
+            return Math.max(0, player.getCurrentPosition());
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private long forwardBufferedSnapshot() {
+        try {
+            return Math.max(0, player.getTotalBufferedDuration());
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private boolean loadingSnapshot() {
+        try {
+            return player.isLoading();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String bufferingOutcome(PlaybackBufferingTracker.Event event) {
+        if (event.type() == PlaybackBufferingTracker.Type.START) return "-";
+        return switch (event.playbackState()) {
+            case Player.STATE_READY -> "ready";
+            case Player.STATE_ENDED -> "ended";
+            case Player.STATE_IDLE -> "idle";
+            default -> "left-buffering";
+        };
+    }
+
+    private static String trackSummary(Tracks tracks) {
+        return "video=" + tracks.containsType(C.TRACK_TYPE_VIDEO) +
+                " audio=" + tracks.containsType(C.TRACK_TYPE_AUDIO) +
+                " text=" + tracks.containsType(C.TRACK_TYPE_TEXT) +
+                " groups=" + tracks.getGroups().size();
     }
 
     private static String causeChain(Throwable error) {
@@ -1688,30 +2205,48 @@ public class PlayerManager implements ParseCallback {
     private final Player.Listener listener = new Player.Listener() {
 
         @Override
+        public void onIsPlayingChanged(boolean isPlaying) {
+            liveDanmakuPlaybackActive = isPlaying;
+            if (!isPlaying) discardLiveDanmakuPending();
+        }
+
+        @Override
         public void onPlaybackStateChanged(int state) {
             if (state != Player.STATE_IDLE) App.removeCallbacks(runnable);
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "state=%s spec=%s", stateName(state), debugSpec());
             if (state == Player.STATE_READY) {
+                playbackTrace.mark(PlaybackTrace.Stage.READY, "player=" + playerType);
+                markStartupCompletion(true, getCurrentTracks());
                 hardDecodeSwitchRetryArmed = false;
                 clearLutWarmupRecovery();
                 applyLutForCurrentItem();
             }
+            recordBufferingState(state);
         }
 
         @Override
         public void onVideoSizeChanged(@NonNull VideoSize size) {
             videoSize = size;
             applyLutForCurrentItem();
+            scheduleMpvAutoOutputEvaluation();
         }
 
         @Override
         public void onTracksChanged(@NonNull Tracks tracks) {
             if (!tracks.isEmpty() && !initTrack) {
-                setTrack(Track.find(getKey()));
+                playbackTrace.mark(PlaybackTrace.Stage.TRACKS, trackSummary(tracks));
+                restoreTrackSelection(Track.find(getKey()));
                 callback.onTracksChanged();
                 initTrack = true;
             }
+            markStartupCompletion(player != null && player.getPlaybackState() == Player.STATE_READY, tracks);
             applyLutForCurrentItem();
+            scheduleMpvAutoOutputEvaluation();
+        }
+
+        @Override
+        public void onRenderedFirstFrame() {
+            playbackTrace.mark(PlaybackTrace.Stage.FIRST_FRAME, "source=media3 player=" + playerType);
         }
 
         @Override
@@ -1722,7 +2257,10 @@ public class PlayerManager implements ParseCallback {
         @Override
         public void onPlayerError(@NonNull PlaybackException e) {
             App.removeCallbacks(runnable);
+            if (retryMpvSurfaceDirectFailure(e)) return;
+            PlaybackErrorClassifier.Failure failure = PlaybackErrorClassifier.classify(e, getEffectivePlaybackRoute());
             PlayerEngine.ErrorAction action = engine.handleError(e);
+            PlaybackTrace.log("playback-error", playbackTrace.current(), "%s action=%s player=%d decode=%d", failure.logSummary(), action, playerType, engine.getDecode());
             if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "error code=%d message=%s action=%s retry=%d spec=%s cause=%s", e.errorCode, e.getMessage(), action, retry, debugSpec(), causeChain(e));
             LocalProxyDebug.dumpIfLocalFailure(spec == null ? null : spec.getUrl(), e);
             if (retryLutFailure(e)) return;
@@ -1730,20 +2268,39 @@ public class PlayerManager implements ParseCallback {
             if (action == PlayerEngine.ErrorAction.DECODE && retryHardDecodeSwitch(e)) return;
             if (action == PlayerEngine.ErrorAction.FATAL && retryLocalProxy(e)) return;
             if (action == PlayerEngine.ErrorAction.RELOAD) {
-                callback.onReload(engine.getErrorMessage(e));
+                callback.onReload(getPlaybackErrorMessage(failure));
                 return;
             }
             if (action == PlayerEngine.ErrorAction.RECOVERED) {
                 if (spec != null) setDanmakus(spec.getDanmakus());
                 return;
             }
-            if (action == PlayerEngine.ErrorAction.FATAL) {
-                callback.onError(engine.getErrorMessage(e));
-            } else {
-                callback.onError(engine.getErrorMessage(e));
-            }
+            callback.onError(getPlaybackErrorMessage(failure));
         }
     };
+
+    private PlaybackRoute.Resolution getEffectivePlaybackRoute() {
+        PlaybackRoute.Resolution route = engine == null ? null : engine.getEffectivePlaybackRoute();
+        if (route != null && route.route() != PlaybackRoute.OTHER) return route;
+        return spec == null ? PlaybackRoute.resolve(null) : spec.getPlaybackRoute();
+    }
+
+    private String getPlaybackErrorMessage(PlaybackErrorClassifier.Failure failure) {
+        return switch (failure.stage()) {
+            case LOCAL_ENDPOINT -> switch (failure.route().owner()) {
+                case APP_MAIN_SERVER, APP_HLS_PROXY -> ResUtil.getString(R.string.error_play_stage_app_local);
+                default -> ResUtil.getString(R.string.error_play_stage_external_local);
+            };
+            case NETWORK_IO -> PlaybackRouteCapabilities.resolve(failure.route()).externalUpstreamOpaque()
+                    ? ResUtil.getString(R.string.error_play_stage_external_supply)
+                    : ResUtil.getString(R.string.error_play_stage_network);
+            case MEDIA_PARSING -> ResUtil.getString(R.string.error_play_stage_media);
+            case DECODER -> ResUtil.getString(R.string.error_play_stage_decoder);
+            case OUTPUT -> ResUtil.getString(R.string.error_play_stage_output);
+            case DRM -> ResUtil.getString(R.string.error_play_stage_drm);
+            case UNKNOWN -> ResUtil.getString(R.string.error_play_stage_unknown);
+        };
+    }
 
     private boolean retryHardDecodeSwitch(PlaybackException e) {
         if (!hardDecodeSwitchRetryArmed || engine == null || player == null || spec == null || !engine.isHard()) return false;
@@ -1772,6 +2329,7 @@ public class PlayerManager implements ParseCallback {
             waitingLutBeforePlay = false;
             applySubtitleStyle();
             engine.start(target.checkUa(), position, wasPlayWhenReady);
+            scheduleMpvAutoOutputEvaluation();
             if (speed != 1f) setSpeed(speed);
             setRepeatOne(repeat);
             App.post(runnable, Constant.TIMEOUT_PLAY);

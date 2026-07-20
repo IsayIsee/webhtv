@@ -551,7 +551,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     protected void onServiceConnected() {
         player().setDanmakuController(mBinding.exo.getDanmakuController());
-        player().setDanmakuEnabled(DanmakuSetting.isShow());
         syncDesktopLyricsAudioContent();
         setPlayerKernel();
         setDecode();
@@ -1675,7 +1674,12 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void onCast() {
-        CastDialog.create().history(mHistory).video(new CastVideo(mBinding.name.getText().toString(), player().getUrl(), player().getPosition(), player().getHeaders())).fm(true).show(this);
+        if (mHistory == null || TextUtils.isEmpty(mHistory.getVodId()) || service() == null || player().isEmpty() || TextUtils.isEmpty(player().getUrl())) {
+            Notify.show(R.string.cast_not_ready);
+            return;
+        }
+        CastVideo video = new CastVideo(mBinding.name.getText().toString(), player().getUrl(), player().getPosition(), player().getHeaders());
+        CastDialog.create().history(mHistory).video(video).fm(true).show(this);
     }
 
     private void onInfo() {
@@ -3531,6 +3535,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     public boolean isControlParseEnabled() {
         return isUseParse();
+    }
+
+    @Override
+    public boolean isControlAudioContent() {
+        return isAudioOnly() || isMusicLike();
     }
 
     @Override
