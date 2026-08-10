@@ -9,7 +9,6 @@ import com.fongmi.android.tv.utils.Task;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Request;
@@ -63,13 +62,22 @@ public final class PlaybackRemoteSyncer {
             if (!ViewingRecordSyncStore.isEnabled()) return PlaybackRemoteSyncResult.failure("观影记录同步未开启");
             if (Setting.isIncognito()) return PlaybackRemoteSyncResult.failure("隐身模式不允许同步");
             if (!config.isUsable()) return PlaybackRemoteSyncResult.failure("远端同步源未完成配置");
-            String body = fetch(config);
-            List<PlaybackProgressInput> inputs = PlaybackProgressInput.listFromJson(body);
-            if (config.maxItems > 0 && inputs.size() > config.maxItems) inputs = inputs.subList(0, config.maxItems);
-            PlaybackProgressBatchResult batch = PlaybackProgressWriter.applyFromRemoteSync(inputs, config);
+            String configKey = PlaybackConfigIdentity.currentKey();
+            String body = fetch(config, configKey);
+            PlaybackRemoteSyncPayload payload = PlaybackRemoteSyncPayload.fromJson(body);
+            boolean complete = config.maxItems <= 0 || payload.total() <= config.maxItems;
+            payload.limit(config.maxItems);
+            PlaybackProgressBatchResult batch = new PlaybackProgressBatchResult();
+            // Apply tombstones first; a newer upsert in the same response can still restore the item.
+            batch.addAll(PlaybackProgressWriter.deleteFromRemoteSync(payload.deletions, config));
+            batch.addAll(PlaybackProgressWriter.applyFromRemoteSync(payload.upserts, config));
             RefreshEvent.history();
-            SpiderDebug.log("playback-remote-sync", "source=%s fetched=%s applied=%s skipped=%s failed=%s", config.displayName(), batch.total, batch.applied, batch.skipped, batch.failed);
-            return PlaybackRemoteSyncResult.success(batch);
+            SpiderDebug.log("playback-remote-sync", "source=%s fetched=%s applied=%s deleted=%s skipped=%s failed=%s", config.displayName(), batch.total, batch.applied, batch.deleted, batch.skipped, batch.failed);
+            // Do not move the incremental cursor past malformed records; the server can
+            // repair and resend them on the next run. A size-truncated page is likewise
+            // intentionally replayed until every change has been handled.
+            String nextSince = complete && batch.failed == 0 ? payload.nextSince : "";
+            return PlaybackRemoteSyncResult.success(batch, configKey, nextSince);
         } catch (Throwable e) {
             String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             SpiderDebug.log("playback-remote-sync", e);
@@ -77,11 +85,13 @@ public final class PlaybackRemoteSyncer {
         }
     }
 
-    private static String fetch(RemoteSyncConfig config) throws Exception {
+    private static String fetch(RemoteSyncConfig config, String configKey) throws Exception {
         Request.Builder builder = new Request.Builder().url(config.url).get();
         builder.header("Accept", "application/json");
-        PlaybackHttpHeaders.header(builder, "X-WebHTV-Config-Key", PlaybackConfigIdentity.currentKey());
+        PlaybackHttpHeaders.header(builder, "X-WebHTV-Config-Key", configKey);
         PlaybackHttpHeaders.header(builder, "X-WebHTV-Config-Name", PlaybackConfigIdentity.currentName());
+        PlaybackHttpHeaders.header(builder, "X-WebHTV-Since", config.cursor(configKey));
+        if (config.maxItems > 0) builder.header("X-WebHTV-Limit", String.valueOf(config.maxItems));
         if (!TextUtils.isEmpty(config.token)) builder.header("X-WebHTV-Token", config.token);
         try (Response response = OkHttp.client(TIMEOUT_MS).newCall(builder.build()).execute()) {
             if (!response.isSuccessful()) throw new IllegalStateException("HTTP " + response.code());

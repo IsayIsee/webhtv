@@ -17,10 +17,17 @@ import java.util.List;
 
 public class LiveProgramAdapter extends RecyclerView.Adapter<LiveProgramAdapter.ViewHolder> {
 
+    private final OnClickListener listener;
     private final List<EpgData> items;
 
-    public LiveProgramAdapter() {
+    public LiveProgramAdapter(OnClickListener listener) {
+        this.listener = listener;
         this.items = new ArrayList<>();
+    }
+
+    public interface OnClickListener {
+
+        void onProgramClick(EpgData item);
     }
 
     public void setEpg(Epg epg) {
@@ -53,6 +60,9 @@ public class LiveProgramAdapter extends RecyclerView.Adapter<LiveProgramAdapter.
         holder.binding.status.setVisibility(item.isSelected() ? View.VISIBLE : View.GONE);
         holder.binding.status.setText(holder.itemView.getContext().getString(R.string.live_program_current));
         holder.binding.getRoot().setSelected(item.isSelected());
+        holder.binding.getRoot().setOnClickListener(view -> {
+            if (!item.isFuture()) listener.onProgramClick(item);
+        });
     }
 
     public static class ViewHolder extends RecyclerView.ViewHolder {

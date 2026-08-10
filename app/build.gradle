@@ -30,6 +30,7 @@ android {
         versionName "5.5.6"
         buildConfigField "String", "BUILD_TIME", "\"${buildTime}\""
         buildConfigField "String", "BUILD_TAG", "\"${releaseTag}\""
+        buildConfigField "String", "MEDIA3_VERSION", "\"${libs.versions.media3.get()}\""
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments = ["room.schemaLocation": "$projectDir/schemas".toString(), "eventBusIndex": "com.fongmi.android.tv.event.EventIndex"]

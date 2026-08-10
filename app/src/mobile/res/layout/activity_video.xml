@@ -136,9 +136,17 @@
                         android:visibility="gone"
                         tools:visibility="visible">
 
-                        <androidx.appcompat.widget.LinearLayoutCompat
+                        <FrameLayout
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
+                            android:clipChildren="false"
+                            android:clipToPadding="false">
+
+                        <androidx.appcompat.widget.LinearLayoutCompat
+                            android:id="@+id/audioHeader"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="top|center_horizontal"
                             android:clipChildren="false"
                             android:clipToPadding="false"
                             android:gravity="center_horizontal"
@@ -245,11 +253,23 @@
 
                         </androidx.appcompat.widget.LinearLayoutCompat>
 
+                        </androidx.appcompat.widget.LinearLayoutCompat>
+
                         <com.fongmi.android.tv.ui.custom.LyricsOverlayView
                             android:id="@+id/audioLyrics"
                             android:layout_width="match_parent"
                             android:layout_height="164dp"
-                            android:layout_marginTop="14dp" />
+                            android:layout_gravity="center" />
+
+                        <androidx.appcompat.widget.LinearLayoutCompat
+                            android:id="@+id/audioBottomPanel"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="bottom|center_horizontal"
+                            android:clipChildren="false"
+                            android:clipToPadding="false"
+                            android:gravity="center_horizontal"
+                            android:orientation="vertical">
 
                         <com.fongmi.android.tv.ui.custom.KaraokeStatusView
                             android:id="@+id/audioKaraoke"
@@ -415,6 +435,8 @@
                         </androidx.appcompat.widget.LinearLayoutCompat>
 
                         </androidx.appcompat.widget.LinearLayoutCompat>
+
+                        </FrameLayout>
 
                         <androidx.appcompat.widget.AppCompatImageView
                             android:id="@+id/audioBackgroundAction"

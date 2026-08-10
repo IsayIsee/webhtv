@@ -6,12 +6,21 @@ public class PreloadSetting {
     public static final int MAX_THREADS = 4;
     public static final int DEFAULT_THREADS = 1;
     public static final int MIN_SIZE_MB = 128;
-    public static final int MAX_SIZE_MB = 4096;
+    public static final int MAX_SIZE_MB = 32768;
     public static final int MIN_TIME_SECONDS = 20;
     public static final int MAX_TIME_SECONDS = 120;
     public static final int DEFAULT_TIME_SECONDS = 20;
     public static final int STEP_TIME_SECONDS = 10;
-    private static final int[] SIZE_OPTIONS_MB = {128, 256, 512, 1024, 2048, 4096};
+    public static final int WHOLE_MEDIA_AHEAD_SECONDS = 0;
+    public static final int DEFAULT_AHEAD_SECONDS = 300;
+    /** Legacy persisted value from the three-option pause preload setting. */
+    public static final int PAUSE_PRELOAD_LEGACY_OFF = 0;
+    public static final int PAUSE_PRELOAD_WIFI = 1;
+    public static final int PAUSE_PRELOAD_ALWAYS = 2;
+    public static final int DEFAULT_PAUSE_PRELOAD = PAUSE_PRELOAD_ALWAYS;
+    private static final int[] SIZE_OPTIONS_MB = {128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768};
+    private static final int[] AHEAD_OPTIONS_SECONDS = {60, 180, 300, 600, 1800, 3600, WHOLE_MEDIA_AHEAD_SECONDS};
+    private static final int[] PAUSE_PRELOAD_OPTIONS = {PAUSE_PRELOAD_ALWAYS, PAUSE_PRELOAD_WIFI};
 
     public static boolean isPreload() {
         return isPreload(PlayerSetting.getPlayer());
@@ -97,6 +106,77 @@ public class PreloadSetting {
         return getPreloadTimeSeconds(kernel) * 1000L;
     }
 
+    public static int getPreloadAheadSeconds() {
+        return getPreloadAheadSeconds(PlayerSetting.getPlayer());
+    }
+
+    public static int getPreloadAheadSeconds(int kernel) {
+        return closestAhead(KernelPerformanceSetting.getPreloadAheadSeconds(PlayerSetting.sanitizePlayer(kernel)));
+    }
+
+    public static void putPreloadAheadSeconds(int seconds) {
+        KernelPerformanceSetting.putPreloadAheadSeconds(PlayerSetting.getPlayer(), closestAhead(seconds));
+    }
+
+    public static int getPreloadAheadOptionCount() {
+        return AHEAD_OPTIONS_SECONDS.length;
+    }
+
+    public static int getPreloadAheadSecondsAt(int index) {
+        return AHEAD_OPTIONS_SECONDS[clamp(index, 0, AHEAD_OPTIONS_SECONDS.length - 1)];
+    }
+
+    public static int getPreloadAheadIndex() {
+        int value = getPreloadAheadSeconds();
+        for (int i = 0; i < AHEAD_OPTIONS_SECONDS.length; i++) if (AHEAD_OPTIONS_SECONDS[i] == value) return i;
+        return 0;
+    }
+
+    public static int getNextPreloadAheadSeconds() {
+        return AHEAD_OPTIONS_SECONDS[(getPreloadAheadIndex() + 1) % AHEAD_OPTIONS_SECONDS.length];
+    }
+
+    public static long getPreloadAheadDurationMs(int kernel) {
+        int seconds = getPreloadAheadSeconds(kernel);
+        return seconds == WHOLE_MEDIA_AHEAD_SECONDS ? Long.MAX_VALUE : seconds * 1000L;
+    }
+
+    public static int getPausePreloadPolicy() {
+        return getPausePreloadPolicy(PlayerSetting.getPlayer());
+    }
+
+    public static int getPausePreloadPolicy(int kernel) {
+        return normalizePausePreloadPolicy(KernelPerformanceSetting.getPausePreloadPolicy(PlayerSetting.sanitizePlayer(kernel)));
+    }
+
+    public static void putPausePreloadPolicy(int policy) {
+        KernelPerformanceSetting.putPausePreloadPolicy(PlayerSetting.getPlayer(), normalizePausePreloadPolicy(policy));
+    }
+
+    public static int getPausePreloadOptionCount() {
+        return PAUSE_PRELOAD_OPTIONS.length;
+    }
+
+    public static int getPausePreloadPolicyAt(int index) {
+        return PAUSE_PRELOAD_OPTIONS[clamp(index, 0, PAUSE_PRELOAD_OPTIONS.length - 1)];
+    }
+
+    public static int getPausePreloadPolicyIndex() {
+        int policy = getPausePreloadPolicy();
+        for (int i = 0; i < PAUSE_PRELOAD_OPTIONS.length; i++) {
+            if (PAUSE_PRELOAD_OPTIONS[i] == policy) return i;
+        }
+        return 0;
+    }
+
+    public static int getNextPausePreloadPolicy() {
+        return PAUSE_PRELOAD_OPTIONS[(getPausePreloadPolicyIndex() + 1) % PAUSE_PRELOAD_OPTIONS.length];
+    }
+
+    static int normalizePausePreloadPolicy(int policy) {
+        return policy == PAUSE_PRELOAD_ALWAYS ? PAUSE_PRELOAD_ALWAYS : PAUSE_PRELOAD_WIFI;
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.min(Math.max(value, min), max);
     }
@@ -105,6 +185,20 @@ public class PreloadSetting {
         int closest = SIZE_OPTIONS_MB[0];
         int distance = Math.abs(value - closest);
         for (int option : SIZE_OPTIONS_MB) {
+            int current = Math.abs(value - option);
+            if (current >= distance) continue;
+            closest = option;
+            distance = current;
+        }
+        return closest;
+    }
+
+    private static int closestAhead(int value) {
+        if (value == WHOLE_MEDIA_AHEAD_SECONDS) return WHOLE_MEDIA_AHEAD_SECONDS;
+        int closest = AHEAD_OPTIONS_SECONDS[0];
+        int distance = Math.abs(value - closest);
+        for (int option : AHEAD_OPTIONS_SECONDS) {
+            if (option == WHOLE_MEDIA_AHEAD_SECONDS) continue;
             int current = Math.abs(value - option);
             if (current >= distance) continue;
             closest = option;

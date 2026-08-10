@@ -13,8 +13,8 @@ public class ExoStartBufferPolicyTest {
     }
 
     @Test
-    public void otherProfilesKeepIndependentStartThresholds() {
-        assertEquals(2_000, ExoPerformanceSetting.startBufferForPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE));
-        assertEquals(1_000, ExoPerformanceSetting.startBufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
+    public void legacyCompatibleAndLightweightShareConsolidatedThreshold() {
+        assertEquals(1_500, ExoPerformanceSetting.startBufferForPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE));
+        assertEquals(1_500, ExoPerformanceSetting.startBufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
     }
 }

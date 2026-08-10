@@ -16,6 +16,20 @@ public class ExoPlaybackDiagnosticsTest {
     }
 
     @Test
+    public void trackConstraintBitrateMatchesMedia3PeakThenAverageSemantics() {
+        Format peak = new Format.Builder().setAverageBitrate(9_000_000).setPeakBitrate(12_000_000).build();
+        Format average = new Format.Builder().setAverageBitrate(9_000_000).build();
+
+        assertEquals(12_000_000, ExoPlaybackDiagnostics.trackConstraintBitrate(peak));
+        assertEquals("peak", ExoPlaybackDiagnostics.trackConstraintBitrateSource(peak));
+        assertEquals(9_000_000, ExoPlaybackDiagnostics.trackConstraintBitrate(average));
+        assertEquals("average", ExoPlaybackDiagnostics.trackConstraintBitrateSource(average));
+        assertEquals(0, ExoPlaybackDiagnostics.trackConstraintBitrate(new Format.Builder().build()));
+        assertEquals("unknown", ExoPlaybackDiagnostics.trackConstraintBitrateSource(new Format.Builder().build()));
+        assertEquals("missing", ExoPlaybackDiagnostics.trackConstraintBitrateSource(null));
+    }
+
+    @Test
     public void bitrateSourceDistinguishesUnknownAndMissing() {
         assertEquals("average", ExoPlaybackDiagnostics.bitrateSource(new Format.Builder().setAverageBitrate(1).build()));
         assertEquals("peak", ExoPlaybackDiagnostics.bitrateSource(new Format.Builder().setPeakBitrate(1).build()));

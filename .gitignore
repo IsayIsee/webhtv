@@ -12,6 +12,7 @@ Release/
 *.keystore
 local.properties
 node_modules/
+.wrangler/
 package-lock.json
 pnpm-lock.yaml
 yarn.lock

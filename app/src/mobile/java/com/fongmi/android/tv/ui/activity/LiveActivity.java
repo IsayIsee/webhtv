@@ -84,6 +84,7 @@ import com.fongmi.android.tv.ui.dialog.LiveEpgDialog;
 import com.fongmi.android.tv.ui.dialog.LiveLineDialog;
 import com.fongmi.android.tv.ui.dialog.LiveProgramDialog;
 import com.fongmi.android.tv.ui.dialog.PassDialog;
+import com.fongmi.android.tv.ui.dialog.PlayerKernelDialog;
 import com.fongmi.android.tv.ui.dialog.SubtitleDialog;
 import com.fongmi.android.tv.ui.dialog.TrackDialog;
 import com.fongmi.android.tv.utils.Biometric;
@@ -764,7 +765,11 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
     }
 
     private void onPlayerKernel() {
-        player().togglePlayer();
+        PlayerKernelDialog.show(this, player().getPlayerType(), this::switchPlayerKernel);
+    }
+
+    private void switchPlayerKernel(int type) {
+        player().switchPlayer(type);
         setPlayerKernel();
         setDecode();
         setR1Callback();
@@ -1115,7 +1120,7 @@ public class LiveActivity extends PlaybackActivity implements CustomKeyDown.List
             Notify.show(R.string.live_program_empty);
             return;
         }
-        LiveProgramDialog.create().channel(mChannel).zoneId(mViewModel.getZoneId()).show(this);
+        LiveProgramDialog.create().channel(mChannel).zoneId(mViewModel.getZoneId()).listener(this::onItemClick).show(this);
         hideControl();
         hideInfo();
     }

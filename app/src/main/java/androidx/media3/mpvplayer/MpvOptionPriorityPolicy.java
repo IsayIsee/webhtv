@@ -27,6 +27,7 @@ final class MpvOptionPriorityPolicy {
             "demuxer-max-bytes",
             "demuxer-max-back-bytes",
             "demuxer-readahead-secs",
+            "demuxer-hysteresis-secs",
             "framedrop",
             "video-sync",
             "interpolation",
@@ -59,6 +60,7 @@ final class MpvOptionPriorityPolicy {
         candidates.put("demuxer-max-bytes", String.valueOf(config.demuxerMaxBytes()));
         candidates.put("demuxer-max-back-bytes", String.valueOf(config.demuxerMaxBackBytes()));
         candidates.put("demuxer-readahead-secs", String.valueOf(config.demuxerReadaheadSeconds()));
+        candidates.put("demuxer-hysteresis-secs", String.valueOf(config.demuxerHysteresisSeconds()));
         candidates.putAll(config.extraOptions());
         return selectPerformanceOverlay(true, candidates);
     }

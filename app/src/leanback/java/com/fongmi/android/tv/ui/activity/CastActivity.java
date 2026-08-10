@@ -31,6 +31,7 @@ import com.fongmi.android.tv.service.PlaybackService;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.ui.custom.CustomKeyDownVod;
 import com.fongmi.android.tv.ui.custom.CustomSeekView;
+import com.fongmi.android.tv.ui.dialog.PlayerKernelDialog;
 import com.fongmi.android.tv.ui.dialog.SubtitleDialog;
 import com.fongmi.android.tv.ui.dialog.TrackDialog;
 import com.fongmi.android.tv.utils.Clock;
@@ -228,8 +229,13 @@ public class CastActivity extends PlaybackActivity implements CustomKeyDownVod.L
 
     private void onPlayerKernel() {
         if (player().isEmpty()) return;
+        PlayerKernelDialog.show(this, player().getPlayerType(), this::switchPlayerKernel);
+    }
+
+    private void switchPlayerKernel(int type) {
+        if (player().isEmpty()) return;
         position = player().getPosition();
-        player().togglePlayer();
+        player().switchPlayer(type);
         setPlayerKernel();
         setDecode();
     }

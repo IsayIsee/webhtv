@@ -44,6 +44,7 @@ public final class ChoiceDialog extends DialogFragment {
     private boolean[] checked;
     private int selected = -1;
     private boolean multi;
+    private boolean showCancel = true;
     private boolean dismissOnChoice = true;
     private OnChoice choice;
     private OnApply apply;
@@ -75,11 +76,24 @@ public final class ChoiceDialog extends DialogFragment {
         showSingle(activity.getSupportFragmentManager(), activity.getString(titleRes), items, selected, choice);
     }
 
+    public static void showSingleNoCancel(Fragment fragment, int titleRes, CharSequence[] items, int selected, OnChoice choice) {
+        showSingle(fragment.getChildFragmentManager(), fragment.getString(titleRes), items, selected, false, choice);
+    }
+
+    public static void showSingleNoCancel(FragmentActivity activity, int titleRes, CharSequence[] items, int selected, OnChoice choice) {
+        showSingle(activity.getSupportFragmentManager(), activity.getString(titleRes), items, selected, false, choice);
+    }
+
     public static void showSingle(FragmentManager manager, CharSequence title, CharSequence[] items, int selected, OnChoice choice) {
+        showSingle(manager, title, items, selected, true, choice);
+    }
+
+    private static void showSingle(FragmentManager manager, CharSequence title, CharSequence[] items, int selected, boolean showCancel, OnChoice choice) {
         ChoiceDialog dialog = new ChoiceDialog();
         dialog.title = title;
         dialog.items = items == null ? new CharSequence[0] : Arrays.copyOf(items, items.length);
         dialog.selected = selected;
+        dialog.showCancel = showCancel;
         dialog.choice = choice;
         dialog.show(manager, ChoiceDialog.class.getSimpleName());
     }
@@ -180,10 +194,11 @@ public final class ChoiceDialog extends DialogFragment {
         window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         window.setAttributes(params);
         window.setLayout(params.width, params.height);
+        window.getDecorView().post(this::focusSelectedItem);
     }
 
     private View createView(LayoutInflater inflater) {
-        if (!multi && items != null && items.length > 0 && negative == null) negative = getString(R.string.dialog_negative);
+        if (showCancel && !multi && items != null && items.length > 0 && negative == null) negative = getString(R.string.dialog_negative);
         LinearLayout root = new LinearLayout(requireContext());
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundResource(R.drawable.shape_shell_proxy_dialog);
@@ -281,12 +296,20 @@ public final class ChoiceDialog extends DialogFragment {
         }
         boolean on = itemSelected(position);
         boolean focused = button.isFocused();
-        int text = on || focused ? Color.parseColor("#174EA6") : Color.parseColor("#202124");
-        int bg = on || focused ? Color.parseColor("#E8F0FE") : Color.WHITE;
-        int stroke = on || focused ? Color.parseColor("#1A73E8") : Color.parseColor("#DADCE0");
+        int text = focused ? Color.WHITE : on ? Color.parseColor("#174EA6") : Color.parseColor("#202124");
+        int bg = focused ? Color.parseColor("#1A73E8") : on ? Color.parseColor("#E8F0FE") : Color.WHITE;
+        int stroke = focused ? Color.parseColor("#174EA6") : on ? Color.parseColor("#8AB4F8") : Color.parseColor("#DADCE0");
         button.setTextColor(ColorStateList.valueOf(text));
         button.setBackgroundTintList(ColorStateList.valueOf(bg));
         button.setStrokeColor(ColorStateList.valueOf(stroke));
+    }
+
+    private void focusSelectedItem() {
+        if (!Util.isLeanback() || multi || selected < 0) return;
+        View root = viewRoot();
+        View listView = root == null ? null : root.findViewWithTag("choice_list");
+        if (!(listView instanceof ViewGroup list) || selected >= list.getChildCount()) return;
+        list.getChildAt(selected).requestFocus();
     }
 
     private void onItemClick(int position) {

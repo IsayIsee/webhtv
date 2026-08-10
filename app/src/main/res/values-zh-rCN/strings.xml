@@ -400,8 +400,8 @@
     <string name="playback_remote_sync_startup">启动时同步</string>
     <string name="playback_remote_sync_now">同步</string>
     <string name="playback_remote_sync_saved">远端同步已保存</string>
-    <string name="playback_remote_sync_done">写入 %1$d · 跳过 %2$d · 失败 %3$d</string>
-    <string name="playback_remote_sync_result">拉取 %1$d · 写入 %2$d · 跳过 %3$d · 失败 %4$d</string>
+    <string name="playback_remote_sync_done">处理 %1$d · 删除 %2$d · 跳过 %3$d · 失败 %4$d</string>
+    <string name="playback_remote_sync_result">拉取 %1$d · 处理 %2$d · 删除 %3$d · 跳过 %4$d · 失败 %5$d</string>
     <string name="playback_remote_sync_last_at">最近 %1$s</string>
     <string name="playback_remote_sync_last_error">错误：%1$s</string>
     <string name="playback_remote_sync_never">从未同步</string>
@@ -446,7 +446,7 @@
     <string name="playback_webhook_delete_message">删除 %1$s？</string>
     <string name="playback_webhook_url_invalid">端点 URL 必须以 http 开头</string>
     <string name="playback_webhook_privacy_title">观影记录同步隐私声明</string>
-    <string name="playback_webhook_privacy_message">Webhook 上报会把您的观影记录（包括影片名称、播放进度）发送到您配置的服务器。\n\nApp 不会收集或转发给第三方；您可以随时停用或删除端点。填写服务端 Token 后会通过 X-WebHTV-Token 请求头发送，方便您的服务器分组和校验上报。</string>
+    <string name="playback_webhook_privacy_message">Webhook 上报会把您的观影记录（包括影片名称、播放进度和历史删除操作）发送到您配置的服务器。\n\nApp 不会收集或转发给第三方；您可以随时停用或删除端点。填写服务端 Token 后会通过 X-WebHTV-Token 请求头发送，方便您的服务器分组和校验上报。</string>
     <string-array name="playback_webhook_field_descriptions">
         <item>本地点播配置 id，跨设备不稳定。</item>
         <item>点播接口稳定 key，用于区分不同接口。</item>
@@ -638,6 +638,9 @@
     <string name="setting_proxy_rules_hint">Raw JSON：{&quot;proxy&quot;:[{&quot;hosts&quot;:[&quot;example.com&quot;],&quot;urls&quot;:[&quot;socks5://127.0.0.1:1080&quot;]}]}</string>
     <string name="setting_proxy_default_url">默认代理地址</string>
     <string name="setting_proxy_rule_url">代理地址</string>
+    <string name="setting_proxy_edit_rule">编辑规则 %1$d</string>
+    <string name="setting_proxy_rule_use_default">默认代理 · %1$s</string>
+    <string name="setting_proxy_rule_use_default_empty">使用默认代理（未设置）</string>
     <string name="setting_proxy_text_mode">文本</string>
     <string name="setting_proxy_ui_mode">编辑</string>
     <string name="setting_proxy_add_rule">新增规则</string>
@@ -662,11 +665,14 @@
     <string name="setting_incognito">无痕模式</string>
     <string name="setting_drive_check">网盘检测</string>
     <string name="setting_theme_color">主题色彩</string>
+    <string name="setting_appearance">外观与语言</string>
+    <string name="setting_appearance_summary">4 项</string>
     <string name="setting_auto">自动</string>
     <string name="setting_custom">自定义</string>
     <string name="setting_language">语言</string>
     <string name="setting_size">图片尺寸</string>
     <string name="setting_ui_scale">界面大小</string>
+    <string name="dialog_close">关闭</string>
     <string name="setting_doh">DoH</string>
     <string name="setting_proxy">Proxy</string>
     <string name="setting_cache">缓存</string>
@@ -818,6 +824,82 @@
     <string name="player_performance_help">说明</string>
     <string name="player_performance_help_title">播放性能参数说明</string>
     <string name="player_performance_help_close">关闭</string>
+    <string name="player_performance_help_intro">当前播放器内核：%1$s。普通用户保持“自动”即可；“轻量”面向低端设备，整合原兼容档的稳定性取向并降低固定资源预算，替代原独立兼容档。遇到特殊硬解、输出或协议问题仍可直接调整下方参数形成“自定义”。当前内核可用参数均直接显示并按用途分组，多数底层参数需重新播放或重建播放器后生效。</string>
+    <string name="player_performance_common_section">常用参数</string>
+    <string name="player_performance_profile_merge">均衡档合并</string>
+    <string name="player_performance_profile_merge_enabled">已合并到自动 · 可回滚</string>
+    <string name="player_performance_profile_merge_rolled_back">已恢复旧均衡档</string>
+    <string name="player_performance_profile_merge_help">均衡档默认合并到自动档。旧均衡选择会分别迁移 EXO、MPV、IJK，兼容、轻量和自定义选择保持不变。本机回滚只恢复迁移过且当前仍是自动档的内核，不覆盖迁移后新选的档位。历史 A/B 报告继续保留，但构建和 JVM 测试不能证明真实设备已经完成验收。</string>
+    <string name="player_performance_profile_merge_rollback_title">恢复旧均衡档？</string>
+    <string name="player_performance_profile_merge_rollback_message">将重新显示均衡标签。曾从均衡迁移且当前仍为自动的内核会恢复均衡；迁移后改选的兼容、轻量或自定义不会被覆盖。A/B 采集仍保持关闭，需要时必须重新明确加入。</string>
+    <string name="player_performance_profile_merge_rollback_confirm">恢复均衡档</string>
+    <string name="player_performance_profile_merge_enable_title">重新把均衡档合并到自动？</string>
+    <string name="player_performance_profile_merge_enable_message">各内核的旧均衡选择会迁移到自动并隐藏均衡标签；已有 A/B 样本保留，新增采集停止。兼容、轻量和自定义选择保持不变。</string>
+    <string name="player_performance_profile_merge_enable_confirm">合并到自动档</string>
+    <string name="player_performance_lightweight_assessment_collection">自动/轻量档评估采集</string>
+    <string name="player_performance_lightweight_assessment_help">这是 V-06A 的本机内部观察性评估，默认关闭、没有用户加入入口，也不会随机切档。它只观察实际选择的自动档或轻量档，并且只接纳低内存设备的硬解会话或实际软解会话；内部实验授权和当前内核分域必须同时开启。即使评估通过也只表示可以进一步讨论，不会自动隐藏或删除轻量档。</string>
+    <string name="player_performance_lightweight_assessment_enable_title">加入自动/轻量档评估？</string>
+    <string name="player_performance_lightweight_assessment_enable_message">采集仅保存在本机，不上传、不备份，也不会自动切换档位。只有低内存硬解或实际软解会话会进入报告；每个有效分组的自动档和轻量档都至少需要 20 条可用样本。暂停、Seek、改速、档位变化和实验干预会作废当前样本。</string>
+    <string name="player_performance_lightweight_assessment_enable_confirm">加入评估</string>
+    <string name="player_performance_lightweight_assessment_report">自动/轻量档评估报告</string>
+    <string name="player_performance_lightweight_assessment_report_value">自动 %1$d · 轻量 %2$d · %3$s</string>
+    <string name="player_performance_lightweight_assessment_report_title">自动/轻量档本机评估报告</string>
+    <string name="player_performance_lightweight_assessment_report_summary">状态：%1$s\n自动档样本：%2$d\n轻量档样本：%3$d\n分组数：%4$d\n可评估分组：%5$d\n通过：%6$d\n失败：%7$d\n不足或指标缺失：%8$d\n关键覆盖：%9$d / %10$d\n\n只有 EXO、MPV、IJK 的低内存硬解与软解六个单元全部覆盖且所有分组通过，才具备进一步去留复核条件。本报告不会自动删除轻量档。</string>
+    <string name="player_performance_lightweight_assessment_coverage_missing">覆盖单元不足</string>
+    <string name="player_performance_lightweight_assessment_missing_coverage">缺少覆盖</string>
+    <string name="player_performance_lightweight_assessment_coverage_low_ram_hardware">低内存硬解</string>
+    <string name="player_performance_lightweight_assessment_coverage_software">软解</string>
+    <string name="player_performance_lightweight_assessment_clear">清除轻量档评估</string>
+    <string name="player_performance_lightweight_assessment_clear_title">清除自动/轻量档样本？</string>
+    <string name="player_performance_lightweight_assessment_clear_message">将删除本机全部自动/轻量档评估样本；加入状态会保留，之后符合条件的播放仍可重新采集。历史自动/均衡档 A/B 报告不受影响。</string>
+    <string name="player_performance_lightweight_assessment_clear_confirm">清除样本</string>
+    <string name="player_performance_compatibility_assessment">兼容档去留评估</string>
+    <string name="player_performance_compatibility_assessment_help">V-06B 以失败关闭方式审计兼容档是否具备进一步去留复核条件。它分别检查 EXO、MPV、IJK 对 codec 错误、硬解能力虚报、输出模式异常及协议/Range 异常的覆盖，并要求能够识别画面正确性和具备问题设备长期证据。现有自动回退都有范围限制，依赖明确错误或可观测指标；decoder 不报错时的绿屏、错色或错误画面目前无法可靠识别，因此当前结论是继续保留兼容档。本报告不会隐藏、迁移或删除任何档位。</string>
+    <string name="player_performance_compatibility_assessment_value">%1$s · 可靠覆盖 %2$d / %3$d</string>
+    <string name="player_performance_compatibility_assessment_title">兼容档去留评估报告</string>
+    <string name="player_performance_compatibility_assessment_summary">当前结论：%1$s\n可靠覆盖：%2$d / %3$d\n受限：%4$d\n未验证：%5$d\n不可观察：%6$d\n缺失：%7$d\n\n只有全部要求都具备可靠自动回退和问题设备长期证据，才允许再次进行产品决策；即使全部满足，本报告也不会自动删除兼容档。</string>
+    <string name="player_performance_compatibility_assessment_blockers">当前阻塞项</string>
+    <string name="player_performance_compatibility_assessment_retain">必须保留兼容档</string>
+    <string name="player_performance_compatibility_assessment_review">可进一步复核</string>
+    <string name="player_performance_compatibility_coverage_reliable">可靠</string>
+    <string name="player_performance_compatibility_coverage_limited">受限</string>
+    <string name="player_performance_compatibility_coverage_unverified">未验证</string>
+    <string name="player_performance_compatibility_coverage_unobservable">不可观察</string>
+    <string name="player_performance_compatibility_coverage_missing">缺失</string>
+    <string name="player_performance_compatibility_area_codec">codec 初始化/运行错误自动回退</string>
+    <string name="player_performance_compatibility_area_hardware_misreport">硬解能力虚报自动回退</string>
+    <string name="player_performance_compatibility_area_output">输出模式异常自动回退</string>
+    <string name="player_performance_compatibility_area_protocol">协议与 Range 异常自动回退</string>
+    <string name="player_performance_compatibility_area_visual">绿屏、错色和错误画面自动识别</string>
+    <string name="player_performance_compatibility_area_device_evidence">问题设备长期证据</string>
+    <string name="player_performance_experiment_profile_ab_collection">自动/均衡档 A/B 采集</string>
+    <string name="player_performance_experiment_profile_ab_invalid">入组损坏或已过期</string>
+    <string name="player_performance_experiment_profile_ab_enable_title">加入自动/均衡档验收？</string>
+    <string name="player_performance_experiment_profile_ab_enable_message">这是默认关闭且不提供用户加入入口的内部采集，数据只保留在本机。它只观察实际选择的自动档或均衡档，不会随机分档或自动改档；只有内部实验授权和当前内核分域同时启用时才接纳样本。持久化内容仅包含有界数值、枚举和摘要分组，不保存 URL、host、路径、header、原始 fingerprint 或 decoder 名。报告不会自动合并档位或迁移用户。</string>
+    <string name="player_performance_experiment_profile_ab_enable_confirm">加入验收</string>
+    <string name="player_performance_experiment_profile_ab_help">这是本机显式加入的验收基础设施，只在相同设备、内核、decoder、协议、直播/点播、MIME/HDR 和路径分组内比较自动档与均衡档。成功样本至少需要 30 秒有效播放；可归因播放错误可单独保留，避免只统计成功会话。数据 30 天过期且容量有界；每个分组每档至少 20 个可用样本才可验收，报告绝不会修改档位。</string>
+    <string name="player_performance_experiment_profile_ab_report">自动/均衡档 A/B 报告</string>
+    <string name="player_performance_experiment_profile_ab_report_value">自动 %1$d · 均衡 %2$d · %3$s</string>
+    <string name="player_performance_experiment_profile_ab_report_title">自动/均衡档本机验收报告</string>
+    <string name="player_performance_experiment_profile_ab_report_summary">状态：%1$s\n自动档样本：%2$d\n均衡档样本：%3$d\n分组数：%4$d\n可验收分组：%5$d\n通过：%6$d\n失败：%7$d\n不足或指标缺失：%8$d\n\n本机报告只提供证据，不会自行改变当前档位合并状态。</string>
+    <string name="player_performance_experiment_profile_ab_no_data">无数据</string>
+    <string name="player_performance_experiment_profile_ab_insufficient">样本不足</string>
+    <string name="player_performance_experiment_profile_ab_metrics_missing">指标缺失</string>
+    <string name="player_performance_experiment_profile_ab_passed">通过</string>
+    <string name="player_performance_experiment_profile_ab_failed">失败</string>
+    <string name="player_performance_experiment_profile_ab_failed_metrics">退化指标</string>
+    <string name="player_performance_experiment_profile_ab_missing_metrics">缺失指标</string>
+    <string name="player_performance_experiment_profile_ab_metric_first_frame">首帧</string>
+    <string name="player_performance_experiment_profile_ab_metric_rebuffer_ratio">重缓冲占比</string>
+    <string name="player_performance_experiment_profile_ab_metric_rebuffer_count">重缓冲次数</string>
+    <string name="player_performance_experiment_profile_ab_metric_peak_pss">峰值 PSS</string>
+    <string name="player_performance_experiment_profile_ab_metric_dropped">掉帧率</string>
+    <string name="player_performance_experiment_profile_ab_metric_live_lag">直播延迟</string>
+    <string name="player_performance_experiment_profile_ab_metric_error_rate">播放错误率</string>
+    <string name="player_performance_experiment_profile_ab_clear">清除本机报告</string>
+    <string name="player_performance_experiment_profile_ab_clear_title">清除自动/均衡档样本？</string>
+    <string name="player_performance_experiment_profile_ab_clear_message">将删除本机全部自动/均衡档验收样本；如恢复旧均衡档，之后仍可重新明确加入采集。</string>
+    <string name="player_performance_experiment_profile_ab_clear_confirm">清除样本</string>
     <string name="pan_diagnostic_section">诊断工具</string>
     <string name="pan_diagnostic_entry">链路诊断</string>
     <string name="pan_diagnostic_title">播放链路诊断</string>
@@ -825,8 +907,6 @@
     <string name="player_scale">缩放比例</string>
     <string name="player_lut">LUT 调色</string>
     <string name="player_mpv_config">MPV 配置管理</string>
-    <string name="player_mpv_render">MPV 渲染后端</string>
-    <string name="mpv_render_native_unavailable">当前不可用</string>
     <string name="mpv_config_target">%1$s · %2$s</string>
     <string name="mpv_config_default">默认</string>
     <string name="mpv_config_local">本地 mpv.conf</string>
@@ -896,16 +976,22 @@
     <string name="player_aac_track">AAC优先</string>
     <string name="player_adblock">智能去广</string>
     <string name="player_tunnel">隧道模式</string>
-    <string name="player_buffer">缓冲时间</string>
-    <string name="player_buffer_bytes">缓冲容量</string>
-    <string name="player_back_buffer">回退缓冲</string>
-    <string name="player_cache">播放缓存</string>
-    <string name="player_preload">预载</string>
-    <string name="player_preload_threads">预载线程</string>
+    <string name="player_buffer">前向缓冲目标</string>
+    <string name="player_buffer_bytes">内存缓冲上限</string>
+    <string name="player_back_buffer">已播放数据保留</string>
+    <string name="player_cache">HLS 磁盘缓存上限</string>
+    <string name="player_preload">磁盘预载</string>
+    <string name="player_preload_threads">预载并发</string>
     <string name="player_preload_threads_value">%1$d 条</string>
-    <string name="player_preload_size">预载容量</string>
-    <string name="player_preload_time">预载时间</string>
+    <string name="player_preload_size">磁盘预载配额</string>
+    <string name="player_preload_time">单次预载时长</string>
     <string name="player_preload_time_value">%1$d 秒</string>
+    <string name="player_preload_ahead">向前预载目标</string>
+    <string name="player_preload_ahead_value">%1$d 分钟</string>
+    <string name="player_preload_ahead_whole">整部影片</string>
+    <string name="player_preload_pause">暂停时继续预载</string>
+    <string name="player_preload_pause_wifi">仅 WiFi</string>
+    <string name="player_preload_pause_always">始终</string>
     <string name="player_auto_play">自动播放</string>
     <string name="player_auto_change">自动换源</string>
     <string name="player_speed">长按倍速</string>
@@ -997,7 +1083,7 @@
     <string name="error_play_stage_decoder">音视频解码失败，请尝试切换软硬解或播放器</string>
     <string name="error_play_stage_output">音视频输出失败，请重新进入播放或切换解码方式</string>
     <string name="error_play_stage_drm">DRM 鉴权或受保护媒体处理失败，请更换线路或播放器</string>
-    <string name="error_play_stage_unknown">播放失败，当前证据不足，暂时无法确定具体阶段</string>
+    <string name="error_play_stage_unknown">播放失败，请重试或切换播放器</string>
     <string name="error_play_flag">暂无线路数据</string>
     <string name="error_play_timeout">连接超时</string>
     <string name="error_play_tvbus">错误代码：<xliff:g name="name">%s</xliff:g></string>
@@ -1088,10 +1174,6 @@
         <item>EXO</item>
         <item>IJK</item>
         <item>MPV</item>
-    </string-array>
-    <string-array name="select_mpv_render">
-        <item>OpenGL</item>
-        <item>Vulkan</item>
     </string-array>
     <string-array name="select_buffer_bytes">
         <item>自动</item>

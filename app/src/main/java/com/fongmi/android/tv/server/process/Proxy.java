@@ -64,12 +64,17 @@ public class Proxy implements Process {
         stream = wrapStream(params, headers, stream);
         Response response = NanoHTTPD.newChunkedResponse(toStatus(code), Objects.toString(rs[1], null), stream);
         addHeaders(response, headers);
+        long rangeStart = ProxyRangeResponsePolicy.resolveStart(code, first(params.get("range"), params.get("Range")));
+        if (rangeStart >= 0) response.addHeader(ProxyRangeResponsePolicy.HEADER_RANGE_START, String.valueOf(rangeStart));
         return response;
     }
 
     private static void addHeaders(Response response, Map<String, String> headers) {
         if (headers == null) return;
-        for (Map.Entry<String, String> entry : headers.entrySet()) response.addHeader(entry.getKey(), entry.getValue());
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if (ProxyRangeResponsePolicy.HEADER_RANGE_START.equalsIgnoreCase(entry.getKey())) continue;
+            response.addHeader(entry.getKey(), entry.getValue());
+        }
     }
 
     private static IStatus toStatus(int code) {

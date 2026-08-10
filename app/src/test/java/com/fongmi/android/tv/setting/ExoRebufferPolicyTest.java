@@ -12,8 +12,8 @@ public class ExoRebufferPolicyTest {
     public void fixedProfilesUseIndependentRecoveryThresholds() {
         assertEquals(3_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_RECOMMENDED));
         assertEquals(3_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_AUTO));
-        assertEquals(5_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE));
-        assertEquals(2_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
+        assertEquals(3_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE));
+        assertEquals(3_000, ExoPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
     }
 
     @Test

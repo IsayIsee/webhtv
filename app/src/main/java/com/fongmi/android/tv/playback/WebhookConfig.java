@@ -62,7 +62,7 @@ public class WebhookConfig {
     public boolean acceptsEvent(String event) {
         if (TextUtils.isEmpty(event)) return false;
         String token = token(event);
-        return "progress".equals(token) || "ended".equals(token);
+        return "progress".equals(token) || "ended".equals(token) || "deleted".equals(token);
     }
 
     public boolean matchesSite(String siteKey) {
@@ -80,7 +80,7 @@ public class WebhookConfig {
     }
 
     public static List<String> defaults() {
-        return new ArrayList<>(Arrays.asList("progress", "ended"));
+        return new ArrayList<>(Arrays.asList("progress", "ended", "deleted"));
     }
 
     public static String normalizePreset(String preset) {

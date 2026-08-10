@@ -402,8 +402,8 @@
     <string name="playback_remote_sync_startup">Sync on startup</string>
     <string name="playback_remote_sync_now">Sync</string>
     <string name="playback_remote_sync_saved">Remote sync saved</string>
-    <string name="playback_remote_sync_done">Applied %1$d · Skipped %2$d · Failed %3$d</string>
-    <string name="playback_remote_sync_result">Fetched %1$d · Applied %2$d · Skipped %3$d · Failed %4$d</string>
+    <string name="playback_remote_sync_done">Processed %1$d · Deleted %2$d · Skipped %3$d · Failed %4$d</string>
+    <string name="playback_remote_sync_result">Fetched %1$d · Processed %2$d · Deleted %3$d · Skipped %4$d · Failed %5$d</string>
     <string name="playback_remote_sync_last_at">Last %1$s</string>
     <string name="playback_remote_sync_last_error">Error: %1$s</string>
     <string name="playback_remote_sync_never">Never synced</string>
@@ -448,7 +448,7 @@
     <string name="playback_webhook_delete_message">Delete %1$s?</string>
     <string name="playback_webhook_url_invalid">Endpoint URL must start with http</string>
     <string name="playback_webhook_privacy_title">Viewing record sync privacy notice</string>
-    <string name="playback_webhook_privacy_message">Webhook reporting sends your viewing record, including title and progress, to the server you configure.\n\nThe app does not collect or forward this data to other parties. You can disable or delete endpoints at any time. If a server token is set, it is sent in the X-WebHTV-Token header so your server can group and verify reports.</string>
+    <string name="playback_webhook_privacy_message">Webhook reporting sends your viewing record, including title, progress, and history deletion operations, to the server you configure.\n\nThe app does not collect or forward this data to other parties. You can disable or delete endpoints at any time. If a server token is set, it is sent in the X-WebHTV-Token header so your server can group and verify reports.</string>
     <string-array name="playback_webhook_field_descriptions">
         <item>Local vod configuration id. Not stable across devices.</item>
         <item>Stable vod configuration key, used to separate different interfaces.</item>
@@ -640,6 +640,9 @@
     <string name="setting_proxy_rules_hint">Raw JSON: {&quot;proxy&quot;:[{&quot;hosts&quot;:[&quot;example.com&quot;],&quot;urls&quot;:[&quot;socks5://127.0.0.1:1080&quot;]}]}</string>
     <string name="setting_proxy_default_url">Default proxy URL</string>
     <string name="setting_proxy_rule_url">Proxy URL</string>
+    <string name="setting_proxy_edit_rule">Edit rule %1$d</string>
+    <string name="setting_proxy_rule_use_default">Default proxy · %1$s</string>
+    <string name="setting_proxy_rule_use_default_empty">Uses default proxy (not set)</string>
     <string name="setting_proxy_text_mode">Text</string>
     <string name="setting_proxy_ui_mode">Edit</string>
     <string name="setting_proxy_add_rule">Add rule</string>
@@ -664,11 +667,14 @@
     <string name="setting_incognito">Incognito mode</string>
     <string name="setting_drive_check">Drive link check</string>
     <string name="setting_theme_color">Theme color</string>
+    <string name="setting_appearance">Appearance &amp; language</string>
+    <string name="setting_appearance_summary">4 options</string>
     <string name="setting_auto">Auto</string>
     <string name="setting_custom">Custom</string>
     <string name="setting_language">Language</string>
     <string name="setting_size">Image size</string>
     <string name="setting_ui_scale">Interface size</string>
+    <string name="dialog_close">Close</string>
     <string name="setting_doh">DoH</string>
     <string name="setting_proxy">Proxy</string>
     <string name="setting_cache">Cache</string>
@@ -820,6 +826,82 @@
     <string name="player_performance_help">Guide</string>
     <string name="player_performance_help_title">Playback performance guide</string>
     <string name="player_performance_help_close">Close</string>
+    <string name="player_performance_help_intro">Current player engine: %1$s. Most users should leave the profile on Auto. Light targets lower-end devices, combines stability choices from the former Compatible profile with lower fixed resource budgets, and replaces that separate profile. Engine-specific decode, output, and protocol controls remain available below for unusual devices and create a Custom profile when changed. Most low-level changes take effect after playback restarts or the player is rebuilt.</string>
+    <string name="player_performance_common_section">Common settings</string>
+    <string name="player_performance_profile_merge">Balanced profile merge</string>
+    <string name="player_performance_profile_merge_enabled">Merged into Auto · rollback available</string>
+    <string name="player_performance_profile_merge_rolled_back">Legacy Balanced restored</string>
+    <string name="player_performance_profile_merge_help">Balanced is merged into Auto by default. Legacy Balanced selections are migrated independently for EXO, MPV and IJK, while Compatible, Light and Custom selections are preserved. Local rollback restores only migrated engines that still remain on Auto; choices made after migration are not overwritten. The historical A/B report stays available, but real device acceptance has not been established by build or JVM tests.</string>
+    <string name="player_performance_profile_merge_rollback_title">Restore the legacy Balanced profile?</string>
+    <string name="player_performance_profile_merge_rollback_message">The Balanced tab will return. Engines migrated from Balanced will be restored only if they are still on Auto. Compatible, Light or Custom choices made after migration will not be changed. A/B collection remains off until you explicitly enroll again.</string>
+    <string name="player_performance_profile_merge_rollback_confirm">Restore Balanced</string>
+    <string name="player_performance_profile_merge_enable_title">Merge Balanced into Auto again?</string>
+    <string name="player_performance_profile_merge_enable_message">Legacy Balanced selections will be migrated to Auto independently for each engine and the Balanced tab will be hidden. Existing A/B samples are retained, while new collection is disabled. Compatible, Light and Custom choices are preserved.</string>
+    <string name="player_performance_profile_merge_enable_confirm">Merge into Auto</string>
+    <string name="player_performance_lightweight_assessment_collection">Auto/Light assessment collection</string>
+    <string name="player_performance_lightweight_assessment_help">This is an internal, device-local observational V-06A assessment. It is off by default, has no user-facing enrollment entry and never randomizes profiles. It observes only the selected Auto or Light profile, and admits only hardware-decoded sessions on low-RAM devices or sessions that actually use software decoding. Internal experiment authorization and the current engine domain must both be enabled. Passing only permits a further product review; it never hides or removes Light automatically.</string>
+    <string name="player_performance_lightweight_assessment_enable_title">Join the Auto/Light assessment?</string>
+    <string name="player_performance_lightweight_assessment_enable_message">Samples stay on this device, are not uploaded or backed up, and never switch profiles automatically. Only low-RAM hardware decoding or actual software decoding enters the report. Every valid group needs at least 20 usable Auto and 20 usable Light samples. Pause, seek, speed changes, profile changes and experimental interventions invalidate the current sample.</string>
+    <string name="player_performance_lightweight_assessment_enable_confirm">Join assessment</string>
+    <string name="player_performance_lightweight_assessment_report">Auto/Light assessment report</string>
+    <string name="player_performance_lightweight_assessment_report_value">Auto %1$d · Light %2$d · %3$s</string>
+    <string name="player_performance_lightweight_assessment_report_title">Auto/Light device-local assessment</string>
+    <string name="player_performance_lightweight_assessment_report_summary">Status: %1$s\nAuto samples: %2$d\nLight samples: %3$d\nGroups: %4$d\nEvaluable groups: %5$d\nPassed: %6$d\nFailed: %7$d\nInsufficient or missing: %8$d\nCritical coverage: %9$d / %10$d\n\nFurther retention review requires all six EXO, MPV and IJK low-RAM hardware/software cells and every group to pass. This report never removes the Light profile automatically.</string>
+    <string name="player_performance_lightweight_assessment_coverage_missing">Coverage cells missing</string>
+    <string name="player_performance_lightweight_assessment_missing_coverage">Missing coverage</string>
+    <string name="player_performance_lightweight_assessment_coverage_low_ram_hardware">low-RAM hardware</string>
+    <string name="player_performance_lightweight_assessment_coverage_software">software decode</string>
+    <string name="player_performance_lightweight_assessment_clear">Clear Light assessment</string>
+    <string name="player_performance_lightweight_assessment_clear_title">Clear Auto/Light samples?</string>
+    <string name="player_performance_lightweight_assessment_clear_message">All device-local Auto/Light assessment samples will be deleted. Enrollment remains and eligible sessions can be collected again. The historical Auto/Balanced A/B report is unaffected.</string>
+    <string name="player_performance_lightweight_assessment_clear_confirm">Clear samples</string>
+    <string name="player_performance_compatibility_assessment">Compatible retention assessment</string>
+    <string name="player_performance_compatibility_assessment_help">V-06B is a fail-closed audit of whether the Compatible profile can ever be reconsidered. It checks EXO, MPV and IJK coverage for codec failures, hardware capability misreporting, output-mode faults, and protocol/Range faults, plus visual-correctness detection and long-term problem-device evidence. Existing recovery is bounded and depends on explicit errors or observable metrics. Green screens, wrong colors or an incorrect picture without a decoder error cannot currently be detected reliably, so the present conclusion is to retain Compatible. This report never hides, migrates or removes a profile.</string>
+    <string name="player_performance_compatibility_assessment_value">%1$s · reliable %2$d / %3$d</string>
+    <string name="player_performance_compatibility_assessment_title">Compatible profile retention assessment</string>
+    <string name="player_performance_compatibility_assessment_summary">Current conclusion: %1$s\nReliable coverage: %2$d / %3$d\nLimited: %4$d\nUnverified: %5$d\nUnobservable: %6$d\nMissing: %7$d\n\nEvery requirement must have reliable automated recovery and long-term device evidence before further review. Even full coverage would only permit another product decision; this report never removes Compatible automatically.</string>
+    <string name="player_performance_compatibility_assessment_blockers">Current blockers</string>
+    <string name="player_performance_compatibility_assessment_retain">Retain Compatible</string>
+    <string name="player_performance_compatibility_assessment_review">Further review possible</string>
+    <string name="player_performance_compatibility_coverage_reliable">reliable</string>
+    <string name="player_performance_compatibility_coverage_limited">limited</string>
+    <string name="player_performance_compatibility_coverage_unverified">unverified</string>
+    <string name="player_performance_compatibility_coverage_unobservable">unobservable</string>
+    <string name="player_performance_compatibility_coverage_missing">missing</string>
+    <string name="player_performance_compatibility_area_codec">codec initialization/runtime recovery</string>
+    <string name="player_performance_compatibility_area_hardware_misreport">hardware capability misreport recovery</string>
+    <string name="player_performance_compatibility_area_output">output-mode fault recovery</string>
+    <string name="player_performance_compatibility_area_protocol">protocol and Range fault recovery</string>
+    <string name="player_performance_compatibility_area_visual">green-screen, wrong-color and incorrect-picture detection</string>
+    <string name="player_performance_compatibility_area_device_evidence">long-term evidence from problem devices</string>
+    <string name="player_performance_experiment_profile_ab_collection">Auto/balanced A/B collection</string>
+    <string name="player_performance_experiment_profile_ab_invalid">Invalid or stale enrollment</string>
+    <string name="player_performance_experiment_profile_ab_enable_title">Join Auto/balanced validation?</string>
+    <string name="player_performance_experiment_profile_ab_enable_message">This internal collection is off by default, has no user-facing enrollment entry and stays on this device. It observes only the selected Auto or balanced profile; it never randomizes or changes profiles. Samples are admitted only while internal experiment authorization and the current engine domain are enabled. They store bounded numeric metrics and enum/digest grouping facts, never URLs, hosts, paths, headers, raw fingerprints or decoder names. The report cannot merge or migrate profiles automatically.</string>
+    <string name="player_performance_experiment_profile_ab_enable_confirm">Join validation</string>
+    <string name="player_performance_experiment_profile_ab_help">Device-local, opt-in infrastructure for comparing Auto and balanced within the same device, engine, decoder, protocol, stream, MIME/HDR and path group. Successful samples require at least 30 seconds of valid playback; attributable playback errors can be retained to avoid survivor bias. Data expires after 30 days and is bounded. The report needs at least 20 usable samples per arm for every group and never changes a profile.</string>
+    <string name="player_performance_experiment_profile_ab_report">Auto/balanced A/B report</string>
+    <string name="player_performance_experiment_profile_ab_report_value">Auto %1$d · Balanced %2$d · %3$s</string>
+    <string name="player_performance_experiment_profile_ab_report_title">Auto/balanced local validation report</string>
+    <string name="player_performance_experiment_profile_ab_report_summary">Status: %1$s\nAuto samples: %2$d\nBalanced samples: %3$d\nGroups: %4$d\nEvaluable groups: %5$d\nPassed: %6$d\nFailed: %7$d\nInsufficient or missing: %8$d\n\nThis device-local report is evidence only and never changes the current merge state by itself.</string>
+    <string name="player_performance_experiment_profile_ab_no_data">No data</string>
+    <string name="player_performance_experiment_profile_ab_insufficient">Insufficient samples</string>
+    <string name="player_performance_experiment_profile_ab_metrics_missing">Metrics missing</string>
+    <string name="player_performance_experiment_profile_ab_passed">Passed</string>
+    <string name="player_performance_experiment_profile_ab_failed">Failed</string>
+    <string name="player_performance_experiment_profile_ab_failed_metrics">Regressed metrics</string>
+    <string name="player_performance_experiment_profile_ab_missing_metrics">Missing metrics</string>
+    <string name="player_performance_experiment_profile_ab_metric_first_frame">first frame</string>
+    <string name="player_performance_experiment_profile_ab_metric_rebuffer_ratio">rebuffer ratio</string>
+    <string name="player_performance_experiment_profile_ab_metric_rebuffer_count">rebuffer count</string>
+    <string name="player_performance_experiment_profile_ab_metric_peak_pss">peak PSS</string>
+    <string name="player_performance_experiment_profile_ab_metric_dropped">dropped-frame rate</string>
+    <string name="player_performance_experiment_profile_ab_metric_live_lag">live lag</string>
+    <string name="player_performance_experiment_profile_ab_metric_error_rate">playback error rate</string>
+    <string name="player_performance_experiment_profile_ab_clear">Clear local report</string>
+    <string name="player_performance_experiment_profile_ab_clear_title">Clear Auto/balanced samples?</string>
+    <string name="player_performance_experiment_profile_ab_clear_message">All device-local Auto/balanced validation samples will be deleted. If legacy Balanced is restored, collection can be explicitly enrolled again.</string>
+    <string name="player_performance_experiment_profile_ab_clear_confirm">Clear samples</string>
     <string name="pan_diagnostic_section">Diagnostics</string>
     <string name="pan_diagnostic_entry">Link test</string>
     <string name="pan_diagnostic_title">Playback link diagnostics</string>
@@ -827,8 +909,6 @@
     <string name="player_scale">Scale</string>
     <string name="player_lut">LUT color</string>
     <string name="player_mpv_config">MPV config manager</string>
-    <string name="player_mpv_render">MPV renderer</string>
-    <string name="mpv_render_native_unavailable">Unavailable</string>
     <string name="mpv_config_target">%1$s · %2$s</string>
     <string name="mpv_config_default">Default</string>
     <string name="mpv_config_local">Local mpv.conf</string>
@@ -898,16 +978,22 @@
     <string name="player_aac_track">Prefer aac track</string>
     <string name="player_adblock">Remove ads</string>
     <string name="player_tunnel">Tunnel mode</string>
-    <string name="player_buffer">Buffer time</string>
-    <string name="player_buffer_bytes">Buffer size</string>
-    <string name="player_back_buffer">Back buffer</string>
-    <string name="player_cache">Playback cache</string>
-    <string name="player_preload">Preload</string>
-    <string name="player_preload_threads">Preload threads</string>
+    <string name="player_buffer">Forward buffer target</string>
+    <string name="player_buffer_bytes">Memory buffer limit</string>
+    <string name="player_back_buffer">Played-data retention</string>
+    <string name="player_cache">HLS disk cache limit</string>
+    <string name="player_preload">Disk preload</string>
+    <string name="player_preload_threads">Preload concurrency</string>
     <string name="player_preload_threads_value">%1$d threads</string>
-    <string name="player_preload_size">Preload size</string>
-    <string name="player_preload_time">Preload time</string>
+    <string name="player_preload_size">Disk preload quota</string>
+    <string name="player_preload_time">Preload chunk duration</string>
     <string name="player_preload_time_value">%1$d seconds</string>
+    <string name="player_preload_ahead">Preload-ahead target</string>
+    <string name="player_preload_ahead_value">%1$d min</string>
+    <string name="player_preload_ahead_whole">Entire media</string>
+    <string name="player_preload_pause">Continue preload while paused</string>
+    <string name="player_preload_pause_wifi">Wi-Fi only</string>
+    <string name="player_preload_pause_always">Always</string>
     <string name="player_auto_play">Auto play</string>
     <string name="player_auto_change">Auto source change</string>
     <string name="player_speed">Press speed</string>
@@ -1000,7 +1086,7 @@
     <string name="error_play_stage_decoder">Audio/video decoding failed. Try another decode mode or player.</string>
     <string name="error_play_stage_output">Audio/video output failed. Reopen playback or try another decode mode.</string>
     <string name="error_play_stage_drm">DRM authorization or protected-media handling failed. Choose another line or player.</string>
-    <string name="error_play_stage_unknown">Playback failed, but there is not enough evidence to identify the failing stage.</string>
+    <string name="error_play_stage_unknown">Playback failed. Retry or switch player.</string>
     <string name="error_play_flag">No flag data</string>
     <string name="error_play_timeout">Timed out</string>
     <string name="error_play_tvbus">Error code: <xliff:g name="name">%s</xliff:g></string>
@@ -1096,10 +1182,6 @@
         <item>EXO</item>
         <item>IJK</item>
         <item>MPV</item>
-    </string-array>
-    <string-array name="select_mpv_render">
-        <item>OpenGL</item>
-        <item>Vulkan</item>
     </string-array>
     <string-array name="select_buffer_bytes">
         <item>Auto</item>

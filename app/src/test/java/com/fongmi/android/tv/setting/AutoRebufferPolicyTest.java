@@ -16,10 +16,12 @@ public class AutoRebufferPolicyTest {
         assertResult(5_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 2, 4_000, 300_000, 10_000_000, 20_000_000));
         assertResult(8_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 3, 6_000, 300_000, 10_000_000, 20_000_000));
         assertResult(8_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 1, 15_000, 300_000, 10_000_000, 20_000_000));
+        assertResult(15_000, 0, AutoRebufferPolicy.resolve(8_000, 0, 5, 30_000, 300_000, 80_000_000, 120_000_000));
     }
 
     @Test
     public void lowBandwidthHeadroomRaisesRecovery() {
+        assertResult(15_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 0, 0, 300_000, 80_000_000, 79_000_000));
         assertResult(8_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 0, 0, 300_000, 10_000_000, 11_000_000));
         assertResult(5_000, 0, AutoRebufferPolicy.resolve(3_000, 0, 0, 0, 300_000, 10_000_000, 13_000_000));
     }
@@ -38,6 +40,7 @@ public class AutoRebufferPolicyTest {
         assertEquals(1_500, AutoRebufferPolicy.startBufferMs(3_000));
         assertEquals(3_000, AutoRebufferPolicy.startBufferMs(5_000));
         assertEquals(5_000, AutoRebufferPolicy.startBufferMs(8_000));
+        assertEquals(8_000, AutoRebufferPolicy.startBufferMs(15_000));
     }
 
     private static void assertResult(int rebufferMs, int cleanStreak, AutoRebufferPolicy.Result result) {

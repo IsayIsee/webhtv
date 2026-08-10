@@ -27,6 +27,10 @@ public interface ITrackInfo {
 
     String getMimeType();
 
+    default int getStreamIndex() {
+        return -1;
+    }
+
     int getTrackType();
 
     int getWidth();

@@ -1,9 +1,12 @@
 package androidx.media3.mpvplayer;
 
+import java.util.Arrays;
+
 final class MpvCacheObserverState {
 
     static final long INITIAL_OBSERVER_GRACE_MS = 2_000;
     static final long FALLBACK_INTERVAL_MS = 5_000;
+    static final long PAUSED_TIMELINE_QUERY_INTERVAL_MS = 1_000;
     static final long DYNAMIC_OBSERVER_STALE_MS = 15_000;
 
     enum Metric {
@@ -22,18 +25,15 @@ final class MpvCacheObserverState {
     }
 
     private static final int ALL_OBSERVED_MASK = (1 << Metric.values().length) - 1;
-    private static final int DYNAMIC_OBSERVED_MASK = bit(Metric.DURATION)
-            | bit(Metric.END)
-            | bit(Metric.READER_POSITION)
-            | bit(Metric.SPEED)
-            | bit(Metric.BUFFERING_STATE)
-            | bit(Metric.FORWARD_BYTES)
-            | bit(Metric.TOTAL_BYTES)
-            | bit(Metric.FILE_BYTES);
     private int observedMask;
+    private final long[] lastObserverAtMs = new long[Metric.values().length];
     private long fileLoadedAtMs = -1;
     private long lastFallbackQueryAtMs = -1;
-    private long lastDynamicObserverAtMs = -1;
+    private long lastPausedTimelineQueryAtMs = -1;
+
+    MpvCacheObserverState() {
+        Arrays.fill(lastObserverAtMs, -1);
+    }
 
     boolean record(String property, Object value, long nowMs) {
         Metric metric = metricForProperty(property);
@@ -41,7 +41,7 @@ final class MpvCacheObserverState {
         int bit = bit(metric);
         boolean firstValue = (observedMask & bit) == 0;
         observedMask |= bit;
-        if (isDynamic(metric)) lastDynamicObserverAtMs = Math.max(0, nowMs);
+        if (isDynamic(metric)) lastObserverAtMs[metric.ordinal()] = Math.max(0, nowMs);
         return firstValue;
     }
 
@@ -53,7 +53,12 @@ final class MpvCacheObserverState {
         long timeMs = Math.max(0, nowMs);
         fileLoadedAtMs = timeMs;
         lastFallbackQueryAtMs = -1;
-        lastDynamicObserverAtMs = (observedMask & DYNAMIC_OBSERVED_MASK) == 0 ? -1 : timeMs;
+        lastPausedTimelineQueryAtMs = -1;
+        for (Metric metric : Metric.values()) {
+            if (isDynamic(metric) && (observedMask & bit(metric)) != 0) {
+                lastObserverAtMs[metric.ordinal()] = timeMs;
+            }
+        }
     }
 
     boolean shouldQueryFallback(boolean fileLoaded, boolean cacheActive, long nowMs) {
@@ -64,16 +69,32 @@ final class MpvCacheObserverState {
         }
         if (!elapsed(nowMs, fileLoadedAtMs, INITIAL_OBSERVER_GRACE_MS)) return false;
         if (lastFallbackQueryAtMs >= 0 && !elapsed(nowMs, lastFallbackQueryAtMs, FALLBACK_INTERVAL_MS)) return false;
-        return observedMask != ALL_OBSERVED_MASK || cacheActive && dynamicObserverStale(nowMs);
+        return observedMask != ALL_OBSERVED_MASK
+                || cacheActive && hasStaleDynamicObserver(nowMs);
     }
 
     boolean needsFallback(Metric metric, boolean cacheActive, long nowMs) {
         if ((observedMask & bit(metric)) == 0) return true;
-        return cacheActive && isDynamic(metric) && dynamicObserverStale(nowMs);
+        return cacheActive && isDynamic(metric) && observerStale(metric, nowMs);
+    }
+
+    boolean shouldQueryPausedTimeline(
+            boolean fileLoaded,
+            boolean paused,
+            boolean cacheEnabled,
+            long nowMs) {
+        if (!fileLoaded || !paused || !cacheEnabled) return false;
+        return lastPausedTimelineQueryAtMs < 0
+                || elapsed(nowMs, lastPausedTimelineQueryAtMs,
+                PAUSED_TIMELINE_QUERY_INTERVAL_MS);
     }
 
     void onFallbackQuery(long nowMs) {
         lastFallbackQueryAtMs = Math.max(0, nowMs);
+    }
+
+    void onPausedTimelineQuery(long nowMs) {
+        lastPausedTimelineQueryAtMs = Math.max(0, nowMs);
     }
 
     int observedCount() {
@@ -82,17 +103,29 @@ final class MpvCacheObserverState {
 
     void reset() {
         observedMask = 0;
+        Arrays.fill(lastObserverAtMs, -1);
         fileLoadedAtMs = -1;
         lastFallbackQueryAtMs = -1;
-        lastDynamicObserverAtMs = -1;
+        lastPausedTimelineQueryAtMs = -1;
     }
 
     private static int bit(Metric metric) {
         return 1 << metric.ordinal();
     }
 
-    private boolean dynamicObserverStale(long nowMs) {
-        return lastDynamicObserverAtMs >= 0 && elapsed(nowMs, lastDynamicObserverAtMs, DYNAMIC_OBSERVER_STALE_MS);
+    private boolean hasStaleDynamicObserver(long nowMs) {
+        for (Metric metric : Metric.values()) {
+            if (isDynamic(metric)
+                    && (observedMask & bit(metric)) != 0
+                    && observerStale(metric, nowMs)) return true;
+        }
+        return false;
+    }
+
+    private boolean observerStale(Metric metric, long nowMs) {
+        long observedAtMs = lastObserverAtMs[metric.ordinal()];
+        return observedAtMs >= 0
+                && elapsed(nowMs, observedAtMs, DYNAMIC_OBSERVER_STALE_MS);
     }
 
     private static boolean elapsed(long nowMs, long sinceMs, long thresholdMs) {

@@ -61,6 +61,7 @@ import com.fongmi.android.tv.ui.custom.PlayerOsdController;
 import com.fongmi.android.tv.ui.dialog.HistoryDialog;
 import com.fongmi.android.tv.ui.dialog.LiveDialog;
 import com.fongmi.android.tv.ui.dialog.PassDialog;
+import com.fongmi.android.tv.ui.dialog.PlayerKernelDialog;
 import com.fongmi.android.tv.ui.dialog.SubtitleDialog;
 import com.fongmi.android.tv.ui.dialog.TrackDialog;
 import com.fongmi.android.tv.utils.Clock;
@@ -466,7 +467,11 @@ public class LiveActivity extends PlaybackActivity implements GroupAdapter.OnCli
     }
 
     private void onPlayerKernel() {
-        player().togglePlayer();
+        PlayerKernelDialog.show(this, player().getPlayerType(), this::switchPlayerKernel);
+    }
+
+    private void switchPlayerKernel(int type) {
+        player().switchPlayer(type);
         setPlayerKernel();
         setDecode();
         setR1Callback();

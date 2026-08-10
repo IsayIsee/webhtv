@@ -195,6 +195,9 @@ func route(w http.ResponseWriter, r *http.Request) error {
 		path = "/"
 	}
 	method := strings.ToUpper(r.Method)
+	if isPlaybackSyncPath(path) {
+		return playback.handle(w, r, path)
+	}
 
 	if method == http.MethodGet && path == "/api/health" {
 		return writeJSON(w, http.StatusOK, map[string]any{"ok": true, "time": nowMs()})
@@ -268,21 +271,23 @@ func capabilities() map[string]any {
 		"time":             nowMs(),
 		"maxSyncPartBytes": maxSyncPartBytes,
 		"capabilities": map[string]any{
-			"configManage":           true,
-			"remoteSync":             true,
-			"pushAction":             true,
-			"recentLog":              true,
-			"deviceBackup":           false,
-			"fileManage":             false,
-			"webHomeManage":          false,
-			"shellProxyManage":       false,
-			"siteInjectManage":       false,
-			"webHomeExtensionManage": false,
-			"multiDeviceBatch":       false,
-			"webSocket":              true,
-			"persistentStorage":      false,
-			"externalObjectStorage":  false,
-			"deviceRevoke":           false,
+			"configManage":              true,
+			"remoteSync":                true,
+			"pushAction":                true,
+			"recentLog":                 true,
+			"deviceBackup":              false,
+			"fileManage":                false,
+			"webHomeManage":             false,
+			"shellProxyManage":          false,
+			"siteInjectManage":          false,
+			"webHomeExtensionManage":    false,
+			"playbackSync":              playback.available(),
+			"playbackPersistentStorage": playback.available() && playback.persistent(),
+			"multiDeviceBatch":          false,
+			"webSocket":                 true,
+			"persistentStorage":         false,
+			"externalObjectStorage":     false,
+			"deviceRevoke":              false,
 		},
 	}
 }
@@ -1229,7 +1234,7 @@ func writeJSON(w http.ResponseWriter, status int, data any) error {
 func writeCORS(w http.ResponseWriter) {
 	w.Header().Set("access-control-allow-origin", "*")
 	w.Header().Set("access-control-allow-methods", "GET,POST,OPTIONS")
-	w.Header().Set("access-control-allow-headers", "authorization,content-type,x-device-id,x-device-token,x-group-token,x-family-token")
+	w.Header().Set("access-control-allow-headers", "authorization,content-type,idempotency-key,x-device-id,x-device-token,x-group-token,x-family-token,x-webhtv-token,x-webhtv-config-key,x-webhtv-config-name,x-webhtv-timestamp,x-webhtv-since,x-webhtv-limit,x-webhtv-webhook-id,x-webhtv-dedupe-key")
 	w.Header().Set("access-control-max-age", "86400")
 }
 

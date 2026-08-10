@@ -6,6 +6,8 @@ LOCK_FILE="$ROOT/third_party/mpv-native-lock.json"
 OVERRIDE_DIR="$ROOT/third_party/mpv-native-overrides"
 MPV_DISC_PATCH="$ROOT/third_party/patches/mpv-stream-cb-disc-controls.patch"
 MPV_AIMAGE_PATCH="$ROOT/third_party/patches/mpv-aimagereader-transient-buffer.patch"
+MPV_MATROSKA_PATCH="$ROOT/third_party/patches/mpv-matroska-segment-end.patch"
+FFMPEG_PROXY_RANGE_PATCH="$ROOT/third_party/patches/ffmpeg-webhtv-proxy-range.patch"
 WORK_DIR="${MPV_NATIVE_WORK_DIR:-$ROOT/build/mpv-native}"
 ABI="arm64-v8a"
 JOBS="${MPV_NATIVE_JOBS:-}"
@@ -107,6 +109,8 @@ need_cmd make
 need_cmd python3
 need_cmd pkg-config
 need_cmd perl
+need_cmd cmake
+need_cmd gperf
 
 eval "$(python3 - "$LOCK_FILE" <<'PY'
 import json
@@ -286,6 +290,8 @@ prepare_framework() {
 
   cp "$OVERRIDE_DIR/depinfo.sh" "$BUILDSCRIPTS/include/depinfo.sh"
   cp "$OVERRIDE_DIR/path.sh" "$BUILDSCRIPTS/include/path.sh"
+  cp "$OVERRIDE_DIR/expat.sh" "$BUILDSCRIPTS/scripts/expat.sh"
+  cp "$OVERRIDE_DIR/fontconfig.sh" "$BUILDSCRIPTS/scripts/fontconfig.sh"
   cp "$OVERRIDE_DIR/libass.sh" "$BUILDSCRIPTS/scripts/libass.sh"
   cp "$OVERRIDE_DIR/lua.sh" "$BUILDSCRIPTS/scripts/lua.sh"
   cp "$OVERRIDE_DIR/libplacebo.sh" "$BUILDSCRIPTS/scripts/libplacebo.sh"
@@ -296,7 +302,8 @@ prepare_framework() {
   lock_hash="$(sha256_file "$LOCK_FILE")"
   printf '\n# WebHTV wrapper cache identity: exact selected lock file.\nci_tarball="prefix-webhtv-%s.tgz"\n' \
     "$lock_hash" >> "$BUILDSCRIPTS/include/depinfo.sh"
-  chmod +x "$BUILDSCRIPTS/scripts/libass.sh" "$BUILDSCRIPTS/scripts/lua.sh" \
+  chmod +x "$BUILDSCRIPTS/scripts/expat.sh" "$BUILDSCRIPTS/scripts/fontconfig.sh" \
+    "$BUILDSCRIPTS/scripts/libass.sh" "$BUILDSCRIPTS/scripts/lua.sh" \
     "$BUILDSCRIPTS/scripts/libplacebo.sh" "$BUILDSCRIPTS/scripts/nghttp2.sh" \
     "$BUILDSCRIPTS/scripts/curl.sh" "$BUILDSCRIPTS/scripts/mpv.sh"
   python3 - "$BUILDSCRIPTS/buildall.sh" <<'PY'
@@ -321,7 +328,12 @@ prepare_sources() {
     -r "$deps/mbedtls/scripts/basic.requirements.txt"
   checkout_repo dav1d "$DAV1D_REPO" "$DAV1D_COMMIT" "$deps/dav1d"
   checkout_repo FFmpeg "$FFMPEG_REPO" "$FFMPEG_COMMIT" "$deps/ffmpeg"
+  [ -f "$FFMPEG_PROXY_RANGE_PATCH" ] || die "missing FFmpeg proxy range patch: $FFMPEG_PROXY_RANGE_PATCH"
+  git -C "$deps/ffmpeg" apply --check "$FFMPEG_PROXY_RANGE_PATCH"
+  git -C "$deps/ffmpeg" apply "$FFMPEG_PROXY_RANGE_PATCH"
+  checkout_repo Expat "$EXPAT_REPO" "$EXPAT_COMMIT" "$deps/expat"
   checkout_repo FreeType "$FREETYPE2_REPO" "$FREETYPE2_COMMIT" "$deps/freetype2"
+  checkout_repo fontconfig "$FONTCONFIG_REPO" "$FONTCONFIG_COMMIT" "$deps/fontconfig"
   checkout_repo FriBidi "$FRIBIDI_REPO" "$FRIBIDI_COMMIT" "$deps/fribidi"
   checkout_repo HarfBuzz "$HARFBUZZ_REPO" "$HARFBUZZ_COMMIT" "$deps/harfbuzz"
   extract_archive libunibreak "$UNIBREAK_URL" "$UNIBREAK_SHA256" "$deps/unibreak"
@@ -357,9 +369,12 @@ prepare_sources() {
   [ -f "$MPV_DISC_PATCH" ] || die "missing MPV disc controls patch: $MPV_DISC_PATCH"
   git -C "$deps/mpv" apply --check "$MPV_DISC_PATCH"
   git -C "$deps/mpv" apply "$MPV_DISC_PATCH"
-  [ -f "$MPV_AIMAGE_PATCH" ] || die "missing MPV AImageReader transient buffer patch: $MPV_AIMAGE_PATCH"
+  [ -f "$MPV_AIMAGE_PATCH" ] || die "missing MPV AImageReader frame sync patch: $MPV_AIMAGE_PATCH"
   git -C "$deps/mpv" apply --check --unidiff-zero "$MPV_AIMAGE_PATCH"
   git -C "$deps/mpv" apply --unidiff-zero "$MPV_AIMAGE_PATCH"
+  [ -f "$MPV_MATROSKA_PATCH" ] || die "missing MPV Matroska segment patch: $MPV_MATROSKA_PATCH"
+  git -C "$deps/mpv" apply --check "$MPV_MATROSKA_PATCH"
+  git -C "$deps/mpv" apply "$MPV_MATROSKA_PATCH"
   mkdir -p "$deps/shaderc"
   printf '%s\n' "shaderc is supplied by Android NDK $NDK_VERSION" >"$deps/shaderc/README.webhtv"
 }
@@ -413,6 +428,9 @@ verify_directory() {
     if printf '%s\n' "$dynamic" | grep -Eq 'Shared library: \[lib(av|sw).+\.so\]'; then
       die "unrenamed FFmpeg dependency in $file"
     fi
+    if printf '%s\n' "$dynamic" | grep -Eq 'Shared library: \[lib(fontconfig|expat)\.so'; then
+      die "font stack dependency must remain static in $file"
+    fi
     name="$(basename "$file")"
     if [ "$name" != "libc++_shared.so" ]; then
       soname="$(printf '%s\n' "$dynamic" | sed -n 's/.*Library soname: \[\([^]]*\)\].*/\1/p')"
@@ -423,13 +441,19 @@ verify_directory() {
   for name in libmvcodec.so libmvdevice.so libmvfilter.so libmvformat.so libmvutil.so libmwresample.so libmwscale.so libvulkan.so; do
     printf '%s\n' "$dynamic" | grep -Fq "Shared library: [$name]" || die "libmpv.so does not depend on $name"
   done
-  local version_strings
+  local version_strings format_strings
   version_strings="$(strings "$directory/libmpv.so")"
+  format_strings="$(strings "$directory/libmvformat.so")"
   grep -Fq "mpv v$MPV_VERSION" <<<"$version_strings" || die "unexpected MPV version in $directory/libmpv.so"
   grep -Fq "v$LIBPLACEBO_VERSION" <<<"$version_strings" || die "unexpected libplacebo version in $directory/libmpv.so"
   grep -Fq "WebHTV stream_cb controls enabled" <<<"$version_strings" || die "MPV stream_cb disc controls patch missing from $directory/libmpv.so"
   grep -Fq "Using Vulkan AHardwareBuffer GPU conversion" <<<"$version_strings" || die "MPV Vulkan MediaCodec interop missing from $directory/libmpv.so"
-  grep -Fq "AImageReader has no buffer yet" <<<"$version_strings" || die "MPV AImageReader transient buffer patch missing from $directory/libmpv.so"
+  grep -Fq "AImageReader frame acquisition timed out" <<<"$version_strings" || die "MPV AImageReader bounded acquisition patch missing from $directory/libmpv.so"
+  grep -Fq "Holding last synchronized AImage frame" <<<"$version_strings" || die "MPV AImageReader transient frame hold patch missing from $directory/libmpv.so"
+  grep -Fq "Using Vulkan sync_fd for AImage acquire fences" <<<"$version_strings" || die "MPV AImageReader Vulkan fence import missing from $directory/libmpv.so"
+  grep -Fq "Using declared Matroska segment end for seek metadata." <<<"$version_strings" || die "MPV Matroska segment seek patch missing from $directory/libmpv.so"
+  grep -Fq "WebHTV proxy range offset accepted" <<<"$format_strings" || die "FFmpeg proxy range patch missing from $directory/libmvformat.so"
+  grep -Fq "No usable fontconfig configuration file found, using fallback." <<<"$version_strings" || die "libass fontconfig provider missing from $directory/libmpv.so"
   if [ "$ENABLE_LIBCURL" -eq 1 ]; then
     grep -Fq "libcurl/$CURL_VERSION" <<<"$version_strings" || die "libcurl $CURL_VERSION missing from $directory/libmpv.so"
     grep -Fq "HTTP2" <<<"$version_strings" || die "HTTP/2 support missing from $directory/libmpv.so"
@@ -531,7 +555,7 @@ build_abi() {
     rm -rf "$BUILDSCRIPTS/prefix/$prefix_name"
   fi
   export cores="$JOBS"
-  local targets=(mbedtls unibreak dav1d ffmpeg freetype2 fribidi harfbuzz libass lua shaderc libplacebo)
+  local targets=(mbedtls unibreak dav1d ffmpeg expat freetype2 fontconfig fribidi harfbuzz libass lua shaderc libplacebo)
   if [ "$ENABLE_LIBCURL" -eq 1 ]; then
     targets+=(nghttp2 curl)
     export WEBHTV_MPV_LIBCURL=enabled
@@ -551,7 +575,9 @@ build_abi() {
       unibreak) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libunibreak.a" ] ;;
       dav1d) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libdav1d.a" ] ;;
       ffmpeg) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libavcodec.so" ] ;;
+      expat) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libexpat.a" ] ;;
       freetype2) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libfreetype.a" ] ;;
+      fontconfig) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libfontconfig.a" ] ;;
       fribidi) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libfribidi.a" ] ;;
       harfbuzz) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libharfbuzz.a" ] ;;
       libass) [ -f "$BUILDSCRIPTS/prefix/$prefix_name/lib/libass.a" ] ;;

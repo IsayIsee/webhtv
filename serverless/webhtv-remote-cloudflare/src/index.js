@@ -1,4 +1,7 @@
 import { createRelayState, handleRelayRequest, snapshotRelayState } from './relay.js';
+import { handlePlaybackSyncGateway, isPlaybackSyncPath, WebHTVPlaybackSyncDO } from './playback-sync.js';
+
+export { WebHTVPlaybackSyncDO };
 
 const SERVER_NAME = 'Cloudflare Worker Relay';
 const RELAY_DO_NAME = 'default';
@@ -21,6 +24,8 @@ export class WebHTVRemoteRelayDO {
       serverName: SERVER_NAME,
       relayMode: 'cloudflare-durable-object',
       persistentStorage: true,
+      playbackSync: Boolean(this.env && this.env.PLAYBACK_DO),
+      playbackPersistentStorage: Boolean(this.env && this.env.PLAYBACK_DO),
       state: this.relayState
     });
     await this.saveState();
@@ -38,7 +43,12 @@ export class WebHTVRemoteRelayDO {
 
 export default {
   async fetch(request, env) {
+    if (isPlaybackSyncPath(new URL(request.url).pathname)) return handlePlaybackSyncGateway(request, env);
     if (env && env.RELAY_DO) return env.RELAY_DO.getByName(RELAY_DO_NAME).fetch(request);
-    return handleRelayRequest(request, { serverName: SERVER_NAME });
+    return handleRelayRequest(request, {
+      serverName: SERVER_NAME,
+      playbackSync: Boolean(env && env.PLAYBACK_DO),
+      playbackPersistentStorage: Boolean(env && env.PLAYBACK_DO)
+    });
   }
 };

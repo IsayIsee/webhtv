@@ -1137,7 +1137,7 @@ POST /action?do=cast
 - 当前播放只读 API：爬虫读取当前播放条目的安全快照。
 - 本机修改 API：爬虫或局域网工具写入、批量写入或清理本地播放进度。
 - 远端同步：App 主动从用户配置的远端 API 拉取观影记录并合并到 `History`。
-- Webhook 上报：App 在播放过程中主动把进度 POST 到用户服务器。
+- Webhook 上报：App 在播放过程中主动把进度或删除事件 POST 到用户服务器。
 
 增强功能入口为“观影记录同步”。顶层只显示总开关、本机 API 修改开关、远端同步摘要和 Webhook 摘要；远端同步源列表与 Webhook 端点列表点击后进入二级界面，新增/编辑均在独立弹窗中完成。
 
@@ -1148,9 +1148,11 @@ POST /action?do=cast
 | 字段 | 类型 | 出现位置 | 说明 |
 | --- | --- | --- | --- |
 | `schema` | string | 读取、Webhook | 固定为 `webhtv.playback.v1` |
-| `event` | string | Webhook | 事件名，目前固定使用 `playback.progress` 和 `playback.ended` |
+| `event` | string | Webhook | 事件名：`playback.progress`、`playback.ended` 或 `playback.deleted` |
 | `eventId` | string | Webhook | 单次事件 UUID，同一次重试保持不变 |
 | `timestamp` | number | 读取、Webhook | App 生成记录的时间 |
+| `scope` | string | 删除 Webhook、远端删除 | 删除范围：`item`、`site` 或 `all` |
+| `deletedAt` | number | 删除 Webhook、远端删除 | 删除事件时间；用于阻止旧进度复活 |
 | `sessionId` | string | 读取、Webhook | 本次播放会话 ID，切换播放条目后更新 |
 | `dedupeKey` | string | 读取、Webhook | 播放条目去重 key，由接口、站点、影片、剧集等字段计算，不包含 token |
 | `cid` | number | 读取、写入、Webhook | 本机点播配置 id，只用于本机落库空间，跨设备不稳定 |
@@ -1355,9 +1357,21 @@ Accept: application/json
 X-WebHTV-Token: <服务端提供的 token>
 X-WebHTV-Config-Key: <当前点播接口 configKey>
 X-WebHTV-Config-Name: <当前点播接口显示名>
+X-WebHTV-Since: <上次成功返回的 nextSince，可选>
+X-WebHTV-Limit: <App 配置的单次最大条数>
 ```
 
 `X-WebHTV-Token` 可选，由用户服务端统一提供，用于鉴权和用户空间分组。App 不生成 token，也不把 token 写入本地历史主键或 `dedupeKey`。同一个远端 URL 下，同一 token 且同一 `configKey` 才表示同一套观影记录；同一 token 下不同 `configKey` 必须分别存储。
+
+仓库内置的五种远程托管服务端都实现了同一套观影同步协议：Cloudflare 使用独立 `PLAYBACK_DO` + SQLite，Deno 使用 Deno KV，Vercel 使用 Vercel KV/Upstash Redis REST，Go 与 Rust 使用本地原子 JSON 文件。对应目录分别是 `serverless/webhtv-remote-cloudflare`、`serverless/webhtv-remote-deno`、`serverless/webhtv-remote-vercel`、`serverless/webhtv-remote-go` 和 `serverless/webhtv-remote-rust`。
+
+部署后在“远端同步”和“Webhook 上报”中填写同一个地址和 token：
+
+```text
+https://<你的服务域名>/api/playback/sync
+```
+
+该地址通过 `POST` 接收进度、完播和删除 Webhook，通过 `GET` 返回 `{ changes, nextSince, hasMore }` 增量结果。内置服务端强制要求 `X-WebHTV-Token` 和 `X-WebHTV-Config-Key`；多台设备需要使用同一 token，不同用户或不同数据空间应使用不同 token。Webhook 字段预设应选“基础”“标准”或“完整”，匿名预设以及缺少核心影片字段的自定义预设不能形成完整的同步记录。各版本都保留 90 天删除墓碑，且只有显式 `scope=all` 才允许生成全量删除。Vercel 必须先配置 Redis；Go/Rust 的本地文件只适合单写实例。具体部署和备份边界见各目录下的 `README.md`。
 
 远端响应示例：
 
@@ -1387,6 +1401,8 @@ X-WebHTV-Config-Name: <当前点播接口显示名>
 
 响应项带 `configKey` 时，App 会先映射本机已配置的点播接口；映射不到则跳过。响应项不带 `configKey` 时按当前点播接口写入，用于兼容旧服务端。
 
+删除项可放在 `deleted`、`deletions`、`tombstones`、`removed` 或 `deletedItems` 数组中；也可与普通记录一起放在 `items`/`changes` 中，并使用 `action: "delete"`、`deleted: true` 或 `event: "playback.deleted"` 标识。删除定位支持 `historyKey`、`siteKey + vodId`、`scope=site` 和 `scope=all`。`deletedAt` 必须是删除发生时的毫秒时间戳；App 会保留 90 天墓碑，旧进度不会复活，新进度可以重新创建记录。服务端返回 `nextSince` 后，App 会按 `configKey` 保存游标；若响应超过 `maxItems` 或存在失败项，则不推进游标。
+
 远端同步源配置项：
 
 | 字段 | 说明 |
@@ -1401,7 +1417,7 @@ X-WebHTV-Config-Name: <当前点播接口显示名>
 
 #### 13.4.5 Webhook 上报
 
-Webhook 上报由 App 在播放过程中主动 POST 到用户配置的端点。上报时机固定为周期进度、暂停/退出/切集前最终进度和自然完播，不在 UI 中提供多事件选择。
+Webhook 上报由 App 主动 POST 到用户配置的端点。上报时机包括周期进度、暂停/退出/切集前最终进度、自然完播，以及用户在历史页执行的单条删除或清空记录；不在 UI 中提供多事件选择。
 
 ```http
 POST <用户配置的 Webhook URL>
@@ -1434,12 +1450,13 @@ Idempotency-Key: <eventId>
 | --- | --- |
 | `playback.progress` | 周期进度；暂停、退出、切集、切线路前会补发最终进度 |
 | `playback.ended` | 自然完播 |
+| `playback.deleted` | 用户删除单条、站点范围或当前接口全部观影记录；携带 `scope` 和 `deletedAt` |
 
 字段预设：
 
 | 预设 | 字段 |
 | --- | --- |
-| 基础 | `schema/event/eventId/timestamp/sessionId/dedupeKey/cid/configKey/configName/historyKey/siteKey/siteName/vodId/vodName/vodPic/flag/episodeName/state/positionMs/durationMs/progress/speed/completed` |
+| 基础 | `schema/event/eventId/timestamp/scope/deletedAt/sessionId/dedupeKey/cid/configKey/configName/historyKey/siteKey/siteName/vodId/vodName/vodPic/flag/episodeName/state/positionMs/durationMs/progress/speed/completed`（删除事件不发送进度字段） |
 | 标准 | 基础 + `appVersion/client` |
 | 完整 | 标准 + `episodeUrl/episodeIndex/clientKey` |
 | 自定义 | 协议字段固定发送，其余字段由 UI 多选；每个字段在 UI 中显示简短说明 |
@@ -3655,7 +3672,7 @@ HOT_VECTOR_VERSION = 5
 - “网盘检测”默认开启，只控制显式 `pan.check` 能力，不会自动检测 App 原生搜索结果列表。
 - “站点健康排序”默认开启，点击后打开设置弹窗，可切换“启用站点健康排序”和“站点弹窗排序”。其中“站点弹窗排序”默认关闭，避免打乱用户在配置中手动维护的站点顺序。
 - 长按“站点健康排序”：清空当前已学习的站点健康记录。
-- “观影记录同步”当前用于管理用户本地 Webhook 端点和当前播放只读 API。界面分为“开关”“远端同步”“Webhook 上报”三块：顶层只显示总开关、本机 API 修改开关和状态摘要；远端同步源列表与 Webhook 端点列表点击后进入二级界面，新增/编辑都在独立表单中完成。Webhook 上报时机固定为进度更新、退出/暂停/切集前最终进度和自然完播，不再让用户选择；字段预设为“基础/标准/完整/自定义”，自定义字段使用带说明的多选列表。Webhook 和远端同步 token 均由用户服务端统一提供，App 只负责保存并随请求发送。协议字段、远端同步源和本机修改 API 规范见 13.4。
+- “观影记录同步”当前用于管理用户本地 Webhook 端点和当前播放只读 API。界面分为“开关”“远端同步”“Webhook 上报”三块：顶层只显示总开关、本机 API 修改开关和状态摘要；远端同步源列表与 Webhook 端点列表点击后进入二级界面，新增/编辑都在独立表单中完成。Webhook 上报时机固定为进度更新、退出/暂停/切集前最终进度、自然完播和历史删除，不再让用户选择；字段预设为“基础/标准/完整/自定义”，自定义字段使用带说明的多选列表。Webhook 和远端同步 token 均由用户服务端统一提供，App 只负责保存并随请求发送。协议字段、删除墓碑、远端同步源和本机修改 API 规范见 13.4。
 - “管理页面”会启动浏览器页面 `/m`，用于本机或远端管理文件、登录态、同步目录、站点注入、接口、壳代理、搜索和推送。页面运行期间 App 会启动前台服务保活，空闲一段时间后自动停止。
 - “站点注入”会在当前点播配置加载完成后，把用户维护的 WebHome 或通用 CSP 站点插入 `sites` 列表。主界面只显示条目摘要、启用状态和常用操作；新增/修改在独立表单中完成。WebHome 扩展依赖站点 `key`、`homePage` 和站点级 `extensions`，因此入口放在增强功能页内站点注入附近。WebHome 站点级扩展支持直接填写扩展 URL / JSON，也支持选择本地 JS/CSS/JSON 后自动生成配置。
 - “WebHome 扩展”用于给真实 WebHome 网页注入用户脚本。主界面只显示扩展源摘要、匹配状态和常用操作；新增/修改在独立表单中配置文件、链接/manifest、代码、表单或 JSON 来源，可编辑启用状态、匹配范围、运行时机和依赖，并提供调试工作台用于 Web 预览、Console、Network、Elements 和代码保存预览。匹配范围默认从当前点播配置的 WebHome 站点列表弹窗多选，正则模式作为高级方式保留。

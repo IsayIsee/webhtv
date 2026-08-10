@@ -30,6 +30,10 @@ final class ExoBufferBudget {
         return resolve(context, requestedTargetBytes).effectiveTargetBytes();
     }
 
+    static int resolveRequestedTargetBytes(int configuredTargetBytes) {
+        return configuredTargetBytes > 0 ? configuredTargetBytes : MAX_TARGET_BYTES;
+    }
+
     static int calculateEffectiveTargetBytes(int requestedTargetBytes, long heapLimitBytes, boolean lowRamDevice) {
         return calculate(requestedTargetBytes, heapLimitBytes, lowRamDevice).effectiveTargetBytes();
     }

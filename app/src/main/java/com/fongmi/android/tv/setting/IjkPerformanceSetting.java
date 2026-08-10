@@ -230,11 +230,6 @@ public final class IjkPerformanceSetting {
         PlaybackPerformanceSetting.markCustom();
     }
 
-    public static boolean useInfiniteBuffer(boolean realtime) {
-        if (!realtime) return false;
-        return getScene() == SCENE_AUTO || getScene() == SCENE_LIVE_STABLE;
-    }
-
     public static void applyRecommended() {
         Prefers.put(KEY_SCENE, SCENE_AUTO);
         Prefers.put(KEY_BUFFER_MB, 15);
@@ -250,29 +245,19 @@ public final class IjkPerformanceSetting {
     }
 
     public static void applyCompatible() {
-        Prefers.put(KEY_SCENE, SCENE_AUTO);
-        Prefers.put(KEY_BUFFER_MB, 15);
-        Prefers.put(KEY_PACKET_BUFFERING, true);
-        Prefers.put(KEY_WATER, WATER_STABLE);
-        Prefers.put(KEY_PICTURE_QUEUE, 5);
-        Prefers.put(KEY_DROP, DROP_STANDARD);
-        Prefers.put(KEY_ACCURATE_SEEK, false);
-        Prefers.put(KEY_PROBE, PROBE_FULL);
-        Prefers.put(KEY_SOFT_TUNE, SOFT_TUNE_OFF);
-        Prefers.put(KEY_RTSP_TRANSPORT, RTSP_TCP);
-        Prefers.put(KEY_RECONNECT, true);
+        applyLightweight();
     }
 
     public static void applyLightweight() {
         Prefers.put(KEY_SCENE, SCENE_AUTO);
-        Prefers.put(KEY_BUFFER_MB, 4);
+        Prefers.put(KEY_BUFFER_MB, 8);
         Prefers.put(KEY_PACKET_BUFFERING, true);
-        Prefers.put(KEY_WATER, WATER_LOW);
+        Prefers.put(KEY_WATER, WATER_STABLE);
         Prefers.put(KEY_PICTURE_QUEUE, 3);
-        Prefers.put(KEY_DROP, DROP_AGGRESSIVE);
+        Prefers.put(KEY_DROP, DROP_STANDARD);
         Prefers.put(KEY_ACCURATE_SEEK, false);
-        Prefers.put(KEY_PROBE, PROBE_FAST);
-        Prefers.put(KEY_SOFT_TUNE, SOFT_TUNE_AGGRESSIVE);
+        Prefers.put(KEY_PROBE, PROBE_AUTO);
+        Prefers.put(KEY_SOFT_TUNE, SOFT_TUNE_MILD);
         Prefers.put(KEY_RTSP_TRANSPORT, RTSP_TCP);
         Prefers.put(KEY_RECONNECT, true);
     }

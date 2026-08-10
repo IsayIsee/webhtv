@@ -8,8 +8,10 @@ final class PreCachePolicy {
     private static final long RECOVERY_IDLE_FLOOR_MS = 3_000;
     private static final int CAPACITY_HEADROOM_PERCENT = 80;
     private static final int PRELOAD_CACHE_PERCENT = 50;
+    private static final int PRELOAD_AHEAD_CACHE_PERCENT = 80;
     private static final long MIN_CAPACITY_TARGET_MS = 1_000;
     private static final long UNKNOWN_BITRATE_BITS_PER_SECOND = 200_000_000L;
+    private static final long UNKNOWN_AHEAD_BITRATE_BITS_PER_SECOND = 50_000_000L;
 
     private PreCachePolicy() {
     }
@@ -39,6 +41,22 @@ final class PreCachePolicy {
         long estimatedBitrate = bitrateBitsPerSecond > 0 ? bitrateBitsPerSecond : UNKNOWN_BITRATE_BITS_PER_SECOND;
         long capacityMs = durationForBytesMs(byteBudget, estimatedBitrate);
         return Math.min(lengthMs, capacityMs);
+    }
+
+    static long preloadAheadTargetMs(long configuredAheadMs, long remainingMs,
+                                     long bitrateBitsPerSecond, long cacheCapacityBytes) {
+        long targetMs = Math.max(0, configuredAheadMs);
+        if (remainingMs >= 0) targetMs = Math.min(targetMs, remainingMs);
+        if (cacheCapacityBytes <= 0) return 0;
+        long byteBudget = cacheCapacityBytes / 100 * PRELOAD_AHEAD_CACHE_PERCENT;
+        long estimatedBitrate = bitrateBitsPerSecond > 0
+                ? bitrateBitsPerSecond : UNKNOWN_AHEAD_BITRATE_BITS_PER_SECOND;
+        return Math.min(targetMs, durationForBytesMs(byteBudget, estimatedBitrate));
+    }
+
+    static long preloadResumeWatermarkMs(long targetMs, long chunkMs) {
+        long refillBandMs = Math.max(Math.max(0, chunkMs), Math.max(0, targetMs) / 5);
+        return Math.max(0, targetMs - refillBandMs);
     }
 
     private static long capacityDurationMs(long bitrateBitsPerSecond, int capacityBytes) {

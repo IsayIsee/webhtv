@@ -12,6 +12,7 @@ import com.fongmi.android.tv.bean.Device;
 import com.fongmi.android.tv.bean.History;
 import com.fongmi.android.tv.bean.Keep;
 import com.fongmi.android.tv.bean.Live;
+import com.fongmi.android.tv.bean.PlaybackDeleteTombstone;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.bean.Track;
 import com.fongmi.android.tv.db.dao.ConfigDao;
@@ -19,6 +20,7 @@ import com.fongmi.android.tv.db.dao.DeviceDao;
 import com.fongmi.android.tv.db.dao.HistoryDao;
 import com.fongmi.android.tv.db.dao.KeepDao;
 import com.fongmi.android.tv.db.dao.LiveDao;
+import com.fongmi.android.tv.db.dao.PlaybackDeleteTombstoneDao;
 import com.fongmi.android.tv.db.dao.SiteDao;
 import com.fongmi.android.tv.db.dao.TrackDao;
 import com.fongmi.android.tv.utils.AppBackup;
@@ -31,10 +33,10 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
-@Database(entities = {Keep.class, Site.class, Live.class, Track.class, Config.class, Device.class, History.class}, version = AppDatabase.VERSION)
+@Database(entities = {Keep.class, Site.class, Live.class, Track.class, Config.class, Device.class, History.class, PlaybackDeleteTombstone.class}, version = AppDatabase.VERSION)
 public abstract class AppDatabase extends RoomDatabase {
 
-    public static final int VERSION = 36;
+    public static final int VERSION = 37;
     public static final String NAME = "tv";
     public static final String SYMBOL = "@@@";
 
@@ -106,6 +108,7 @@ public abstract class AppDatabase extends RoomDatabase {
                 .addMigrations(Migrations.MIGRATION_33_34)
                 .addMigrations(Migrations.MIGRATION_34_35)
                 .addMigrations(Migrations.MIGRATION_35_36)
+                .addMigrations(Migrations.MIGRATION_36_37)
                 .fallbackToDestructiveMigration(true)
                 .allowMainThreadQueries().build();
     }
@@ -123,4 +126,6 @@ public abstract class AppDatabase extends RoomDatabase {
     public abstract DeviceDao getDeviceDao();
 
     public abstract HistoryDao getHistoryDao();
+
+    public abstract PlaybackDeleteTombstoneDao getPlaybackDeleteTombstoneDao();
 }

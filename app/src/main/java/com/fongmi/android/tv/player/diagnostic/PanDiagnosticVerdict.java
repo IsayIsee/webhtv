@@ -57,7 +57,7 @@ public final class PanDiagnosticVerdict {
                 && input.upstreamBitsPerSecond < required && input.directConcurrentBitsPerSecond >= required) {
             return result(Cause.SINGLE_CONNECTION_LIMIT, cap(Confidence.MEDIUM, input.evidenceConfidence), "上游单连接受限，但直链并发可以明显改善吞吐");
         }
-        return result(Cause.INCONCLUSIVE, Confidence.LOW, "证据层级不完整，不能可靠归因");
+        return result(Cause.INCONCLUSIVE, Confidence.LOW, "本次未定位到稳定原因，请结合分项结果重试");
     }
 
     private static boolean known(long value) {

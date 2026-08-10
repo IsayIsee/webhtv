@@ -16,6 +16,7 @@ import com.fongmi.android.tv.api.SiteApi;
 import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.db.AppDatabase;
 import com.fongmi.android.tv.impl.Diffable;
+import com.fongmi.android.tv.playback.PlaybackProgressWriter;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 
@@ -134,6 +135,10 @@ public class History implements Diffable<History> {
 
     public static void delete(int cid) {
         AppDatabase.get().getHistoryDao().delete(cid);
+    }
+
+    public static void deleteAndSync(int cid) {
+        PlaybackProgressWriter.deleteAllFromUser(cid);
     }
 
     public static void sync(List<History> targets) {
@@ -405,6 +410,11 @@ public class History implements Diffable<History> {
     public History delete() {
         AppDatabase.get().getHistoryDao().delete(VodConfig.getCid(), getKey());
         AppDatabase.get().getTrackDao().delete(getKey());
+        return this;
+    }
+
+    public History deleteAndSync() {
+        PlaybackProgressWriter.deleteFromUser(this);
         return this;
     }
 

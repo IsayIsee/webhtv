@@ -19,7 +19,6 @@ import androidx.core.content.ContextCompat;
 import com.fongmi.android.tv.BuildConfig;
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.utils.Notify;
-import com.github.catvod.crawler.SpiderDebug;
 
 public class RemoteAgentService extends Service {
 
@@ -32,7 +31,7 @@ public class RemoteAgentService extends Service {
     private WifiManager.WifiLock wifiLock;
 
     public static void start(Context context) {
-        if (running) return;
+        if (running || !RemoteStore.hasEnabledProfile()) return;
         Intent intent = new Intent(context, RemoteAgentService.class).setAction(ACTION_START);
         ContextCompat.startForegroundService(context, intent);
     }
@@ -49,15 +48,23 @@ public class RemoteAgentService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        if (!RemoteStore.hasEnabledProfile()) {
+            stopSelf();
+            return;
+        }
         running = true;
         startForegroundCompat(notification());
         acquireLocks();
-        SpiderDebug.log("remote", "agent service started");
+        RemoteLog.log("agent service started");
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        if (!RemoteStore.hasEnabledProfile()) {
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -70,7 +77,7 @@ public class RemoteAgentService extends Service {
         releaseLocks();
         stopForegroundCompat();
         running = false;
-        SpiderDebug.log("remote", "agent service stopped");
+        RemoteLog.log("agent service stopped");
         super.onDestroy();
     }
 
@@ -122,7 +129,7 @@ public class RemoteAgentService extends Service {
                 wakeLock.acquire();
             }
         } catch (Throwable e) {
-            SpiderDebug.log("remote", "wake lock failed error=%s", e.getMessage());
+            RemoteLog.log("wake lock failed error=%s", e.getMessage());
         }
         try {
             WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -132,7 +139,7 @@ public class RemoteAgentService extends Service {
                 wifiLock.acquire();
             }
         } catch (Throwable e) {
-            SpiderDebug.log("remote", "wifi lock failed error=%s", e.getMessage());
+            RemoteLog.log("wifi lock failed error=%s", e.getMessage());
         }
     }
 

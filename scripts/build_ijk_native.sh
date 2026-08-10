@@ -8,6 +8,13 @@ IJK_REVISION="be89479c77c52acfb023d3b3acefccc5d8b9a101"
 FF4_CONFIG_REVISION="96598d75"
 FFMPEG_REPO="https://github.com/ShikinChen/FFmpeg.git"
 FFMPEG_TAG="ff4.0--ijk0.8.8--20210426--001"
+OPENSSL_COMMIT="openssl-3.2"
+IJK_PATCH="$ROOT_DIR/third_party/patches/ijk-vod-buffer-capacity.patch"
+IJK_LINK_PATCH="$ROOT_DIR/third_party/patches/ijk-ffmpeg4-link.patch"
+IJK_BUFFER_PATCH="$ROOT_DIR/third_party/patches/ijk-vod-buffer-capacity-ff4.patch"
+IJK_CORE_PATCH="$ROOT_DIR/third_party/patches/ijk-ffmpeg4-ndk28-core.patch"
+IJK_ERROR_PATCH="$ROOT_DIR/third_party/patches/ijk-error-propagation.patch"
+FFMPEG_PATCH="$ROOT_DIR/third_party/patches/ijk-ffmpeg4-ndk28.patch"
 ABI="arm64-v8a"
 INSTALL=0
 CLEAN=0
@@ -25,11 +32,12 @@ Options:
 Environment:
   ANDROID_HOME / ANDROID_SDK_ROOT  Android SDK root
   ANDROID_NDK_HOME                 NDK root for the selected ABI
+  IJK_ALLOW_OLD_NDK=1              Allow an explicit non-locked compatibility build
   IJK_BUILD_DIR                    Optional source/build directory
 
 Recommended NDK:
-  arm64-v8a     27.2.12479018
-  armeabi-v7a   21.4.7075529 (Ubuntu recommended)
+  arm64-v8a     28.2.13676358 (shared with MPV/JNI/DVD)
+  armeabi-v7a   28.2.13676358 (shared with MPV/JNI/DVD)
 USAGE
 }
 
@@ -45,8 +53,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$ABI" in
-  arm64-v8a) IJK_ARCH="arm64"; EXPECTED_NDK="27.2.12479018" ;;
-  armeabi-v7a) IJK_ARCH="armv7a"; EXPECTED_NDK="21.4.7075529" ;;
+  arm64-v8a) IJK_ARCH="arm64"; EXPECTED_NDK="28.2.13676358" ;;
+  armeabi-v7a) IJK_ARCH="armv7a"; EXPECTED_NDK="28.2.13676358" ;;
   *) echo "Unsupported ABI: $ABI" >&2; exit 1 ;;
 esac
 
@@ -65,11 +73,22 @@ if [[ ! -x "$NDK_ROOT/ndk-build" ]]; then
   echo "Install it with: $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \"ndk;$EXPECTED_NDK\"" >&2
   exit 1
 fi
+NDK_REVISION="$(sed -n 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*//p' "$NDK_ROOT/source.properties" | head -n 1)"
+if [[ -z "$NDK_REVISION" ]]; then
+  echo "Unable to determine Android NDK revision: $NDK_ROOT" >&2
+  exit 1
+fi
+if [[ "${IJK_ALLOW_OLD_NDK:-0}" != "1" && "$NDK_REVISION" != "$EXPECTED_NDK" ]]; then
+  echo "IJK native build requires NDK $EXPECTED_NDK (found $NDK_REVISION)." >&2
+  echo "Set ANDROID_NDK_HOME to NDK $EXPECTED_NDK, or use IJK_ALLOW_OLD_NDK=1 for an explicit compatibility build." >&2
+  exit 1
+fi
+echo "Using Android NDK $NDK_REVISION at $NDK_ROOT"
 
-for tool in git make python3; do
+for tool in git make python3 perl pkg-config file; do
   command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 1; }
 done
-if ! command -v yasm >/dev/null && ! command -v nasm >/dev/null; then
+if [[ "$ABI" == x86* ]] && ! command -v yasm >/dev/null && ! command -v nasm >/dev/null; then
   echo "Missing assembler: install yasm (macOS: brew install yasm; Ubuntu: apt install yasm)." >&2
   exit 1
 fi
@@ -80,14 +99,45 @@ if [[ ! -d "$SOURCE_DIR/.git" ]]; then git clone "$IJK_REPO" "$SOURCE_DIR"; fi
 git -C "$SOURCE_DIR" fetch --tags origin
 git -C "$SOURCE_DIR" checkout --force --detach "$IJK_REVISION"
 git -C "$SOURCE_DIR" clean -fdx
+git -C "$SOURCE_DIR" submodule update --init --recursive
+git -C "$SOURCE_DIR" checkout "$FF4_CONFIG_REVISION" -- \
+  config/module.sh \
+  config/module-lite.sh \
+  android/ijkplayer/ijkplayer-arm64 \
+  android/ijkplayer/ijkplayer-armv7a \
+  ijkmedia/ijkplayer
+git -C "$SOURCE_DIR" apply --check "$IJK_PATCH"
+git -C "$SOURCE_DIR" apply "$IJK_PATCH"
+git -C "$SOURCE_DIR" apply --check "$IJK_LINK_PATCH"
+git -C "$SOURCE_DIR" apply "$IJK_LINK_PATCH"
+git -C "$SOURCE_DIR" apply --check "$IJK_BUFFER_PATCH"
+git -C "$SOURCE_DIR" apply "$IJK_BUFFER_PATCH"
+git -C "$SOURCE_DIR" apply --check "$IJK_CORE_PATCH"
+git -C "$SOURCE_DIR" apply "$IJK_CORE_PATCH"
+git -C "$SOURCE_DIR" apply --check "$IJK_ERROR_PATCH"
+git -C "$SOURCE_DIR" apply "$IJK_ERROR_PATCH"
 
 # Keep the newer Android/NDK build fixes, but restore the proven FFmpeg 4.0
 # configuration used by WebHTV's IJK ABI.
 git -C "$SOURCE_DIR" show "$FF4_CONFIG_REVISION:init-android.sh" > "$SOURCE_DIR/init-android.sh"
-git -C "$SOURCE_DIR" show "$FF4_CONFIG_REVISION:config/module.sh" > "$SOURCE_DIR/config/module.sh"
 sed -i.bak "s#https://github.com/Bilibili/FFmpeg.git#$FFMPEG_REPO#g" "$SOURCE_DIR/init-android.sh"
 sed -i.bak "s#IJK_FFMPEG_COMMIT=.*#IJK_FFMPEG_COMMIT=$FFMPEG_TAG#" "$SOURCE_DIR/init-android.sh"
+for arch in armv5 armv7a arm64 x86 x86_64; do
+  if [[ "$arch" != "$IJK_ARCH" ]]; then
+    sed -i.bak "/^pull_fork \"$arch\"$/d" "$SOURCE_DIR/init-android.sh"
+  fi
+done
 rm -f "$SOURCE_DIR/init-android.sh.bak"
+for app_mk in \
+  "$SOURCE_DIR/android/ijkplayer/ijkplayer-arm64/src/main/jni/Application.mk" \
+  "$SOURCE_DIR/android/ijkplayer/ijkplayer-armv7a/src/main/jni/Application.mk"; do
+  sed -i.bak \
+    -e 's/^APP_PLATFORM := android-9$/APP_PLATFORM := android-21/' \
+    -e '/^NDK_TOOLCHAIN_VERSION=/d' \
+    -e 's/^APP_STL := stlport_static$/APP_STL := c++_static/' \
+    "$app_mk"
+  rm -f "$app_mk.bak"
+done
 
 export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK="$SDK_ROOT"
@@ -96,9 +146,21 @@ export ANDROID_NDK_HOME="$NDK_ROOT"
 
 cd "$SOURCE_DIR"
 ./init-android.sh
+FFMPEG_DIR="$SOURCE_DIR/android/contrib/ffmpeg-$IJK_ARCH"
+git -C "$FFMPEG_DIR" reset --hard "$FFMPEG_TAG"
+git -C "$FFMPEG_DIR" clean -fdx
+git -C "$FFMPEG_DIR" apply --check "$FFMPEG_PATCH"
+git -C "$FFMPEG_DIR" apply "$FFMPEG_PATCH"
+# init-android-openssl.sh edits a tracked OpenSSL config file for clang
+# detection. Reset that checkout before each ABI build so a previous ABI's
+# generated Makefile cannot trigger OpenSSL's one-time configdata rebuild.
+OPENSSL_DIR="$SOURCE_DIR/extra/openssl"
+if [[ -d "$OPENSSL_DIR/.git" ]]; then
+  git -C "$OPENSSL_DIR" reset --hard "$OPENSSL_COMMIT"
+  git -C "$OPENSSL_DIR" clean -fdx
+fi
 ./init-android-openssl.sh
 cd android/contrib
-./compile-openssl.sh "$IJK_ARCH"
 ./compile-ffmpeg.sh "$IJK_ARCH"
 cd ..
 ./compile-ijk.sh "$IJK_ARCH"

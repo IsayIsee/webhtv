@@ -132,7 +132,9 @@
                     android:id="@+id/exo4kCompatText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:ellipsize="end"
                     android:gravity="end"
+                    android:singleLine="true"
                     android:textColor="@color/white"
                     android:textSize="16sp"
                     tools:text="关" />
@@ -193,36 +195,6 @@
                     android:textColor="@color/white"
                     android:textSize="16sp"
                     tools:text="默认" />
-
-            </androidx.appcompat.widget.LinearLayoutCompat>
-
-            <androidx.appcompat.widget.LinearLayoutCompat
-                android:id="@+id/mpvRender"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:background="@drawable/shape_item"
-                android:orientation="horizontal">
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="16dp"
-                    android:singleLine="true"
-                    android:text="@string/player_mpv_render"
-                    android:textColor="@color/white"
-                    android:textSize="16sp" />
-
-                <com.google.android.material.textview.MaterialTextView
-                    android:id="@+id/mpvRenderText"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:gravity="end"
-                    android:singleLine="true"
-                    android:textColor="@color/white"
-                    android:textSize="16sp"
-                    tools:text="OpenGL" />
 
             </androidx.appcompat.widget.LinearLayoutCompat>
 
@@ -580,6 +552,64 @@
             </androidx.appcompat.widget.LinearLayoutCompat>
 
             <androidx.appcompat.widget.LinearLayoutCompat
+                android:id="@+id/preloadAhead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/shape_item"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="16dp"
+                    android:text="@string/player_preload_ahead"
+                    android:textColor="@color/white"
+                    android:textSize="16sp" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/preloadAheadText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="end"
+                    android:singleLine="true"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    tools:text="5 分钟" />
+
+            </androidx.appcompat.widget.LinearLayoutCompat>
+
+            <androidx.appcompat.widget.LinearLayoutCompat
+                android:id="@+id/preloadPause"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/shape_item"
+                android:orientation="horizontal">
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="16dp"
+                    android:text="@string/player_preload_pause"
+                    android:textColor="@color/white"
+                    android:textSize="16sp" />
+
+                <com.google.android.material.textview.MaterialTextView
+                    android:id="@+id/preloadPauseText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:gravity="end"
+                    android:singleLine="true"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    tools:text="始终" />
+
+            </androidx.appcompat.widget.LinearLayoutCompat>
+
+            <androidx.appcompat.widget.LinearLayoutCompat
                 android:id="@+id/autoPlay"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -858,7 +888,7 @@
                     android:gravity="end"
                     android:textColor="@color/white"
                     android:textSize="16sp"
-                    tools:text="畫中畫" />
+                    tools:text="開啟" />
 
             </androidx.appcompat.widget.LinearLayoutCompat>
 

@@ -121,6 +121,12 @@ public class IjkTrackInfo implements ITrackInfo {
     }
 
     @Override // tv.danmaku.ijk.media.player.misc.ITrackInfo
+    public int getStreamIndex() {
+        IjkMediaMeta.IjkStreamMeta ijkStreamMeta = this.mStreamMeta;
+        return ijkStreamMeta == null ? -1 : ijkStreamMeta.mIndex;
+    }
+
+    @Override // tv.danmaku.ijk.media.player.misc.ITrackInfo
     public int getTrackType() {
         return this.mTrackType;
     }

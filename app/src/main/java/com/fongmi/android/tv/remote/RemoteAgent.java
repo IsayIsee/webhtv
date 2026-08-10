@@ -10,7 +10,6 @@ import com.fongmi.android.tv.remote.RemoteModels.RemoteProfile;
 import com.fongmi.android.tv.remote.RemoteModels.RemoteStoreFile;
 import com.fongmi.android.tv.remote.RemoteModels.ServerCapabilities;
 import com.fongmi.android.tv.utils.Task;
-import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -95,8 +94,12 @@ public final class RemoteAgent {
                 else RemoteAgentService.stop(App.get());
             }
         } catch (Throwable e) {
-            SpiderDebug.log("remote", "agent start failed error=%s", e.getMessage());
+            log("agent start failed error=%s", e.getMessage());
         }
+    }
+
+    private static void log(String format, Object... args) {
+        RemoteLog.log(format, args);
     }
 
     private static final class Session {
@@ -117,14 +120,14 @@ public final class RemoteAgent {
         private synchronized void start() {
             if (future != null && !future.isCancelled()) return;
             future = Task.scheduler().scheduleWithFixedDelay(() -> Task.execute(this::pollSafely), 0, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
-            SpiderDebug.log("remote", "session started origin=%s", serverOrigin);
+            log("session started origin=%s", serverOrigin);
         }
 
         private synchronized void stop() {
             if (future != null) future.cancel(false);
             future = null;
             closeWebSocket();
-            SpiderDebug.log("remote", "session stopped origin=%s", serverOrigin);
+            log("session stopped origin=%s", serverOrigin);
         }
 
         private void pollSafely() {
@@ -155,12 +158,12 @@ public final class RemoteAgent {
                 PollResponse response = client.poll();
                 RemoteCommand command = response == null ? null : response.command;
                 if (command == null || TextUtils.isEmpty(command.id)) return;
-                SpiderDebug.log("remote", "command received origin=%s id=%s type=%s", serverOrigin, command.id, command.type);
+                log("command received origin=%s id=%s type=%s", serverOrigin, command.id, command.type);
                 executeCommand(profile, command);
             } catch (Throwable e) {
                 if (System.currentTimeMillis() - lastErrorLog > 30_000L) {
                     lastErrorLog = System.currentTimeMillis();
-                    SpiderDebug.log("remote", "poll failed origin=%s error=%s", serverOrigin, e.getMessage());
+                    log("poll failed origin=%s error=%s", serverOrigin, e.getMessage());
                 }
                 lastRegister = 0;
             } finally {
@@ -182,12 +185,12 @@ public final class RemoteAgent {
                         .newWebSocket(client.webSocketRequest(), new Listener(this, profile.serverOrigin, client.webSocketHello()));
             } catch (Throwable e) {
                 closeWebSocket();
-                SpiderDebug.log("remote", "websocket start failed origin=%s error=%s", serverOrigin, e.getMessage());
+                log("websocket start failed origin=%s error=%s", serverOrigin, e.getMessage());
             }
         }
 
         private void executeCommand(RemoteProfile profile, RemoteCommand command) {
-            if (profile == null || command == null || TextUtils.isEmpty(command.id)) return;
+            if (!RemoteStore.shouldStart(profile) || command == null || TextUtils.isEmpty(command.id)) return;
             try {
                 if (App.activity() == null) {
                     new RemoteClient(profile).commandResult(command.id, RemoteCommandResult.failure("App is not open"));
@@ -196,19 +199,19 @@ public final class RemoteAgent {
                 RemoteCommandResult result = RemoteCommandExecutor.execute(profile, command);
                 new RemoteClient(profile).commandResult(command.id, result);
             } catch (Throwable e) {
-                SpiderDebug.log("remote", "command execute failed origin=%s id=%s error=%s", serverOrigin, command.id, e.getMessage());
+                log("command execute failed origin=%s id=%s error=%s", serverOrigin, command.id, e.getMessage());
             }
         }
 
         private synchronized void onWebSocketOpen() {
             webSocketConnected = true;
-            SpiderDebug.log("remote", "websocket connected origin=%s", serverOrigin);
+            log("websocket connected origin=%s", serverOrigin);
         }
 
         private synchronized void onWebSocketClosed() {
             webSocketConnected = false;
             webSocket = null;
-            SpiderDebug.log("remote", "websocket closed origin=%s", serverOrigin);
+            log("websocket closed origin=%s", serverOrigin);
         }
 
         private synchronized void onWebSocketFailure(Throwable t, Response response) {
@@ -216,9 +219,9 @@ public final class RemoteAgent {
             onWebSocketClosed();
             int code = response == null ? 0 : response.code();
             if (code == 426) {
-                SpiderDebug.log("remote", "websocket unavailable origin=%s code=%s fallback=poll", serverOrigin, code);
+                log("websocket unavailable origin=%s code=%s fallback=poll", serverOrigin, code);
             } else {
-                SpiderDebug.log("remote", "websocket failed origin=%s error=%s", serverOrigin, t == null ? "" : t.getMessage());
+                log("websocket failed origin=%s error=%s", serverOrigin, t == null ? "" : t.getMessage());
             }
         }
 
@@ -257,10 +260,14 @@ public final class RemoteAgent {
                 RemoteCommand command = App.gson().fromJson(element, RemoteCommand.class);
                 if (command == null || TextUtils.isEmpty(command.id)) return;
                 RemoteProfile profile = RemoteStore.getProfileByOrigin(serverOrigin);
-                SpiderDebug.log("remote", "websocket command received origin=%s id=%s type=%s", serverOrigin, command.id, command.type);
+                if (!RemoteStore.shouldStart(profile)) {
+                    session.closeWebSocket();
+                    return;
+                }
+                log("websocket command received origin=%s id=%s type=%s", serverOrigin, command.id, command.type);
                 Task.execute(() -> session.executeCommand(profile, command));
             } catch (Throwable e) {
-                SpiderDebug.log("remote", "websocket message failed origin=%s error=%s", serverOrigin, e.getMessage());
+                log("websocket message failed origin=%s error=%s", serverOrigin, e.getMessage());
             }
         }
 

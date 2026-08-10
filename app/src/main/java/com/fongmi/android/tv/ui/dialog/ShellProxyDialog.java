@@ -1,8 +1,9 @@
 package com.fongmi.android.tv.ui.dialog;
 
+import android.app.Dialog;
+import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.content.DialogInterface;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
@@ -30,6 +31,7 @@ import com.fongmi.android.tv.api.config.VodConfig;
 import com.fongmi.android.tv.bean.Site;
 import com.fongmi.android.tv.databinding.AdapterShellProxyRuleBinding;
 import com.fongmi.android.tv.databinding.DialogShellProxyBinding;
+import com.fongmi.android.tv.databinding.DialogShellProxyRuleEditBinding;
 import com.fongmi.android.tv.setting.ProxySetting;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.custom.CustomTextListener;
@@ -72,6 +74,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
     private boolean saved;
     private boolean testing;
     private SettingClipboardOverlay clipboardOverlay;
+    private Dialog ruleEditorDialog;
 
     public static void show(Fragment fragment) {
         show(fragment, null);
@@ -172,6 +175,12 @@ public class ShellProxyDialog extends BaseAlertDialog {
                 binding.defaultUrl.setSelection(binding.defaultUrl.length());
             }
         });
+        binding.defaultUrl.addTextChangedListener(new CustomTextListener() {
+            @Override
+            public void afterTextChanged(Editable editable) {
+                adapter.notifyDataSetChanged();
+            }
+        });
         binding.rules.setOnEditorActionListener((textView, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_DONE) onPositive();
             return true;
@@ -214,6 +223,8 @@ public class ShellProxyDialog extends BaseAlertDialog {
 
     @Override
     public void onDismiss(@NonNull DialogInterface dialog) {
+        if (ruleEditorDialog != null) ruleEditorDialog.dismiss();
+        ruleEditorDialog = null;
         if (clipboardOverlay != null) clipboardOverlay.detach();
         clipboardOverlay = null;
         save(false);
@@ -395,7 +406,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
         for (String host : suggestion.hosts()) {
             String key = normalizeHost(host);
             if (TextUtils.isEmpty(key) || hosts.contains(key)) continue;
-            items.add(new Rule(host, url));
+            items.add(new Rule(host, ""));
             hosts.add(key);
             added++;
         }
@@ -440,6 +451,59 @@ public class ShellProxyDialog extends BaseAlertDialog {
                 if (holder != null) holder.itemView.requestFocus();
             });
         });
+    }
+
+    private void editRule(int position) {
+        if (position < 0 || position >= adapter.getItemCount()) return;
+        if (ruleEditorDialog != null && ruleEditorDialog.isShowing()) return;
+        int index = adapter.itemIndex(position);
+        Rule item = adapter.getItems().get(index);
+        DialogShellProxyRuleEditBinding editor = DialogShellProxyRuleEditBinding.inflate(getLayoutInflater());
+        editor.hosts.setText(item.hosts);
+        editor.url.setText(item.url);
+        setupEditableText(editor.hosts, true);
+        setupEditableText(editor.url, false);
+        String defaultUrl = getDefaultUrl();
+        editor.urlLayout.setHelperText(TextUtils.isEmpty(defaultUrl)
+                ? getString(R.string.setting_proxy_rule_use_default_empty)
+                : getString(R.string.setting_proxy_rule_use_default, defaultUrl));
+        Dialog dialog = LightDialog.create(requireContext(), getString(R.string.setting_proxy_edit_rule, index + 1), editor.getRoot(), getString(R.string.dialog_positive), view -> {
+            item.hosts = editor.hosts.getText() == null ? "" : editor.hosts.getText().toString().trim();
+            item.url = editor.url.getText() == null ? "" : editor.url.getText().toString().trim();
+            adapter.notifyItemChanged(adapter.displayPosition(index));
+            syncTextFromRules();
+            if (ruleEditorDialog != null) ruleEditorDialog.dismiss();
+        }, getString(R.string.dialog_negative), null);
+        dialog.setOnDismissListener(ignored -> {
+            if (ruleEditorDialog == dialog) ruleEditorDialog = null;
+        });
+        ruleEditorDialog = dialog;
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        editor.url.setOnEditorActionListener((textView, actionId, event) -> {
+            if (actionId != EditorInfo.IME_ACTION_DONE) return false;
+            item.hosts = editor.hosts.getText() == null ? "" : editor.hosts.getText().toString().trim();
+            item.url = editor.url.getText() == null ? "" : editor.url.getText().toString().trim();
+            adapter.notifyItemChanged(adapter.displayPosition(index));
+            syncTextFromRules();
+            dialog.dismiss();
+            return true;
+        });
+    }
+
+    private String getRuleHostSummary(Rule item) {
+        String hosts = item.hosts == null ? "" : item.hosts.trim();
+        return TextUtils.isEmpty(hosts) ? "*" : hosts;
+    }
+
+    private String getRuleProxySummary(Rule item) {
+        String url = item.url == null ? "" : item.url.trim();
+        if (!TextUtils.isEmpty(url)) return url;
+        String defaultUrl = getDefaultUrl();
+        return TextUtils.isEmpty(defaultUrl)
+                ? getString(R.string.setting_proxy_rule_use_default_empty)
+                : getString(R.string.setting_proxy_rule_use_default, defaultUrl);
     }
 
     private List<Rule> mergeRules(List<Rule> current, List<Rule> incoming) {
@@ -829,8 +893,10 @@ public class ShellProxyDialog extends BaseAlertDialog {
             int index = itemIndex(position);
             Rule item = items.get(index);
             holder.binding.number.setText(String.valueOf(index + 1));
-            holder.binding.hosts.setText(item.hosts);
-            holder.binding.url.setText(item.url);
+            holder.binding.hosts.setText(getRuleHostSummary(item));
+            holder.binding.url.setText(getRuleProxySummary(item));
+            holder.binding.url.setAlpha(TextUtils.isEmpty(item.url) ? 0.68f : 1.0f);
+            holder.binding.getRoot().setOnClickListener(view -> editRule(holder.getBindingAdapterPosition()));
             holder.binding.delete.setOnClickListener(view -> {
                 adapter.remove(holder.getBindingAdapterPosition());
                 syncTextFromRules();
@@ -848,31 +914,7 @@ public class ShellProxyDialog extends BaseAlertDialog {
             ViewHolder(@NonNull AdapterShellProxyRuleBinding binding) {
                 super(binding.getRoot());
                 this.binding = binding;
-                setupEditableText(binding.hosts, false);
-                setupEditableText(binding.url, false);
-                binding.hosts.addTextChangedListener(new RuleTextListener(this, true));
-                binding.url.addTextChangedListener(new RuleTextListener(this, false));
             }
-        }
-    }
-
-    private class RuleTextListener extends CustomTextListener {
-
-        private final RuleAdapter.ViewHolder holder;
-        private final boolean hosts;
-
-        RuleTextListener(RuleAdapter.ViewHolder holder, boolean hosts) {
-            this.holder = holder;
-            this.hosts = hosts;
-        }
-
-        @Override
-        public void afterTextChanged(Editable editable) {
-            int position = holder.getBindingAdapterPosition();
-            if (position < 0 || position >= adapter.getItems().size()) return;
-            Rule item = adapter.getItems().get(adapter.itemIndex(position));
-            if (hosts) item.hosts = editable.toString();
-            else item.url = editable.toString();
         }
     }
 

@@ -16,6 +16,8 @@ const CAPABILITIES = {
   shellProxyManage: false,
   siteInjectManage: false,
   webHomeExtensionManage: false,
+  playbackSync: false,
+  playbackPersistentStorage: false,
   multiDeviceBatch: false,
   webSocket: false,
   persistentStorage: false,
@@ -132,6 +134,8 @@ function capabilities(options) {
     maxSyncPartBytes: MAX_SYNC_PART_BYTES,
     capabilities: {
       ...CAPABILITIES,
+      playbackSync: options.playbackSync === true,
+      playbackPersistentStorage: options.playbackPersistentStorage === true,
       persistentStorage
     }
   };

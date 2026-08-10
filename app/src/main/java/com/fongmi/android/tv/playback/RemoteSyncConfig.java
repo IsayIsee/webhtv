@@ -4,8 +4,10 @@ import android.text.TextUtils;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 public class RemoteSyncConfig {
@@ -23,9 +25,11 @@ public class RemoteSyncConfig {
     public long lastSuccessAt;
     public int lastFetched;
     public int lastApplied;
+    public int lastDeleted;
     public int lastSkipped;
     public int lastFailed;
     public String lastError;
+    public Map<String, String> cursors;
 
     public RemoteSyncConfig() {
         this.id = UUID.randomUUID().toString();
@@ -38,6 +42,7 @@ public class RemoteSyncConfig {
         this.intervalMinutes = 0;
         this.maxItems = 100;
         this.lastError = "";
+        this.cursors = new HashMap<>();
     }
 
     public boolean isUsable() {
@@ -63,6 +68,23 @@ public class RemoteSyncConfig {
         if (!TextUtils.isEmpty(host)) return host;
         if (!TextUtils.isEmpty(url)) return url;
         return "Remote sync";
+    }
+
+    public String cursor(String configKey) {
+        if (cursors == null || cursors.isEmpty()) return "";
+        String value = cursors.get(cursorKey(configKey));
+        return value == null ? "" : value;
+    }
+
+    public void cursor(String configKey, String value) {
+        if (cursors == null) cursors = new HashMap<>();
+        if (value == null || value.isEmpty()) return;
+        cursors.put(cursorKey(configKey), value);
+    }
+
+    private String cursorKey(String configKey) {
+        String value = PlaybackConfigIdentity.normalizeKey(configKey);
+        return value.isEmpty() ? "_default" : value;
     }
 
     public static String normalize(String value) {

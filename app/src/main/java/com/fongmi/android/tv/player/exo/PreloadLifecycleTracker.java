@@ -70,6 +70,10 @@ final class PreloadLifecycleTracker {
         return sessionId;
     }
 
+    synchronized boolean hasActiveTask() {
+        return sessionId > 0 && activeTaskId >= 0;
+    }
+
     private TaskEvent endTaskLocked(TaskEvent.Outcome outcome) {
         if (sessionId <= 0 || activeTaskId < 0) return null;
         TaskEvent event = new TaskEvent(TaskEvent.Type.END, sessionId, activeTaskId, activeTaskGeneration, activeTaskStartMs, activeTaskLengthMs, outcome);
@@ -96,6 +100,9 @@ final class PreloadLifecycleTracker {
         CANCELLED_SEEK("cancelled-seek"),
         NO_RANGE("no-range"),
         PAUSED_AUTO("paused-auto"),
+        PAUSED_USER("paused-user"),
+        PAUSED_MEMORY("paused-memory"),
+        PAUSED_STORAGE("paused-storage"),
         SKIPPED("skipped");
 
         private final String label;

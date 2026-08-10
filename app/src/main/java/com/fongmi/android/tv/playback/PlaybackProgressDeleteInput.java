@@ -1,8 +1,7 @@
 package com.fongmi.android.tv.playback;
 
-import android.text.TextUtils;
-
-import com.fongmi.android.tv.App;
+import com.fongmi.android.tv.db.AppDatabase;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -12,8 +11,11 @@ import com.google.gson.annotations.SerializedName;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 public class PlaybackProgressDeleteInput {
+
+    private static final Gson GSON = new Gson();
 
     @SerializedName("historyKey")
     public String historyKey;
@@ -33,17 +35,46 @@ public class PlaybackProgressDeleteInput {
     public String configUrl;
     @SerializedName("confirm")
     public boolean confirm;
+    @SerializedName("action")
+    public String action;
+    @SerializedName("event")
+    public String event;
+    @SerializedName("deleted")
+    public boolean deleted;
+    @SerializedName("deletedAt")
+    public long deletedAt;
 
     public PlaybackProgressDeleteInput normalize() {
         historyKey = safe(historyKey);
-        siteKey = safe(siteKey);
-        vodId = safe(vodId);
+        siteKey = fallback(siteKey, part(historyKey, 0));
+        vodId = fallback(vodId, part(historyKey, 1));
         episodeName = safe(episodeName);
         configKey = PlaybackConfigIdentity.normalizeKey(configKey);
         configUrl = safe(configUrl);
-        if (TextUtils.isEmpty(configKey) && !TextUtils.isEmpty(configUrl)) configKey = PlaybackConfigIdentity.keyForUrl(configUrl);
-        scope = safe(scope).toLowerCase();
+        if (empty(configKey) && !empty(configUrl)) configKey = PlaybackConfigIdentity.keyForUrl(configUrl);
+        scope = safe(scope).toLowerCase(Locale.ROOT);
+        if (empty(scope) && confirm && !empty(siteKey) && empty(vodId)) scope = "site";
+        action = safe(action).toLowerCase(Locale.ROOT);
+        event = safe(event).toLowerCase(Locale.ROOT);
         return this;
+    }
+
+    public PlaybackProgressDeleteInput copy() {
+        PlaybackProgressDeleteInput input = new PlaybackProgressDeleteInput();
+        input.historyKey = historyKey;
+        input.siteKey = siteKey;
+        input.vodId = vodId;
+        input.episodeName = episodeName;
+        input.scope = scope;
+        input.cid = cid;
+        input.configKey = configKey;
+        input.configUrl = configUrl;
+        input.confirm = confirm;
+        input.action = action;
+        input.event = event;
+        input.deleted = deleted;
+        input.deletedAt = deletedAt;
+        return input;
     }
 
     public boolean isAllScope() {
@@ -56,21 +87,45 @@ public class PlaybackProgressDeleteInput {
         return "site".equals(scope);
     }
 
+    public boolean isDeleteOperation() {
+        normalize();
+        return deleted || "delete".equals(action) || "deleted".equals(action) || "remove".equals(action)
+                || "removed".equals(action) || "playback.deleted".equals(event);
+    }
+
     public static PlaybackProgressDeleteInput fromJson(JsonObject object) {
-        PlaybackProgressDeleteInput input = App.gson().fromJson(object, PlaybackProgressDeleteInput.class);
+        if (object == null) return new PlaybackProgressDeleteInput().normalize();
+        JsonObject source = object;
+        JsonElement deletedValue = object.get("deleted");
+        if (deletedValue != null && (!deletedValue.isJsonPrimitive() || !deletedValue.getAsJsonPrimitive().isBoolean())) {
+            source = object.deepCopy();
+            source.remove("deleted");
+        }
+        PlaybackProgressDeleteInput input = GSON.fromJson(source, PlaybackProgressDeleteInput.class);
         if (input == null) input = new PlaybackProgressDeleteInput();
         applyAliases(input, object);
         return input.normalize();
     }
 
     public static List<PlaybackProgressDeleteInput> listFromJson(String text) {
-        if (TextUtils.isEmpty(text)) return Collections.emptyList();
+        if (empty(text)) return Collections.emptyList();
         JsonElement element = JsonParser.parseString(text);
         if (element == null || element.isJsonNull()) return Collections.emptyList();
         JsonArray array = asArray(element);
-        if (array == null) return element.isJsonObject() ? Collections.singletonList(fromJson(element.getAsJsonObject())) : Collections.emptyList();
+        if (array == null) {
+            if (!element.isJsonObject()) return Collections.emptyList();
+            return Collections.singletonList(fromJson(unwrapSingle(element.getAsJsonObject())));
+        }
         List<PlaybackProgressDeleteInput> inputs = new ArrayList<>();
-        for (JsonElement item : array) if (item != null && item.isJsonObject()) inputs.add(fromJson(item.getAsJsonObject()));
+        for (JsonElement item : array) {
+            if (item == null || item.isJsonNull()) continue;
+            if (item.isJsonObject()) inputs.add(fromJson(item.getAsJsonObject()));
+            else if (item.isJsonPrimitive()) {
+                JsonObject marker = new JsonObject();
+                marker.addProperty("historyKey", item.getAsString());
+                inputs.add(fromJson(marker));
+            }
+        }
         return inputs;
     }
 
@@ -81,21 +136,45 @@ public class PlaybackProgressDeleteInput {
         input.configUrl = firstString(input.configUrl, object, "config_url", "interfaceUrl", "sourceConfigUrl");
         input.vodId = firstString(input.vodId, object, "vod_id", "videoId", "itemId");
         input.episodeName = firstString(input.episodeName, object, "episode", "episodeTitle", "vodRemarks", "remarks");
+        input.action = firstString(input.action, object, "op", "operation");
+        input.deletedAt = firstLong(input.deletedAt, object, "deleted_at", "timestamp", "updateTime", "updatedAt", "updated_at");
+        if (object.has("deleted")) input.deleted = booleanValue(object.get("deleted"), input.deleted);
     }
 
     private static JsonArray asArray(JsonElement element) {
         if (element.isJsonArray()) return element.getAsJsonArray();
         if (!element.isJsonObject()) return null;
         JsonObject object = element.getAsJsonObject();
-        for (String key : new String[]{"items", "records", "data", "list"}) {
+        for (String key : new String[]{"items", "records", "data", "list", "deleted", "deletions", "tombstones", "removed", "deletedItems"}) {
             JsonElement value = object.get(key);
             if (value != null && value.isJsonArray()) return value.getAsJsonArray();
         }
         return null;
     }
 
+    private static JsonObject unwrapSingle(JsonObject object) {
+        for (String key : new String[]{"data", "record", "item"}) {
+            JsonElement value = object.get(key);
+            if (value == null || !value.isJsonObject()) continue;
+            JsonObject target = value.getAsJsonObject().deepCopy();
+            inherit(target, object, "action", "op", "operation", "event", "deleted", "scope", "confirm",
+                    "deletedAt", "timestamp", "updatedAt", "cid", "configKey", "configUrl");
+            return target;
+        }
+        return object;
+    }
+
+    private static void inherit(JsonObject target, JsonObject source, String... keys) {
+        for (String key : keys) {
+            if (target.has(key) || !source.has(key)) continue;
+            JsonElement value = source.get(key);
+            if (value == null || value.isJsonArray() || value.isJsonObject()) continue;
+            target.add(key, value);
+        }
+    }
+
     private static String firstString(String current, JsonObject object, String... keys) {
-        if (!TextUtils.isEmpty(current)) return current;
+        if (!empty(current)) return current;
         for (String key : keys) {
             try {
                 JsonElement value = object.get(key);
@@ -106,7 +185,47 @@ public class PlaybackProgressDeleteInput {
         return current;
     }
 
+    private static long firstLong(long current, JsonObject object, String... keys) {
+        if (current > 0) return current;
+        for (String key : keys) {
+            try {
+                JsonElement value = object.get(key);
+                if (value != null && !value.isJsonNull()) return value.getAsLong();
+            } catch (Exception ignored) {
+            }
+        }
+        return current;
+    }
+
+    private static boolean booleanValue(JsonElement value, boolean fallback) {
+        try {
+            if (value == null || value.isJsonNull() || !value.isJsonPrimitive()) return fallback;
+            if (value.getAsJsonPrimitive().isNumber()) return value.getAsInt() != 0;
+            String text = value.getAsString().trim();
+            return "true".equalsIgnoreCase(text) || "1".equals(text) || "yes".equalsIgnoreCase(text);
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String part(String key, int index) {
+        try {
+            String[] parts = safe(key).split(AppDatabase.SYMBOL);
+            return parts.length > index ? parts[index] : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static String fallback(String value, String fallback) {
+        return empty(value) ? safe(fallback) : safe(value);
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean empty(String value) {
+        return value == null || value.isEmpty();
     }
 }

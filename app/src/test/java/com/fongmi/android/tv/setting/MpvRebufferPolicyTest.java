@@ -13,7 +13,7 @@ public class MpvRebufferPolicyTest {
         assertEquals(2_000, MpvPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_AUTO));
         assertEquals(2_000, MpvPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_RECOMMENDED));
         assertEquals(3_000, MpvPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_COMPATIBLE));
-        assertEquals(1_000, MpvPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
+        assertEquals(3_000, MpvPerformanceSetting.rebufferForPreset(PlaybackPerformanceSetting.PROFILE_LIGHTWEIGHT));
     }
 
     @Test

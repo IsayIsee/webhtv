@@ -1,3 +1,5 @@
+mod playback;
+
 use axum::{
     body::Bytes,
     extract::{
@@ -28,6 +30,8 @@ use tower_http::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use playback::PlaybackService;
+
 const SERVER_MODE: &str = "rust";
 const BIND_TTL_MS: i64 = 10 * 60 * 1000;
 const COMMAND_TTL_MS: i64 = 60 * 60 * 1000;
@@ -38,9 +42,18 @@ type SharedState = Arc<AppState>;
 type JsonMap = Map<String, Value>;
 type WsSender = mpsc::UnboundedSender<Value>;
 
-#[derive(Default)]
 struct AppState {
     relay: Mutex<RelayState>,
+    playback: Mutex<PlaybackService>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            relay: Mutex::new(RelayState::default()),
+            playback: Mutex::new(PlaybackService::from_env()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -203,6 +216,16 @@ async fn main() {
     let app = Router::new()
         .route("/api/health", get(health))
         .route("/api/server/capabilities", get(server_capabilities))
+        .route(
+            "/api/playback/sync",
+            get(playback::get_sync).post(playback::post_sync),
+        )
+        .route(
+            "/playback/sync",
+            get(playback::get_sync).post(playback::post_sync),
+        )
+        .route("/api/playback/sync/status", get(playback::get_status))
+        .route("/playback/sync/status", get(playback::get_status))
         .route("/api/device/register", post(register_device))
         .route("/api/device/bind-code", post(create_bind_code))
         .route("/api/device/poll", post(poll_device))
@@ -998,6 +1021,8 @@ fn capabilities() -> Value {
             "shellProxyManage": false,
             "siteInjectManage": false,
             "webHomeExtensionManage": false,
+            "playbackSync": playback::playback_available(),
+            "playbackPersistentStorage": playback::playback_available() && playback::playback_persistent(),
             "multiDeviceBatch": false,
             "webSocket": true,
             "persistentStorage": false,
@@ -1377,9 +1402,8 @@ async fn cleanup(state: &SharedState) {
     let expired_commands = relay
         .commands
         .iter()
-        .filter_map(|(id, command)| {
-            is_expired(command.created_at, COMMAND_TTL_MS).then(|| id.clone())
-        })
+        .filter(|(_, command)| is_expired(command.created_at, COMMAND_TTL_MS))
+        .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
     for id in expired_commands {
         relay.commands.remove(&id);
@@ -1387,7 +1411,8 @@ async fn cleanup(state: &SharedState) {
     let expired_syncs = relay
         .syncs
         .iter()
-        .filter_map(|(id, sync)| is_expired(sync.created_at, SYNC_TTL_MS).then(|| id.clone()))
+        .filter(|(_, sync)| is_expired(sync.created_at, SYNC_TTL_MS))
+        .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
     for id in expired_syncs {
         if let Some(sync) = relay.syncs.remove(&id) {
@@ -1501,8 +1526,14 @@ fn normalize_origin(value: &str) -> Option<String> {
     if value.is_empty() || (!value.starts_with("http://") && !value.starts_with("https://")) {
         return None;
     }
-    let scheme = if value.starts_with("https://") { "https://" } else { "http://" };
-    let mut rest = value.trim_start_matches("https://").trim_start_matches("http://");
+    let scheme = if value.starts_with("https://") {
+        "https://"
+    } else {
+        "http://"
+    };
+    let mut rest = value
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
     if let Some(index) = rest.find(&['/', '?', '#'][..]) {
         rest = &rest[..index];
     }

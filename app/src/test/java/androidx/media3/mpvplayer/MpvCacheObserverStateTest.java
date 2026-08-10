@@ -79,7 +79,7 @@ public class MpvCacheObserverStateTest {
     }
 
     @Test
-    public void freshDynamicObserverValueExitsStaleFallback() {
+    public void freshSpeedObserverDoesNotHideStaleTimelineMetrics() {
         MpvCacheObserverState state = new MpvCacheObserverState();
         recordAllMetrics(state, 1_000);
         state.onFileLoaded(1_000);
@@ -87,9 +87,22 @@ public class MpvCacheObserverStateTest {
 
         state.record("cache-speed", 4096L, 16_000);
 
-        assertFalse(state.needsFallback(MpvCacheObserverState.Metric.DURATION, true, 16_000));
-        assertFalse(state.shouldQueryFallback(true, true, 30_999));
-        assertTrue(state.shouldQueryFallback(true, true, 31_000));
+        assertTrue(state.needsFallback(MpvCacheObserverState.Metric.DURATION, true, 16_000));
+        assertFalse(state.needsFallback(MpvCacheObserverState.Metric.SPEED, true, 16_000));
+        assertTrue(state.shouldQueryFallback(true, true, 16_000));
+    }
+
+    @Test
+    public void pausedEnabledCacheQueriesTimelineOncePerSecondEvenWhenIdle() {
+        MpvCacheObserverState state = new MpvCacheObserverState();
+        state.onFileLoaded(1_000);
+
+        assertTrue(state.shouldQueryPausedTimeline(true, true, true, 1_000));
+        state.onPausedTimelineQuery(1_000);
+        assertFalse(state.shouldQueryPausedTimeline(true, true, true, 1_999));
+        assertTrue(state.shouldQueryPausedTimeline(true, true, true, 2_000));
+        assertFalse(state.shouldQueryPausedTimeline(true, false, true, 3_000));
+        assertFalse(state.shouldQueryPausedTimeline(true, true, false, 3_000));
     }
 
     @Test

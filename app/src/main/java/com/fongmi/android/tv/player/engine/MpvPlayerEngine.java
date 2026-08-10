@@ -20,13 +20,16 @@ import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.bean.Track;
 import com.fongmi.android.tv.player.PlayerHelper;
 import com.fongmi.android.tv.player.PlaybackRoute;
+import com.fongmi.android.tv.player.PlaybackResourceClassifier;
 import com.fongmi.android.tv.player.PlaybackTrace;
 import com.fongmi.android.tv.player.exo.ExoUtil;
 import com.fongmi.android.tv.player.exo.TrackUtil;
 import com.fongmi.android.tv.player.lut.MpvLutShader;
 import com.fongmi.android.tv.player.mpv.MpvConfigStore;
+import com.fongmi.android.tv.player.mpv.MpvAutoControlPolicy;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.setting.MpvPerformanceSetting;
+import com.fongmi.android.tv.setting.PlaybackPerformanceSetting;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 import com.github.catvod.crawler.SpiderDebug;
@@ -200,6 +203,43 @@ public class MpvPlayerEngine implements PlayerEngine {
     }
 
     @Override
+    public PlaybackFactsSnapshot getPlaybackFactsSnapshot() {
+        Format video = TrackUtil.explicitlySelectedFormat(getCurrentTracks(), C.TRACK_TYPE_VIDEO);
+        Format audio = TrackUtil.explicitlySelectedFormat(getCurrentTracks(), C.TRACK_TYPE_AUDIO);
+        String hwdec = player.getObservedHwdecCurrent();
+        String currentVo = player.getObservedCurrentVideoOutput();
+        return new PlaybackFactsSnapshot(
+                video,
+                audio,
+                video,
+                audio,
+                "",
+                "",
+                decoderKind(hwdec, player.hasObservedHwdecCurrent()),
+                null,
+                hwdec,
+                currentVo,
+                null);
+    }
+
+    @Override
+    public RuntimeMetrics getRuntimeMetrics() {
+        PlayerCacheState cache = player.getCachedCacheState();
+        long inputBytesPerSecond = cache.rawInputBytesPerSecond();
+        long bandwidth = inputBytesPerSecond > Long.MAX_VALUE / 8L
+                ? Long.MAX_VALUE : inputBytesPerSecond * 8L;
+        Format video = TrackUtil.explicitlySelectedFormat(getCurrentTracks(), C.TRACK_TYPE_VIDEO);
+        Format audio = TrackUtil.explicitlySelectedFormat(getCurrentTracks(), C.TRACK_TYPE_AUDIO);
+        long mediaBitrate = safeAdd(formatBitrate(video), formatBitrate(audio));
+        float frameRate = player.getObservedDisplayFrameRate();
+        return new RuntimeMetrics(
+                bandwidth > 0 ? bandwidth : null,
+                mediaBitrate > 0 ? mediaBitrate : null,
+                frameRate > 0 ? frameRate : null,
+                player.hasObservedDroppedFrames() ? player.getObservedDroppedFrames() : null);
+    }
+
+    @Override
     public boolean supportsNativeLut() {
         return !surfaceDirect;
     }
@@ -210,6 +250,57 @@ public class MpvPlayerEngine implements PlayerEngine {
 
     public void setSurfaceDirectOverride(@Nullable Boolean value) {
         surfaceDirectOverride = value;
+    }
+
+    public MpvPlayer.AutoCacheBaselineResult applyAutoCacheBaseline(
+            String traceId, long forwardBytes, long backBytes) {
+        player.setPlaybackTraceId(traceId);
+        return player.applyAutoCacheBaseline(forwardBytes, backBytes);
+    }
+
+    /** Observer-only native cache counters; this never performs a synchronous property query. */
+    public PlayerCacheState getAutoCacheSnapshot() {
+        return player.getCachedCacheState();
+    }
+
+    public void clearAutoCacheBaseline() {
+        player.clearAutoCacheBaseline();
+    }
+
+    public boolean updateAutomaticPreloadControl(
+            boolean automatic,
+            boolean resourceAllowed,
+            boolean trafficAllowed) {
+        return player.updateAutomaticPreloadControl(
+                automatic, resourceAllowed, trafficAllowed);
+    }
+
+    public void requestAutomaticHlsPreload(long positionMs) {
+        player.requestAutomaticHlsPreload(positionMs);
+    }
+
+    public void stopAutomaticHlsPreload() {
+        player.updateAutomaticPreloadControl(true, false, false);
+    }
+
+    public MpvPlayer.AutoHlsBitrateResult applyAutoHlsBitrate(
+            String traceId, String option) {
+        player.setPlaybackTraceId(traceId);
+        return player.applyAutoHlsBitrate(option);
+    }
+
+    public void clearAutoHlsBitrate() {
+        player.clearAutoHlsBitrate();
+    }
+
+    /** Cached track/proxy HLS state; this method never performs a native query. */
+    public MpvPlayer.AutoHlsRuntimeSnapshot getAutoHlsRuntimeSnapshot() {
+        return player.getAutoHlsRuntimeSnapshot();
+    }
+
+    /** Proxy-only upstream and disk facts; this never performs a native query. */
+    public MpvPlayer.AutoHlsPreloadRuntimeSnapshot getAutoHlsPreloadRuntimeSnapshot() {
+        return player.getAutoHlsPreloadRuntimeSnapshot();
     }
 
     @Override
@@ -247,6 +338,11 @@ public class MpvPlayerEngine implements PlayerEngine {
         PlaybackRoute.Resolution current = player.getPlaybackRouteResolution();
         if (current.route() != PlaybackRoute.OTHER) return current;
         return spec == null ? current : spec.getPlaybackRoute();
+    }
+
+    @Override
+    public PlaybackResourceClassifier.Classification getResourceClassification() {
+        return player.getResourceClassification();
     }
 
     @Override
@@ -395,8 +491,19 @@ public class MpvPlayerEngine implements PlayerEngine {
         return message != null && message.startsWith(prefix);
     }
 
+    private DecoderKind decoderKind(String hwdec, boolean observed) {
+        if (!observed) return DecoderKind.UNKNOWN;
+        if (hwdec == null || hwdec.isBlank()) return DecoderKind.SOFTWARE;
+        String value = hwdec.trim().toLowerCase(java.util.Locale.US);
+        return value.equals("no") || value.equals("none") || value.equals("software")
+                ? DecoderKind.SOFTWARE : DecoderKind.HARDWARE;
+    }
+
     private MpvPlayer buildPlayer(Player.Listener listener) {
         MpvPlayer player = new MpvPlayer(App.get(), buildConfig());
+        if (PlaybackPerformanceSetting.isAuto(PlayerSetting.MPV)) {
+            player.updateAutomaticPreloadControl(true, false, false);
+        }
         player.setVideoSizeProbeListener(videoSizeProbeListener);
         player.addListener(listener);
         return player;
@@ -421,10 +528,13 @@ public class MpvPlayerEngine implements PlayerEngine {
                 .logLevel(MpvPerformanceSetting.isVerboseLog() ? "all=v" : "all=warn")
                 .demuxerMaxBytes(getDemuxerMaxBytes())
                 .demuxerMaxBackBytes(getDemuxerMaxBackBytes())
-                .cacheSeconds(getDemuxerReadAheadSeconds())
-                .demuxerReadaheadSeconds(getDemuxerReadAheadSeconds())
+                .cacheSeconds(getCacheTargetSeconds())
+                .demuxerReadaheadSeconds(MpvPlayerConfig.DEFAULT_DEMUXER_READAHEAD_SECONDS)
+                .demuxerHysteresisSeconds(MpvPlayerConfig.DEFAULT_DEMUXER_HYSTERESIS_SECONDS)
                 .rebufferMs(MpvPerformanceSetting.getRebufferMs())
                 .performanceOptionsPriority(MpvPerformanceSetting.isPerformancePriority())
+                .automaticCacheTime(PlaybackPerformanceSetting.isAuto(PlayerSetting.MPV))
+                .automaticHlsVariant(PlaybackPerformanceSetting.isAuto(PlayerSetting.MPV))
                 .option("framedrop", MpvPerformanceSetting.getFrameDropOption())
                 .option("video-sync", MpvPerformanceSetting.getSyncOption())
                 .option("interpolation", MpvPerformanceSetting.isInterpolation() ? "yes" : "no")
@@ -462,11 +572,17 @@ public class MpvPlayerEngine implements PlayerEngine {
     }
 
     private long getDemuxerMaxBytes() {
+        if (PlaybackPerformanceSetting.isAuto(PlayerSetting.MPV)) {
+            return MpvAutoControlPolicy.MIN_FORWARD_BYTES;
+        }
         int bytes = PlayerSetting.getBufferBytes(PlayerSetting.MPV);
         return bytes > 0 ? bytes : MpvPlayerConfig.DEFAULT_DEMUXER_BYTES;
     }
 
     private long getDemuxerMaxBackBytes() {
+        if (PlaybackPerformanceSetting.isAuto(PlayerSetting.MPV)) {
+            return MpvAutoControlPolicy.INITIAL_BACK_BYTES;
+        }
         if (PlayerSetting.getBackBufferMs(PlayerSetting.MPV) <= 0) return 0;
         long forward = getDemuxerMaxBytes();
         return switch (PlayerSetting.getBackBufferOption(PlayerSetting.MPV)) {
@@ -477,7 +593,20 @@ public class MpvPlayerEngine implements PlayerEngine {
         };
     }
 
-    private int getDemuxerReadAheadSeconds() {
+    private int getCacheTargetSeconds() {
         return Math.min(60, Math.max(15, PlayerSetting.getBuffer(PlayerSetting.MPV) * 3));
+    }
+
+    private static long formatBitrate(Format format) {
+        if (format == null) return 0;
+        if (format.averageBitrate > 0) return format.averageBitrate;
+        if (format.peakBitrate > 0) return format.peakBitrate;
+        return Math.max(0, format.bitrate);
+    }
+
+    private static long safeAdd(long first, long second) {
+        if (first <= 0) return Math.max(0, second);
+        if (second <= 0) return first;
+        return first > Long.MAX_VALUE - second ? Long.MAX_VALUE : first + second;
     }
 }

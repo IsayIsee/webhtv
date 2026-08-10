@@ -16,6 +16,8 @@ const CAPABILITIES = {
   shellProxyManage: false,
   siteInjectManage: false,
   webHomeExtensionManage: false,
+  playbackSync: false,
+  playbackPersistentStorage: false,
   multiDeviceBatch: false,
   webSocket: false,
   persistentStorage: false,
@@ -99,7 +101,11 @@ function capabilities(options) {
     relayMode: 'origin-token-memory',
     time: Date.now(),
     maxSyncPartBytes: MAX_SYNC_PART_BYTES,
-    capabilities: CAPABILITIES
+    capabilities: {
+      ...CAPABILITIES,
+      playbackSync: options.playbackSync === true,
+      playbackPersistentStorage: options.playbackPersistentStorage === true
+    }
   };
 }
 

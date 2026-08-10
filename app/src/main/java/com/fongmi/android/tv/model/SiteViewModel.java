@@ -16,6 +16,7 @@ import com.fongmi.android.tv.setting.SiteHealthStore;
 import com.fongmi.android.tv.utils.Task;
 import com.google.common.util.concurrent.FluentFuture;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.google.common.util.concurrent.MoreExecutors;
 
 import java.util.EnumMap;
@@ -27,6 +28,7 @@ import java.util.Objects;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,6 +45,7 @@ public class SiteViewModel extends ViewModel {
     private final Map<TaskType, ListenableFuture<?>> futures;
     private final Map<TaskType, AtomicInteger> taskIds;
     private final List<Future<?>> searchFuture;
+    private final ListeningExecutorService playerExecutor;
     private final AtomicInteger searchEpoch;
     private KaraokeResult karaokeResult;
     private int karaokeResultAction;
@@ -55,6 +58,9 @@ public class SiteViewModel extends ViewModel {
         action = new MutableLiveData<>();
         searchEpoch = new AtomicInteger(0);
         searchFuture = new CopyOnWriteArrayList<>();
+        // Player spiders can share a loopback proxy and may ignore interruption.
+        // Keep resolutions serial so a canceled source fully exits before the next starts.
+        playerExecutor = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor());
         futures = new EnumMap<>(TaskType.class);
         taskIds = new EnumMap<>(TaskType.class);
         for (TaskType type : TaskType.values()) taskIds.put(type, new AtomicInteger(0));
@@ -186,7 +192,8 @@ public class SiteViewModel extends ViewModel {
         int currentId = taskId.incrementAndGet();
         ListenableFuture<?> old = futures.get(type);
         if (old != null) old.cancel(true);
-        FluentFuture<Result> future = FluentFuture.from(Task.executor().submit(callable)).withTimeout(Constant.TIMEOUT_VOD, TimeUnit.MILLISECONDS, Task.scheduler());
+        ListeningExecutorService executor = type == TaskType.PLAYER ? playerExecutor : Task.executor();
+        FluentFuture<Result> future = FluentFuture.from(executor.submit(callable)).withTimeout(Constant.TIMEOUT_VOD, TimeUnit.MILLISECONDS, Task.scheduler());
         futures.put(type, future);
         future.addCallback(Task.callback(
                 result -> {
@@ -217,6 +224,7 @@ public class SiteViewModel extends ViewModel {
         super.onCleared();
         stopSearch();
         futures.values().forEach(future -> future.cancel(true));
+        playerExecutor.shutdownNow();
     }
 
     private enum TaskType {RESULT, PLAYER, ACTION}

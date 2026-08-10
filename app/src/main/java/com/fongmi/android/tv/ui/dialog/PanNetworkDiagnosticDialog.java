@@ -856,7 +856,7 @@ public final class PanNetworkDiagnosticDialog extends DialogFragment implements 
             case PLAYER_BUFFERING -> "播放器缓冲策略需要排查";
             case DECODE_RENDER -> "解码或渲染性能不足";
             case SUFFICIENT -> "本次完整链路满足播放需求";
-            case INCONCLUSIVE -> "当前证据不足，无法可靠归因";
+            case INCONCLUSIVE -> "本次未定位到明确瓶颈";
         };
     }
 

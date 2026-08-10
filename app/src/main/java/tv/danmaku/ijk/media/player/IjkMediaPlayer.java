@@ -119,6 +119,8 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private boolean mScreenOnWhilePlaying;
     private boolean mStayAwake;
     private SurfaceHolder mSurfaceHolder;
+    private boolean mAudioCodecInfoFailureLogged;
+    private boolean mVideoCodecInfoFailureLogged;
     private int mVideoHeight;
     private int mVideoSarDen;
     private int mVideoSarNum;
@@ -128,6 +130,8 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     private static volatile boolean mIsNativeInitialized = false;
     private static volatile boolean mIsPropertyFloatAvailable = true;
     private static volatile boolean mIsVideoSurfaceAvailable = true;
+    private static volatile boolean mIsAudioCodecInfoAvailable = true;
+    private static volatile boolean mIsVideoCodecInfoAvailable = true;
 
     /* renamed from: tv.danmaku.ijk.media.player.IjkMediaPlayer$1, reason: invalid class name */
     public static class AnonymousClass1 extends IjkLibLoader {
@@ -639,6 +643,21 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
         return _getPropertyLong(FFP_PROP_INT64_BIT_RATE, 0L);
     }
 
+    public String getAudioCodecInfo() {
+        if (!LOADER.isAvailable() || !mIsAudioCodecInfoAvailable || mNativeMediaPlayer == 0) return "";
+        try {
+            String value = _getAudioCodecInfo();
+            return value == null ? "" : value;
+        } catch (Throwable error) {
+            if (error instanceof UnsatisfiedLinkError) mIsAudioCodecInfoAvailable = false;
+            if (!mAudioCodecInfoFailureLogged) {
+                mAudioCodecInfoFailureLogged = true;
+                Log.w(TAG, "IJK audio codec info unavailable type=" + error.getClass().getSimpleName());
+            }
+            return "";
+        }
+    }
+
     public long getCacheStatisticCountBytes() {
         return _getPropertyLong(FFP_PROP_INT64_CACHE_STATISTIC_COUNT_BYTES, 0L);
     }
@@ -732,6 +751,21 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
 
     public int getVideoDecoder() {
         return (int) _getPropertyLong(FFP_PROP_INT64_VIDEO_DECODER, 0L);
+    }
+
+    public String getVideoCodecInfo() {
+        if (!LOADER.isAvailable() || !mIsVideoCodecInfoAvailable || mNativeMediaPlayer == 0) return "";
+        try {
+            String value = _getVideoCodecInfo();
+            return value == null ? "" : value;
+        } catch (Throwable error) {
+            if (error instanceof UnsatisfiedLinkError) mIsVideoCodecInfoAvailable = false;
+            if (!mVideoCodecInfoFailureLogged) {
+                mVideoCodecInfoFailureLogged = true;
+                Log.w(TAG, "IJK video codec info unavailable type=" + error.getClass().getSimpleName());
+            }
+            return "";
+        }
     }
 
     @Override // tv.danmaku.ijk.media.player.IMediaPlayer

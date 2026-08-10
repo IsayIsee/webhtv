@@ -114,7 +114,7 @@ public class LiveControlDialog extends BaseBottomSheetDialog {
         binding.change.setOnClickListener(v -> active(binding.change, parent.control.action.change));
         binding.listTransparent.setOnClickListener(v -> setListStyle(true));
         binding.listReadable.setOnClickListener(v -> setListStyle(false));
-        binding.player.setOnClickListener(v -> click(binding.player, parent.control.action.player));
+        binding.player.setOnClickListener(v -> dismiss(parent.control.action.player));
         binding.player.setOnLongClickListener(v -> longClick(binding.player, parent.control.action.player));
         binding.decode.setOnClickListener(v -> click(binding.decode, parent.control.action.decode));
         binding.text.setOnClickListener(v -> onTrack(binding.text));
@@ -179,6 +179,11 @@ public class LiveControlDialog extends BaseBottomSheetDialog {
     private void click(TextView view, TextView target) {
         target.performClick();
         view.setText(target.getText());
+    }
+
+    private void dismiss(View target) {
+        target.postDelayed(target::performClick, 200);
+        dismiss();
     }
 
     private boolean longClick(TextView view, TextView target) {

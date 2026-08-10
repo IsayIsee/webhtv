@@ -139,6 +139,7 @@ import com.fongmi.android.tv.ui.dialog.EpisodeGridDialog;
 import com.fongmi.android.tv.ui.dialog.EpisodeListDialog;
 import com.fongmi.android.tv.ui.dialog.InfoDialog;
 import com.fongmi.android.tv.ui.dialog.LutPanelDialog;
+import com.fongmi.android.tv.ui.dialog.PlayerKernelDialog;
 import com.fongmi.android.tv.ui.dialog.QuickSearchDialog;
 import com.fongmi.android.tv.ui.dialog.ReceiveDialog;
 import com.fongmi.android.tv.ui.dialog.SubtitleDialog;
@@ -286,6 +287,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private boolean playHealthRecorded;
     private boolean playerKernelSwitchRefreshing;
     private boolean decodeSwitchRefreshing;
+    private int deferredFullscreenOrientation = Configuration.ORIENTATION_UNDEFINED;
     private int mEpisodeSpanCount;
     private int mStatusBarInset;
     private int mEpisodeBottomInset;
@@ -555,6 +557,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         setPlayerKernel();
         setDecode();
         setLut();
+        applyDeferredFullscreenOrientation();
         checkLand();
         if (consumePendingPlaybackResult()) return;
         checkId();
@@ -955,8 +958,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private int getEpisodeSpanCount() {
-        if (ResUtil.isLand(this)) return 6;
-        return ResUtil.isPad() ? 6 : 4;
+        return EpisodeGridLayoutPolicy.getMaxSpan(isLand(), ResUtil.isPad());
     }
 
     private void setVideoView() {
@@ -981,7 +983,6 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         addActionButton(PlayerButtonSetting.SPEED, mBinding.control.action.speed);
         addActionButton(PlayerButtonSetting.SCALE, mBinding.control.action.scale);
         addActionButton(PlayerButtonSetting.LUT, mBinding.control.action.lut);
-        addActionButton(PlayerButtonSetting.KARAOKE, mBinding.control.action.karaoke);
         addActionButton(PlayerButtonSetting.RESET, mBinding.control.action.reset);
         addActionButton(PlayerButtonSetting.REPEAT, mBinding.control.action.repeat);
         addActionButton(PlayerButtonSetting.TEXT, mBinding.control.action.text);
@@ -1412,7 +1413,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         for (Episode item : items) maxLen = Math.max(maxLen, item.getDisplayName().length());
         if (maxLen >= 12) return PlayerSetting.getEpisodeColumn();
         int ideal = maxLen >= 10 ? 130 : maxLen >= 7 ? 104 : 80;
-        int width = mBinding.episode.getWidth() > 0 ? mBinding.episode.getWidth() : ResUtil.getScreenWidth(this) - ResUtil.dp2px(32);
+        int width = EpisodeGridLayoutPolicy.getAvailableWidth(
+                mBinding.episode.getWidth(),
+                ResUtil.getScreenWidth(this),
+                ResUtil.getScreenHeight(this),
+                ResUtil.dp2px(32),
+                isLand(),
+                ResUtil.isLand(this));
         int span = width / ResUtil.dp2px(ideal);
         return Math.max(2, Math.min(getEpisodeSpanCount(), span));
     }
@@ -3409,14 +3416,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private void setKaraokeActionState() {
         if (mBinding.control.action.karaoke != null) {
             mBinding.control.action.karaoke.setSelected(PlayerSetting.isKaraokeMode());
-            mBinding.control.action.karaoke.setVisibility(isKaraokeActionAvailable() ? View.VISIBLE : View.GONE);
+            mBinding.control.action.karaoke.setVisibility(View.GONE);
         }
         if (mBinding.audioKaraokeAction != null) mBinding.audioKaraokeAction.setSelected(PlayerSetting.isKaraokeMode());
         applyActionButtonVisibility();
-    }
-
-    private boolean isKaraokeActionAvailable() {
-        return service() != null && (isAudioOnly() || isMusicLike());
     }
 
     private void applyKaraokeTrackChange(boolean enableMode) {
@@ -3793,21 +3796,26 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void onPlayerKernel() {
-        if (refreshAndSwitchPlayerKernel()) return;
+        if (playerKernelSwitchRefreshing) return;
+        PlayerKernelDialog.show(this, player().getPlayerType(), this::switchPlayerKernel);
+    }
+
+    private void switchPlayerKernel(int type) {
+        if (refreshAndSwitchPlayerKernel(type)) return;
         mClock.setCallback(null);
         clearLyrics();
-        player().togglePlayer();
+        player().switchPlayer(type);
         setPlayerKernel();
         setDecode();
         setR1Callback();
     }
 
-    private boolean refreshAndSwitchPlayerKernel() {
+    private boolean refreshAndSwitchPlayerKernel(int type) {
         if (playerKernelSwitchRefreshing) return true;
         Flag currentFlag = getFlag();
         Episode currentEpisode = getEpisode();
         if (currentFlag == null || currentEpisode == null || TextUtils.isEmpty(currentFlag.getFlag()) || TextUtils.isEmpty(currentEpisode.getUrl())) return false;
-        int nextType = PlayerSetting.nextPlayer(player().getPlayerType());
+        int nextType = PlayerSetting.sanitizePlayer(type);
         long position = getPlayerSwitchPosition();
         float speed = player().getSpeed();
         boolean repeat = player().isRepeatOne();
@@ -3881,6 +3889,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private void enterFullscreen() {
         if (isFullscreen()) return;
+        if (service() == null) {
+            SpiderDebug.log("video-flow", "fullscreen enter deferred reason=player-not-ready");
+            return;
+        }
         logVideoFrame("enterFullscreen before");
         setFullscreen(true);
         if (isLand() && !player().isPortrait()) setTransition();
@@ -3897,6 +3909,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private void exitFullscreen() {
         if (!isFullscreen()) return;
+        if (service() == null) {
+            SpiderDebug.log("video-flow", "fullscreen exit deferred reason=player-not-ready");
+            return;
+        }
         logVideoFrame("exitFullscreen before");
         setFullscreen(false);
         if (isLand() && !player().isPortrait()) setTransition();
@@ -4379,8 +4395,9 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
         @Override
         public void onAudio() {
-            moveTaskToBack(true);
             setAudioOnly(true);
+            syncPiPForPlaybackMode();
+            moveTaskToBack(true);
         }
     };
 
@@ -4400,7 +4417,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     protected void onTracksChanged() {
         updateAudioOnlyState();
-        suppressPiPForAudio();
+        syncPiPForPlaybackMode();
         refreshLyrics();
         setTrackVisible();
         mClock.setCallback(this);
@@ -4424,11 +4441,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         if (visible) ensureImmersiveAudioControllers();
         if (visible && isAutoRotate() && !isLock() && !isRotate()) setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR);
         if (mAudioStageVisible == visible) {
+            syncPiPForPlaybackMode();
             updateAudioStageText();
             updateAudioStageControls();
             return;
         }
         mAudioStageVisible = visible;
+        syncPiPForPlaybackMode();
         if (!visible) mAudioLightEffectAnimated = false;
         mBinding.audioStage.setVisibility(visible ? View.VISIBLE : View.GONE);
         if (visible) mBinding.audioStage.bringToFront();
@@ -5585,6 +5604,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
                 player().reset();
                 break;
             case Player.STATE_ENDED:
+                checkEnded(true);
                 break;
         }
     }
@@ -5595,12 +5615,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         debugLyricsLoop("playingChanged=" + isPlaying, true);
         syncLyricsPlaybackState(isPlaying);
         syncKaraokePosition();
+        boolean audioMode = syncPiPForPlaybackMode();
         if (isPlaying) {
-            if (!suppressPiPForAudio()) mPiP.update(this, true);
+            if (!audioMode) mPiP.update(this, true);
             mBinding.control.play.setImageResource(androidx.media3.ui.R.drawable.exo_icon_pause);
             checkAudioPlayImg(true);
         } else if (isPaused()) {
-            if (!suppressPiPForAudio()) mPiP.update(this, false);
+            if (!audioMode) mPiP.update(this, false);
             mBinding.control.play.setImageResource(androidx.media3.ui.R.drawable.exo_icon_play);
             checkAudioPlayImg(false);
         }
@@ -6179,7 +6200,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     private boolean preparePiP(String reason) {
         if (isRedirect() || isPlaybackExiting()) return false;
-        if (suppressPiPForAudio()) return false;
+        if (syncPiPForPlaybackMode()) return false;
         if (service() == null || !player().haveTrack(C.TRACK_TYPE_VIDEO)) return false;
         mPiP.update(this, player().getVideoWidth(), player().getVideoHeight(), getScale());
         return true;
@@ -6192,21 +6213,19 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private boolean enterPiP(String reason) {
-        if (suppressPiPForAudio()) return false;
+        if (syncPiPForPlaybackMode()) return false;
         if (service() == null || !player().haveTrack(C.TRACK_TYPE_VIDEO)) return false;
         return mPiP.enter(this, player().getVideoWidth(), player().getVideoHeight(), getScale());
     }
 
-    private boolean suppressPiPForAudio() {
-        if (!isAudioContentForPiP()) return false;
-        mPiP.disableAutoEnter(this);
-        return true;
+    private boolean syncPiPForPlaybackMode() {
+        boolean audioMode = isAudioBackgroundMode();
+        if (mPiP != null) mPiP.setAudioMode(this, audioMode);
+        return audioMode;
     }
 
-    private boolean isAudioContentForPiP() {
-        if (service() == null) return false;
-        updateAudioOnlyState();
-        return isAudioOnly() || isMusicLike() || LyricsController.isAudioContent(player());
+    private boolean isAudioBackgroundMode() {
+        return mAudioStageVisible || isAudioOnly();
     }
 
     @Override
@@ -6242,9 +6261,30 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             recreate();
             return;
         }
-        if (isAutoRotate() && isPort() && newConfig.orientation == Configuration.ORIENTATION_PORTRAIT && !isRotate() && !isLock()) exitFullscreen();
-        if (isAutoRotate() && isPort() && newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) enterFullscreen();
+        syncFullscreenForOrientation(newConfig.orientation);
         if (isFullscreen()) Util.hideSystemUI(this);
+    }
+
+    private void syncFullscreenForOrientation(int orientation) {
+        if (!isAutoRotate() || !isPort()) {
+            deferredFullscreenOrientation = Configuration.ORIENTATION_UNDEFINED;
+            return;
+        }
+        if (service() == null) {
+            deferredFullscreenOrientation = orientation;
+            SpiderDebug.log("video-flow", "fullscreen orientation deferred orientation=%d reason=player-not-ready", orientation);
+            return;
+        }
+        deferredFullscreenOrientation = Configuration.ORIENTATION_UNDEFINED;
+        if (orientation == Configuration.ORIENTATION_PORTRAIT && !isRotate() && !isLock()) exitFullscreen();
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE) enterFullscreen();
+    }
+
+    private void applyDeferredFullscreenOrientation() {
+        int orientation = deferredFullscreenOrientation;
+        if (orientation == Configuration.ORIENTATION_UNDEFINED) return;
+        SpiderDebug.log("video-flow", "fullscreen orientation resume orientation=%d", orientation);
+        syncFullscreenForOrientation(orientation);
     }
 
     private boolean shouldRecreateAudioStageForOrientation(Configuration config) {

@@ -53,7 +53,7 @@ public final class RemoteStore {
                     store = parse(Path.read(file));
                     if (store != null) Prefers.put(KEY_STORE, App.gson().toJson(ensure(store)));
                 } else {
-                    SpiderDebug.log("remote", "skip oversized profile file size=%d", file.length());
+                    log("skip oversized profile file size=%d", file.length());
                 }
             }
         }
@@ -72,7 +72,7 @@ public final class RemoteStore {
             Path.write(tmp, json.getBytes(StandardCharsets.UTF_8));
             if (!tmp.renameTo(target)) Path.move(tmp, target);
         } catch (Throwable e) {
-            SpiderDebug.log("remote", "save profile file failed error=%s", e.getMessage());
+            log("save profile file failed error=%s", e.getMessage());
         }
     }
 
@@ -344,10 +344,28 @@ public final class RemoteStore {
         return context.getString(R.string.remote_trust_current_status_summary, status, groups, devices);
     }
 
+    public static synchronized boolean hasEnabledProfile() {
+        for (RemoteProfile profile : get().profiles) {
+            if (profile != null && profile.enabled && !TextUtils.isEmpty(profile.serverOrigin)) return true;
+        }
+        return false;
+    }
+
+    private static void log(String format, Object... args) {
+        RemoteStoreFile store = cache;
+        if (store == null || store.profiles == null) return;
+        for (RemoteProfile profile : store.profiles) {
+            if (profile != null && profile.enabled) {
+                SpiderDebug.log("remote", format, args);
+                return;
+            }
+        }
+    }
+
     static boolean shouldStart(RemoteProfile profile) {
         if (profile == null || TextUtils.isEmpty(profile.serverOrigin)) return false;
         ensureProfile(profile);
-        return profile.enabled || hasPendingGrant(profile);
+        return profile.enabled;
     }
 
     static boolean hasPendingGrant(RemoteProfile profile) {

@@ -67,4 +67,13 @@ public class PlaybackBufferingTrackerTest {
         assertEquals(1, start.rebufferCount());
         assertEquals(0, start.rebufferTotalMs());
     }
+
+    @Test
+    public void ongoingRebufferIsIncludedInSnapshot() {
+        PlaybackBufferingTracker tracker = new PlaybackBufferingTracker();
+        tracker.update(true, true, 1_000, Player.STATE_BUFFERING, 0, 0, true);
+
+        assertEquals(750, tracker.getRebufferTotalMs(1_750));
+        assertEquals(0, tracker.getRebufferTotalMs());
+    }
 }

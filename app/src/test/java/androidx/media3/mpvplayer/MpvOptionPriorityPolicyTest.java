@@ -46,6 +46,7 @@ public class MpvOptionPriorityPolicyTest {
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("cache-pause-initial"));
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("cache-pause-wait"));
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("demuxer-max-bytes"));
+        assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("demuxer-hysteresis-secs"));
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("framedrop"));
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("video-sync"));
         assertTrue(MpvOptionPriorityPolicy.isPerformanceManaged("interpolation"));

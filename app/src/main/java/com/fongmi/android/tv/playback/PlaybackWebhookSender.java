@@ -74,7 +74,8 @@ public final class PlaybackWebhookSender {
     }
 
     private boolean matches(WebhookConfig config, PlaybackRecord record) {
-        return config != null && config.isUsable() && record != null && config.matchesSite(record.siteKey);
+        return config != null && config.isUsable() && record != null
+                && ("all".equals(record.scope) || config.matchesSite(record.siteKey));
     }
 
     private Delivery delivery(WebhookConfig config, PlaybackRecord record) {

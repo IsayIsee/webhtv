@@ -260,23 +260,22 @@ public class PlayerSetting {
     }
 
     public static int getBackground() {
-        return Prefers.getInt("background", 2);
+        int stored = Prefers.getInt("background", BackgroundPlaybackPolicy.ON);
+        int normalized = BackgroundPlaybackPolicy.normalize(stored);
+        if (stored != normalized) Prefers.put("background", normalized);
+        return normalized;
     }
 
     public static void putBackground(int background) {
-        Prefers.put("background", background);
+        Prefers.put("background", BackgroundPlaybackPolicy.normalize(background));
     }
 
     public static boolean isBackgroundOff() {
-        return getBackground() == 0;
+        return !isBackgroundOn();
     }
 
     public static boolean isBackgroundOn() {
-        return getBackground() == 1 || getBackground() == 2;
-    }
-
-    public static boolean isBackgroundPiP() {
-        return getBackground() == 2;
+        return BackgroundPlaybackPolicy.isEnabled(getBackground());
     }
 
     public static float getSpeed() {

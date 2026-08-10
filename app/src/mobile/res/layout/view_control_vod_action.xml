@@ -43,7 +43,8 @@
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/karaoke"
             style="@style/Control"
-            android:text="@string/player_karaoke_mode" />
+            android:text="@string/player_karaoke_mode"
+            android:visibility="gone" />
 
         <com.google.android.material.textview.MaterialTextView
             android:id="@+id/reset"

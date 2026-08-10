@@ -94,6 +94,7 @@ public class PlaybackProgressApplyResult {
             result.configKey = input.configKey;
             result.vodId = input.vodId;
             result.episodeName = input.episodeName;
+            result.remoteUpdatedAt = input.deletedAt;
         }
         return result;
     }

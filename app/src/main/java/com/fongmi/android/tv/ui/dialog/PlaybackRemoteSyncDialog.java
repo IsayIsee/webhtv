@@ -256,6 +256,9 @@ public class PlaybackRemoteSyncDialog extends BaseAlertDialog {
 
     private void saveEdit() {
         RemoteSyncConfig config = editing == null ? new RemoteSyncConfig() : editing;
+        String previousUrl = config.url;
+        String previousToken = config.token;
+        String previousSites = join(config.siteKeys);
         config.enabled = editEnabled;
         config.name = text(binding.name);
         config.url = text(binding.url);
@@ -266,6 +269,11 @@ public class PlaybackRemoteSyncDialog extends BaseAlertDialog {
         }
         config.token = text(binding.token);
         config.siteKeys = split(text(binding.siteKeys));
+        if (!TextUtils.equals(previousUrl, config.url) || !TextUtils.equals(previousToken, config.token)
+                || !TextUtils.equals(previousSites, join(config.siteKeys))) {
+            if (config.cursors == null) config.cursors = new java.util.HashMap<>();
+            config.cursors.clear();
+        }
         config.intervalMinutes = Math.max(0, intValue(binding.interval, 0));
         config.maxItems = Math.max(1, Math.min(1000, intValue(binding.maxItems, 100)));
         config.syncOnStartup = binding.syncOnStartup.isChecked();
@@ -296,7 +304,7 @@ public class PlaybackRemoteSyncDialog extends BaseAlertDialog {
             App.post(() -> {
                 if (binding == null) return;
                 renderList();
-                Notify.show(result.success ? getString(R.string.playback_remote_sync_done, result.applied, result.skipped, result.failed) : result.message);
+                Notify.show(result.success ? getString(R.string.playback_remote_sync_done, result.applied, result.deleted, result.skipped, result.failed) : result.message);
                 if (callback != null) callback.run();
             });
         });
@@ -316,7 +324,7 @@ public class PlaybackRemoteSyncDialog extends BaseAlertDialog {
         String token = TextUtils.isEmpty(config.token) ? getString(R.string.playback_webhook_token_empty) : getString(R.string.playback_webhook_token_set);
         String sites = config.siteKeys == null || config.siteKeys.isEmpty() ? getString(R.string.playback_webhook_all_sites) : getString(R.string.playback_webhook_sites, join(config.siteKeys));
         String last = config.lastSuccessAt > 0 ? getString(R.string.playback_remote_sync_last_at, time(config.lastSuccessAt)) : getString(R.string.playback_remote_sync_never);
-        String result = getString(R.string.playback_remote_sync_result, config.lastFetched, config.lastApplied, config.lastSkipped, config.lastFailed);
+        String result = getString(R.string.playback_remote_sync_result, config.lastFetched, config.lastApplied, config.lastDeleted, config.lastSkipped, config.lastFailed);
         return token + " · " + sites + " · " + last + " · " + result;
     }
 
@@ -345,9 +353,11 @@ public class PlaybackRemoteSyncDialog extends BaseAlertDialog {
         target.lastSuccessAt = source.lastSuccessAt;
         target.lastFetched = source.lastFetched;
         target.lastApplied = source.lastApplied;
+        target.lastDeleted = source.lastDeleted;
         target.lastSkipped = source.lastSkipped;
         target.lastFailed = source.lastFailed;
         target.lastError = source.lastError;
+        target.cursors = source.cursors == null ? new java.util.HashMap<>() : new java.util.HashMap<>(source.cursors);
         return target;
     }
 

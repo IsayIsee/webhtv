@@ -1,11 +1,18 @@
 package androidx.media3.mpvplayer;
 
+import android.os.SystemClock;
 import android.text.TextUtils;
 
 import androidx.annotation.Nullable;
 import androidx.media3.exoplayer.hls.playlist.HlsAdsParser;
 
+import com.fongmi.android.tv.player.PlaybackAutoContext;
 import com.fongmi.android.tv.player.PlaybackRouteRegistry;
+import com.fongmi.android.tv.player.PlaybackResourceClassifier;
+import com.fongmi.android.tv.player.PlaybackSystemConditionMonitor;
+import com.fongmi.android.tv.player.PreloadPausePolicy;
+import com.fongmi.android.tv.player.cache.PlaybackDiskBufferStore;
+import com.fongmi.android.tv.player.mpv.MpvPreloadPolicy;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.setting.PreloadSetting;
 import com.fongmi.android.tv.setting.Setting;
@@ -27,8 +34,6 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -37,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -75,24 +81,34 @@ public final class MpvHlsProxy extends NanoHTTPD {
     private static final int PREFIX_SCAN_LIMIT = 64 * 1024;
     private static final long SESSION_TTL_MS = TimeUnit.MINUTES.toMillis(3);
     private static final long MIN_CACHE_FILE_BYTES = 1;
-    private static final byte[] PNG_SIGNATURE = new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-    private static final byte[] PNG_IEND = new byte[]{0x49, 0x45, 0x4E, 0x44, (byte) 0xAE, 0x42, 0x60, (byte) 0x82};
-    private static final Pattern URI_ATTR = Pattern.compile("URI=\"([^\"]+)\"");
+    private static final int MAX_PENDING_PRELOAD_SEGMENTS = 256;
     private static final Pattern DASH_BASE_URL = Pattern.compile("(<BaseURL\\b[^>]*>)(.*?)(</BaseURL>)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
     private final OkHttpClient client;
     private final int kernel;
+    private final MpvHlsCacheCoordinator cacheCoordinator;
     private final Map<Integer, Session> sessions;
     private final Map<Integer, SessionStats> sessionStats;
     private final Map<String, Target> targets;
     private final AtomicLong nextId;
     private final java.util.Set<String> preloading;
+    private final MpvHlsPreloadGate preloadGate;
+    private final MpvHlsUpstreamEstimator upstreamEstimator;
+    private final PlaybackDiskBufferStore diskBufferStore;
+    private final AtomicInteger activePreloadTransfers;
     private ExecutorService preloadExecutor;
+    private MpvHlsCacheCoordinator.ClientLease cacheClient;
     private PlaybackRouteRegistry.Registration routeRegistration;
     private int preloadThreads;
     private volatile int sessionId;
     private volatile boolean started;
+    private volatile boolean automaticPreloadMode;
+    private volatile boolean automaticResourceAllowed = true;
+    private volatile boolean automaticTrafficAllowed;
+    private volatile boolean playbackPaused;
+    private volatile long lastManualPreloadPositionMs = Long.MIN_VALUE;
+    private volatile long lastManualPreloadAtMs;
 
     public MpvHlsProxy() {
         this(PlayerSetting.MPV);
@@ -101,6 +117,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
     public MpvHlsProxy(int kernel) {
         super("127.0.0.1", 0);
         this.kernel = PlayerSetting.sanitizePlayer(kernel);
+        cacheCoordinator = MpvHlsCacheCoordinator.shared(Path.cache("mpv_hls"));
         client = OkHttp.player().newBuilder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
@@ -111,14 +128,36 @@ public final class MpvHlsProxy extends NanoHTTPD {
         targets = new ConcurrentHashMap<>();
         nextId = new AtomicLong();
         preloading = ConcurrentHashMap.newKeySet();
+        preloadGate = new MpvHlsPreloadGate();
+        upstreamEstimator = new MpvHlsUpstreamEstimator();
+        diskBufferStore = PlaybackDiskBufferStore.process();
+        activePreloadTransfers = new AtomicInteger();
     }
 
     public synchronized String proxy(String url, Map<String, String> headers) throws IOException {
+        return proxy(url, headers, url);
+    }
+
+    public synchronized String proxy(
+            String url, Map<String, String> headers, String mediaKey) throws IOException {
         ensureStarted();
+        refreshCacheCoordinator();
         int id = ++this.sessionId;
-        Session session = new Session(url, sanitize(headers), System.currentTimeMillis());
+        upstreamEstimator.reset();
+        Session session = new Session(
+                url, sanitize(headers), System.currentTimeMillis(),
+                resolveMediaKey(mediaKey, url));
+        diskBufferStore.reset(session.mediaKey());
         sessions.put(id, session);
-        sessionStats.put(id, new SessionStats());
+        SessionStats stats = new SessionStats();
+        stats.classification = PlaybackResourceClassifier.classify(
+                baseUrl() + "/mpv/index.m3u8?s=" + id,
+                url,
+                "application/vnd.apple.mpegurl",
+                "hls",
+                Map.of(),
+                null);
+        sessionStats.put(id, stats);
         pruneExpiredSessions(session.createdAtMs);
         pruneCache();
         String proxyUrl = baseUrl() + "/mpv/index.m3u8?s=" + sessionId;
@@ -127,14 +166,63 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     public synchronized String proxyDash(String url, Map<String, String> headers) throws IOException {
+        return proxyDash(url, headers, url);
+    }
+
+    public synchronized String proxyDash(
+            String url, Map<String, String> headers, String mediaKey) throws IOException {
         ensureStarted();
+        refreshCacheCoordinator();
         int id = ++this.sessionId;
-        Session session = new Session(url, sanitize(headers), System.currentTimeMillis());
+        upstreamEstimator.reset();
+        Session session = new Session(
+                url, sanitize(headers), System.currentTimeMillis(),
+                resolveMediaKey(mediaKey, url));
+        diskBufferStore.reset(session.mediaKey());
         sessions.put(id, session);
-        sessionStats.put(id, new SessionStats());
+        SessionStats stats = new SessionStats();
+        stats.classification = PlaybackResourceClassifier.classify(
+                baseUrl() + "/mpv/index.mpd?s=" + id,
+                url,
+                "application/dash+xml",
+                "dash",
+                Map.of(),
+                null);
+        sessionStats.put(id, stats);
         pruneExpiredSessions(session.createdAtMs);
         String proxyUrl = baseUrl() + "/mpv/index.mpd?s=" + id;
         SpiderDebug.log(TAG, "dash enabled session=%d url=%s headers=%s proxy=%s", id, shortUrl(url), session.headers.keySet(), proxyUrl);
+        return proxyUrl;
+    }
+
+    public synchronized String proxyFile(
+            String url, Map<String, String> headers, String mediaKey) throws IOException {
+        ensureStarted();
+        refreshCacheCoordinator();
+        int id = ++this.sessionId;
+        upstreamEstimator.reset();
+        Session session = new Session(
+                url, sanitize(headers), System.currentTimeMillis(),
+                resolveMediaKey(mediaKey, url));
+        diskBufferStore.reset(session.mediaKey());
+        sessions.put(id, session);
+        String targetId = Long.toString(nextId.incrementAndGet());
+        String proxyUrl = baseUrl() + "/mpv/item?s=" + id + "&id=" + targetId;
+        targets.put(targetId, new Target(
+                id, url, session.createdAtMs(), false, null,
+                HlsPlaylistRewriter.UriRole.OTHER, 0, 0));
+        SessionStats stats = new SessionStats();
+        stats.vod = true;
+        stats.classification = PlaybackResourceClassifier.classify(
+                proxyUrl, url, null, null, Map.of(), null);
+        sessionStats.put(id, stats);
+        pruneExpiredSessions(session.createdAtMs());
+        SpiderDebug.log(TAG,
+                "file enabled session=%d sourceBytes=%d headers=%s proxy=%s",
+                id,
+                url == null ? 0 : url.getBytes(StandardCharsets.UTF_8).length,
+                session.headers().keySet(),
+                proxyUrl);
         return proxyUrl;
     }
 
@@ -142,15 +230,69 @@ public final class MpvHlsProxy extends NanoHTTPD {
         sessions.clear();
         sessionStats.clear();
         targets.clear();
+        upstreamEstimator.reset();
+        lastManualPreloadPositionMs = Long.MIN_VALUE;
+        lastManualPreloadAtMs = 0;
         cancelPreloads();
+    }
+
+    /** Auto-mode gate only; foreground proxy reads and cache hits remain available. */
+    public boolean updateAutomaticPreloadControl(
+            boolean automatic,
+            boolean resourceAllowed,
+            boolean trafficAllowed) {
+        automaticPreloadMode = automatic;
+        automaticResourceAllowed = resourceAllowed;
+        automaticTrafficAllowed = trafficAllowed;
+        preloadGate.setForegroundBlocking(!automatic || !playbackPaused);
+        boolean allowed = desiredPreloadAllowed();
+        MpvHlsPreloadGate.Transition transition = preloadGate.update(allowed);
+        if (transition == MpvHlsPreloadGate.Transition.BLOCKED) {
+            releasePreloadWork(true);
+        }
+        if (transition.changed()) {
+            SpiderDebug.log(TAG,
+                    "preload-gate mode=%s resource=%s traffic=%s state=%s action=%s active=%d",
+                    automatic ? "automatic" : "manual",
+                    resourceAllowed ? "allowed" : "blocked",
+                    trafficAllowed ? "allowed" : "blocked",
+                    allowed ? "allowed" : "blocked",
+                    transition.label(),
+                    preloading.size());
+        }
+        return transition.changed();
+    }
+
+    public void setPlaybackPaused(boolean paused) {
+        boolean changed = playbackPaused != paused;
+        playbackPaused = paused;
+        if (automaticPreloadMode && kernel == PlayerSetting.MPV) {
+            preloadGate.setForegroundBlocking(!paused);
+            if (changed && !paused) releasePreloadWork(false);
+        }
+        boolean allowed = desiredPreloadAllowed();
+        MpvHlsPreloadGate.Transition transition = preloadGate.update(allowed);
+        if (transition == MpvHlsPreloadGate.Transition.BLOCKED) releasePreloadWork(true);
+        if (transition.changed()) {
+            SpiderDebug.log(TAG, "preload-pause paused=%s policy=%d state=%s action=%s",
+                    paused,
+                    PreloadSetting.getPausePreloadPolicy(kernel),
+                    allowed ? "allowed" : "blocked",
+                    transition.label());
+        }
     }
 
     public synchronized void release() {
         clear();
-        if (started) stop();
-        if (routeRegistration != null) routeRegistration.close();
-        routeRegistration = null;
-        started = false;
+        try {
+            if (started) stop();
+        } finally {
+            if (routeRegistration != null) routeRegistration.close();
+            routeRegistration = null;
+            if (cacheClient != null) cacheClient.close();
+            cacheClient = null;
+            started = false;
+        }
     }
 
     String diagnostics() {
@@ -159,14 +301,148 @@ public final class MpvHlsProxy extends NanoHTTPD {
                 + " / cache " + formatBytes(cacheBytes())
                 + "/" + formatBytes(cacheLimitBytes())
                 + " / preload " + preloading.size()
+                + "/" + (preloadGate.allowed() ? "allowed" : "blocked")
+                + "/fg=" + preloadGate.foregroundRequests()
                 + " / " + statsText();
     }
 
-    void preloadAround(long positionMs) {
+    @Nullable
+    public PlaybackResourceClassifier.Classification resourceClassification() {
+        SessionStats stats = sessionStats.get(sessionId);
+        if (stats == null) return null;
+        PlaybackResourceClassifier.Classification classification =
+                stats.resourceClassification(SystemClock.elapsedRealtime());
+        if (classification != null) return classification;
+        Session session = sessions.get(sessionId);
+        if (session == null) return null;
+        return PlaybackResourceClassifier.classifyRequest(session.url, null, null);
+    }
+
+    public LiveLagSnapshot liveLagSnapshot(long nativeBufferedDurationMs) {
+        if (kernel != PlayerSetting.IJK) return LiveLagSnapshot.unknown();
+        SessionStats stats = sessionStats.get(sessionId);
+        if (stats == null) return LiveLagSnapshot.unknown();
+        long now = SystemClock.elapsedRealtime();
+        PlaybackResourceClassifier.Classification classification =
+                stats.resourceClassification(now);
+        PlaybackAutoContext.StreamKind stream = classification == null
+                ? PlaybackAutoContext.StreamKind.UNKNOWN
+                : classification.streamKind();
+        if (stream != PlaybackAutoContext.StreamKind.LIVE
+                && stream != PlaybackAutoContext.StreamKind.LOW_LATENCY_LIVE) {
+            return LiveLagSnapshot.unknown();
+        }
+        HlsProxyLiveLagTracker.Snapshot snapshot =
+                stats.liveLagSnapshot(now, nativeBufferedDurationMs);
+        return snapshot.known()
+                ? new LiveLagSnapshot(true, snapshot.lowerBoundMs(),
+                snapshot.nativeBufferedDurationMs(), snapshot.outsideWindow())
+                : LiveLagSnapshot.unknown();
+    }
+
+    HlsVariantSnapshot variantSnapshot() {
+        SessionStats stats = sessionStats.get(sessionId);
+        if (stats == null) return HlsVariantSnapshot.empty();
+        return stats.variantSnapshot();
+    }
+
+    public void preloadAround(long positionMs) {
+        if (automaticPreloadMode || !shouldRequestManualPreload(positionMs)) return;
         Session owner = sessions.get(sessionId);
         SessionStats stats = sessionStats.get(sessionId);
         if (owner == null || stats == null || !stats.vod || stats.segments.isEmpty()) return;
         preloadSegments(owner, stats.segments, Math.max(0, positionMs) / 1000.0);
+    }
+
+    public void preloadWhilePaused(long positionMs) {
+        preloadWhilePaused(positionMs, 0);
+    }
+
+    void preloadWhilePaused(long positionMs, long selectedBitsPerSecond) {
+        if (!playbackPaused || !isPausePreloadAllowed()) return;
+        Session owner = sessions.get(sessionId);
+        SessionStats stats = sessionStats.get(sessionId);
+        if (owner == null || stats == null || !stats.vod) return;
+        List<HlsPlaylistRewriter.Segment> selected = automaticPreloadMode
+                ? stats.segmentsForVariant(selectedBitsPerSecond) : stats.segments;
+        if (selected.isEmpty()) return;
+        preloadSegments(owner, selected, Math.max(0, positionMs) / 1000.0);
+    }
+
+    private boolean shouldRequestManualPreload(long positionMs) {
+        long position = Math.max(0, positionMs);
+        long now = SystemClock.elapsedRealtime();
+        long previousPosition = lastManualPreloadPositionMs;
+        if (previousPosition != Long.MIN_VALUE
+                && Math.abs(position - previousPosition) < TimeUnit.SECONDS.toMillis(10)
+                && now - lastManualPreloadAtMs < TimeUnit.SECONDS.toMillis(10)) {
+            return false;
+        }
+        lastManualPreloadPositionMs = position;
+        lastManualPreloadAtMs = now;
+        return true;
+    }
+
+    void requestAutomaticPreload(long positionMs, long selectedBitsPerSecond) {
+        if (!automaticPreloadMode
+                || !automaticResourceAllowed
+                || !automaticTrafficAllowed
+                || preloadGate.foregroundRequests() > 0) return;
+        Session owner = sessions.get(sessionId);
+        SessionStats stats = sessionStats.get(sessionId);
+        if (owner == null || stats == null || !stats.vod) return;
+        List<HlsPlaylistRewriter.Segment> selected =
+                stats.segmentsForVariant(selectedBitsPerSecond);
+        if (selected.isEmpty()) return;
+        preloadSegments(owner, selected, Math.max(0, positionMs) / 1000.0);
+    }
+
+    void cancelAutomaticPreloadForDiscontinuity() {
+        if (!automaticPreloadMode || kernel != PlayerSetting.MPV) return;
+        automaticTrafficAllowed = false;
+        preloadGate.update(false);
+        releasePreloadWork(true);
+        SpiderDebug.log(TAG,
+                "preload discontinuity action=cancel active=%d transfers=%d",
+                preloading.size(), activePreloadTransfers.get());
+    }
+
+    PreloadRuntimeSnapshot preloadRuntimeSnapshot(long nowElapsedMs) {
+        refreshCacheCoordinator();
+        SessionStats stats = sessionStats.get(sessionId);
+        MpvHlsUpstreamEstimator.Snapshot throughput =
+                upstreamEstimator.snapshot(nowElapsedMs);
+        MpvHlsCacheCoordinator.PreloadCapacitySnapshot preloadCapacity =
+                cacheCoordinator.preloadSnapshot(configuredPreloadLimitBytes());
+        MpvHlsCacheCoordinator.CapacitySnapshot capacity =
+                preloadCapacity.capacity();
+        boolean storageKnown = capacity.policy().state()
+                != com.fongmi.android.tv.player.cache.DiskCacheCapacityPolicy.State.UNAVAILABLE;
+        boolean cacheEnabled = capacity.policy().state()
+                != com.fongmi.android.tv.player.cache.DiskCacheCapacityPolicy.State.DISABLED;
+        boolean budgetAvailable = preloadCapacity.allowed()
+                || !preloading.isEmpty() || activePreloadTransfers.get() > 0;
+        return new PreloadRuntimeSnapshot(
+                PreloadSetting.isPreload(kernel),
+                stats != null && stats.vod,
+                throughput.bitsPerSecond(),
+                throughput.known(),
+                throughput.fresh(),
+                throughput.sampledAtElapsedMs(),
+                throughput.ageMs(),
+                throughput.acceptedSamples(),
+                throughput.rejectedSamples(),
+                throughput.lastRejectReason().label(),
+                preloadGate.foregroundRequests(),
+                cacheEnabled,
+                storageKnown,
+                budgetAvailable,
+                capacity.circuitOpen(),
+                capacity.physicalBytes(),
+                capacity.reservedBytes(),
+                capacity.policy().newWriteBudgetBytes(),
+                capacity.policy().effectiveCapacityBytes(),
+                preloading.size());
     }
 
     @Override
@@ -180,8 +456,8 @@ public final class MpvHlsProxy extends NanoHTTPD {
             if (path.startsWith("/mpv/item")) return serveItem(session, null);
             return error(Status.NOT_FOUND, "not found");
         } catch (Throwable e) {
-            SpiderDebug.log(TAG, e);
-            return error(Status.INTERNAL_ERROR, e.getMessage() == null ? e.toString() : e.getMessage());
+            SpiderDebug.log(TAG, "serve failed errorType=%s", e.getClass().getSimpleName());
+            return error(Status.INTERNAL_ERROR, "proxy failure");
         }
     }
 
@@ -189,7 +465,29 @@ public final class MpvHlsProxy extends NanoHTTPD {
         if (started) return;
         start(NanoHTTPD.SOCKET_READ_TIMEOUT, true);
         routeRegistration = PlaybackRouteRegistry.registerAppService(getListeningPort(), PlaybackRouteRegistry.AppOwner.HLS_PROXY);
+        cacheClient = cacheCoordinator.registerClient(configuredCacheLimitBytes(), this::cancelPreloadsForCircuit);
         started = true;
+        if (cacheCoordinator.isCircuitOpen()) cancelPreloadsForCircuit();
+    }
+
+    private void refreshCacheCoordinator() {
+        if (cacheClient != null) cacheClient.update(configuredCacheLimitBytes());
+    }
+
+    private void cancelPreloadsForCircuit() {
+        preloadGate.invalidate();
+        releasePreloadWork(false);
+    }
+
+    private ForegroundLease beginForegroundRequest() {
+        boolean managed = automaticPreloadMode && kernel == PlayerSetting.MPV;
+        if (managed && preloadGate.foregroundStarted()) {
+            releasePreloadWork(false);
+            SpiderDebug.log(TAG,
+                    "preload foreground action=cancel generation=invalidated active=%d",
+                    preloading.size());
+        }
+        return new ForegroundLease(managed);
     }
 
     private String baseUrl() {
@@ -200,7 +498,9 @@ public final class MpvHlsProxy extends NanoHTTPD {
         int id = parseSessionId(httpSession);
         Session session = sessions.get(id);
         if (session == null || TextUtils.isEmpty(session.url)) return error(Status.NOT_FOUND, "expired playlist");
-        try (okhttp3.Response response = fetch(session, session.url, null, false)) {
+        ForegroundLease foreground = beginForegroundRequest();
+        try (foreground;
+             okhttp3.Response response = fetch(session, session.url, null, false)) {
             if (!response.isSuccessful()) {
                 recordPlaylistResponse(id, response.code(), session.url, null);
                 SpiderDebug.log(TAG, "playlist error session=%d code=%d url=%s", id, response.code(), shortUrl(session.url));
@@ -215,7 +515,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
                 return error(Status.BAD_REQUEST, "invalid playlist");
             }
             text = applyAdblock(text, id, session.url);
-            String rewritten = rewritePlaylist(response.request().url().toString(), text, id);
+            String rewritten = rewritePlaylist(response.request().url().toString(), text, id, null);
             byte[] data = rewritten.getBytes(StandardCharsets.UTF_8);
             SpiderDebug.log(TAG, "playlist session=%d code=%d bytes=%d rewritten=%d url=%s", id, response.code(), text.length(), data.length, shortUrl(session.url));
             return noCache(newFixedLengthResponse(Status.OK, MIME_M3U8, new ByteArrayInputStream(data), data.length));
@@ -232,6 +532,12 @@ public final class MpvHlsProxy extends NanoHTTPD {
             String manifestUrl = response.request().url().toString();
             String text = body.string();
             if (!text.toLowerCase(Locale.US).contains("<mpd")) return error(Status.BAD_REQUEST, "invalid dash");
+            SessionStats stats = stats(id);
+            stats.classification = PlaybackResourceClassifier.classifyDash(
+                    started && getListeningPort() > 0 ? baseUrl() + "/mpv/index.mpd?s=" + id : null,
+                    session.url,
+                    text,
+                    SystemClock.elapsedRealtime());
             text = rewriteSegmentBase(session, manifestUrl, text);
             Matcher matcher = DASH_BASE_URL.matcher(text);
             StringBuffer rewritten = new StringBuffer();
@@ -294,7 +600,7 @@ public final class MpvHlsProxy extends NanoHTTPD {
             SpiderDebug.log(TAG, "dash SegmentBase grouped representations=%d url=%s", converted, shortUrl(manifestUrl));
             return output.toString();
         } catch (Throwable e) {
-            SpiderDebug.log(TAG, "dash SegmentBase grouping skipped url=%s error=%s", shortUrl(manifestUrl), e.getMessage());
+            SpiderDebug.log(TAG, "dash SegmentBase grouping skipped errorType=%s", e.getClass().getSimpleName());
             return text;
         }
     }
@@ -355,65 +661,100 @@ public final class MpvHlsProxy extends NanoHTTPD {
         Target target = id == null ? null : targets.get(id);
         Session owner = target == null ? null : sessions.get(target.sessionId);
         if (target == null || owner == null) return error(Status.NOT_FOUND, "expired item");
-        String range = requestHeader(httpSession, "range");
-        boolean targetPlaylist = isPlaylistUrl(target.url, null);
-        String forwardedRange = targetPlaylist ? null : range;
-        if (!targetPlaylist && target.cacheable) {
-            Response cached = serveCached(owner, target.url, range);
-            if (cached != null) {
-                SpiderDebug.log(TAG, "cache hit id=%s range=%s url=%s", id, range, shortUrl(target.url));
-                return cached;
+        ForegroundLease foreground = beginForegroundRequest();
+        boolean foregroundHandedOff = false;
+        try {
+            String range = requestHeader(httpSession, "range");
+            boolean targetPlaylist = isPlaylistUrl(target.url, null);
+            if (targetPlaylist) recordSelectedVariant(target);
+            if (kernel == PlayerSetting.IJK
+                    && !targetPlaylist
+                    && target.role() == HlsPlaylistRewriter.UriRole.MEDIA_SEGMENT) {
+                stats(target.sessionId()).observeLiveMediaRequest(
+                        target.url(), SystemClock.elapsedRealtime());
             }
-        }
-        okhttp3.Response response = fetch(owner, target.url, forwardedRange, !targetPlaylist);
-        ResponseBody body = response.body();
-        if (body == null) {
-            recordItemResponse(target.sessionId, response.code(), target.url);
-            response.close();
-            return error(Status.INTERNAL_ERROR, "empty item body");
-        }
-        String finalUrl = response.request().url().toString();
-        MediaType type = body.contentType();
-        if (isPlaylistUrl(target.url, type) || isPlaylistUrl(finalUrl, type)) {
-            try (response; body) {
-                if (!response.isSuccessful()) {
-                    recordPlaylistResponse(target.sessionId, response.code(), target.url, null);
-                    SpiderDebug.log(TAG, "nested playlist error id=%s code=%d url=%s", id, response.code(), shortUrl(target.url));
-                    return error(toStatus(response.code()), "nested playlist http " + response.code());
+            String forwardedRange = targetPlaylist ? null : range;
+            if (!targetPlaylist && target.cacheable) {
+                Response cached = serveCached(owner, target.url, range, foreground);
+                if (cached != null) {
+                    recordCachedTarget(owner, target);
+                    foregroundHandedOff = true;
+                    SpiderDebug.log(TAG, "cache hit id=%s range=%s", id, range);
+                    return cached;
                 }
-                String text = body.string();
-                recordPlaylistResponse(target.sessionId, response.code(), target.url, text);
-                if (!looksLikePlaylist(text)) {
-                    SpiderDebug.log(TAG, "invalid nested playlist id=%s code=%d bytes=%d url=%s", id, response.code(), text.length(), shortUrl(target.url));
-                    return error(Status.BAD_REQUEST, "invalid playlist");
-                }
-                text = applyAdblock(text, target.sessionId, target.url);
-                String rewritten = rewritePlaylist(finalUrl, text, target.sessionId);
-                byte[] data = rewritten.getBytes(StandardCharsets.UTF_8);
-                SpiderDebug.log(TAG, "nested playlist id=%s code=%d bytes=%d url=%s", id, response.code(), data.length, shortUrl(target.url));
-                return noCache(newFixedLengthResponse(Status.OK, MIME_M3U8, new ByteArrayInputStream(data), data.length));
             }
-        }
+            okhttp3.Response response = fetch(owner, target.url, forwardedRange, !targetPlaylist);
+            ResponseBody body = response.body();
+            if (body == null) {
+                recordItemResponse(target.sessionId, response.code(), target.url);
+                response.close();
+                return error(Status.INTERNAL_ERROR, "empty item body");
+            }
+            String finalUrl = response.request().url().toString();
+            MediaType type = body.contentType();
+            if (isPlaylistUrl(target.url, type) || isPlaylistUrl(finalUrl, type)) {
+                recordSelectedVariant(target);
+                try (response; body) {
+                    if (!response.isSuccessful()) {
+                        recordPlaylistResponse(target.sessionId, response.code(), target.url, null);
+                        SpiderDebug.log(TAG, "nested playlist error id=%s code=%d url=%s", id, response.code(), shortUrl(target.url));
+                        return error(toStatus(response.code()), "nested playlist http " + response.code());
+                    }
+                    String text = body.string();
+                    recordPlaylistResponse(target.sessionId, response.code(), target.url, text);
+                    if (!looksLikePlaylist(text)) {
+                        SpiderDebug.log(TAG, "invalid nested playlist id=%s code=%d bytes=%d url=%s", id, response.code(), text.length(), shortUrl(target.url));
+                        return error(Status.BAD_REQUEST, "invalid playlist");
+                    }
+                    text = applyAdblock(text, target.sessionId, target.url);
+                    String rewritten = rewritePlaylist(finalUrl, text, target.sessionId, target.variant());
+                    byte[] data = rewritten.getBytes(StandardCharsets.UTF_8);
+                    SpiderDebug.log(TAG, "nested playlist id=%s code=%d bytes=%d url=%s", id, response.code(), data.length, shortUrl(target.url));
+                    return noCache(newFixedLengthResponse(Status.OK, MIME_M3U8, new ByteArrayInputStream(data), data.length));
+                }
+            }
 
-        boolean mayStripPngPrefix = isPngMime(type);
-        recordItemResponse(target.sessionId, response.code(), target.url);
-        long contentLength = body.contentLength();
-        String mime = mediaMimeFor(target.url, finalUrl, type);
-        InputStream source = body.byteStream();
-        if (mayStripPngPrefix) {
-            source = new PngPrefixStrippingInputStream(source, target.url);
-        } else {
-            source = maybeCacheStreaming(owner, target, source, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime);
+            boolean mayStripPngPrefix = MpvHlsSegmentContentPolicy.shouldProbePngPrefix(
+                    type == null ? null : type.toString(),
+                    target.role() == HlsPlaylistRewriter.UriRole.MEDIA_SEGMENT);
+            recordItemResponse(target.sessionId, response.code(), target.url);
+            long contentLength = body.contentLength();
+            String mime = mayStripPngPrefix ? MIME_TS : mediaMimeFor(target.url, finalUrl, type);
+            InputStream source = body.byteStream();
+            if (automaticPreloadMode && kernel == PlayerSetting.MPV
+                    && response.isSuccessful() && !mayStripPngPrefix
+                    && target.cacheable && stats(target.sessionId).vod) {
+                source = new UpstreamTelemetryInputStream(
+                        source, contentLength, upstreamEstimator);
+            }
+            if (mayStripPngPrefix) {
+                source = new PngPrefixStrippingInputStream(source, target.url);
+            } else {
+                source = maybeCacheStreaming(owner, target, source, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime);
+            }
+            InputStream stream = new ForegroundInputStream(
+                    new CloseResponseInputStream(source, response), foreground);
+            foregroundHandedOff = true;
+            try {
+                Response.IStatus streamingStatus = streamingStatus(response, forwardedRange);
+                Response result = mayStripPngPrefix || contentLength < 0
+                        ? newChunkedResponse(streamingStatus, mime, stream)
+                        : newFixedLengthResponse(streamingStatus, mime, stream, contentLength);
+                addStreamingHeaders(result, response, forwardedRange);
+                SpiderDebug.log(TAG, "item id=%s code=%d range=%s contentRange=%s length=%d mime=%s url=%s",
+                        id, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime, shortUrl(target.url));
+                return result;
+            } catch (Throwable error) {
+                try {
+                    stream.close();
+                } catch (Throwable ignored) {
+                }
+                if (error instanceof IOException io) throw io;
+                throw new IOException(error);
+            }
+        } finally {
+            if (!foregroundHandedOff) foreground.close();
         }
-        InputStream stream = new CloseResponseInputStream(source, response);
-        Response.IStatus streamingStatus = streamingStatus(response, forwardedRange);
-        Response result = mayStripPngPrefix || contentLength < 0
-                ? newChunkedResponse(streamingStatus, mime, stream)
-                : newFixedLengthResponse(streamingStatus, mime, stream, contentLength);
-        addStreamingHeaders(result, response, forwardedRange);
-        SpiderDebug.log(TAG, "item id=%s code=%d range=%s contentRange=%s length=%d mime=%s url=%s",
-                id, response.code(), forwardedRange, response.header("Content-Range"), contentLength, mime, shortUrl(target.url));
-        return result;
     }
 
     private okhttp3.Response fetch(Session session, String url, @Nullable String range, boolean identityEncoding) throws IOException {
@@ -432,171 +773,62 @@ public final class MpvHlsProxy extends NanoHTTPD {
         try {
             String filtered = HlsAdsParser.process(text);
             if (!TextUtils.equals(filtered, text)) {
-                SpiderDebug.log(TAG, "adblock filtered session=%d bytes=%d->%d url=%s", session, text.length(), filtered.length(), shortUrl(url));
+                if (kernel == PlayerSetting.MPV) {
+                    SpiderDebug.log(TAG,
+                            "adblock bypassed session=%d bytes=%d candidateBytes=%d reason=mpv-ts-timestamp-integrity url=%s",
+                            session, text.length(), filtered.length(),
+                            shortUrl(url));
+                    return text;
+                }
+                SpiderDebug.log(TAG,
+                        "adblock filtered session=%d bytes=%d->%d url=%s",
+                        session, text.length(), filtered.length(), shortUrl(url));
             }
             return filtered;
         } catch (Throwable e) {
-            SpiderDebug.log(TAG, "adblock ignored session=%d url=%s error=%s", session, shortUrl(url), e.getMessage());
+            SpiderDebug.log(TAG, "adblock ignored session=%d errorType=%s", session, e.getClass().getSimpleName());
             return text;
         }
     }
 
-    private String rewritePlaylist(String playlistUrl, String text, int session) {
-        String[] lines = text.split("\n", -1);
-        StringBuilder out = new StringBuilder(text.length() + 256);
-        List<Segment> segments = new ArrayList<>();
-        boolean[] skipVariantLines = lowerVariantLinesToSkip(lines, session);
-        boolean pendingByteRange = false;
-        double pendingDuration = 0;
-        double elapsed = 0;
-        for (int i = 0; i < lines.length; i++) {
-            if (skipVariantLines != null && skipVariantLines[i]) continue;
-            String raw = trimCr(lines[i]);
-            String line = raw.trim();
-            if (line.startsWith("#") && line.contains("URI=\"")) {
-                out.append(rewriteUriAttributes(playlistUrl, raw, session, isCacheableUriAttribute(line)));
-                if (line.startsWith("#EXT-X-MAP") && line.toUpperCase(Locale.US).contains("BYTERANGE=")) {
-                    stats(session).hasByteRange = true;
-                }
-            } else if (line.startsWith("#EXTINF:")) {
-                pendingDuration = parseExtInfDuration(line);
-                out.append(raw);
-            } else if (line.startsWith("#EXT-X-BYTERANGE:")) {
-                pendingByteRange = true;
-                stats(session).hasByteRange = true;
-                out.append(raw);
-            } else if (!line.isEmpty() && !line.startsWith("#")) {
-                String targetUrl = resolve(playlistUrl, line);
-                out.append(proxyItemUrl(targetUrl, session, pendingDuration > 0 && !pendingByteRange));
-                if (pendingDuration > 0) {
-                    segments.add(new Segment(targetUrl, pendingDuration, elapsed, pendingByteRange));
-                    elapsed += pendingDuration;
-                }
-                pendingDuration = 0;
-                pendingByteRange = false;
-            } else {
-                out.append(raw);
-            }
-            if (i < lines.length - 1) out.append('\n');
+    private String rewritePlaylist(String playlistUrl, String text, int session, @Nullable HlsPlaylistRewriter.Variant inheritedVariant) {
+        HlsPlaylistRewriter.Result result = HlsPlaylistRewriter.rewrite(text, inheritedVariant, (uri, cacheable, context) -> {
+            String targetUrl = resolve(playlistUrl, uri);
+            HlsPlaylistRewriter.Variant targetVariant = context.variant();
+            String rewrittenUrl = proxyItemUrl(
+                    targetUrl, session, cacheable, targetVariant,
+                    context.role(), context.startSeconds(),
+                    context.durationSeconds());
+            return new HlsPlaylistRewriter.MappedUri(targetUrl, rewrittenUrl);
+        });
+        recordPlaylistDetails(session, playlistUrl, text, result, inheritedVariant);
+        if (!result.variants().isEmpty()) {
+            SpiderDebug.log(TAG, "master playlist preserved variants session=%d variants=%d", session, result.variants().size());
         }
-        recordPlaylistDetails(session, text, segments);
-        return out.toString();
+        return result.text();
     }
 
-    @Nullable
-    private boolean[] lowerVariantLinesToSkip(String[] lines, int session) {
-        List<Variant> variants = new ArrayList<>();
-        for (int i = 0; i < lines.length; i++) {
-            String line = trimCr(lines[i]).trim();
-            if (!line.startsWith("#EXT-X-STREAM-INF")) continue;
-            int uriLine = nextUriLine(lines, i + 1);
-            if (uriLine < 0) continue;
-            variants.add(new Variant(i, uriLine, variantBandwidth(line), variantWidth(line), variantHeight(line)));
-        }
-        if (variants.size() <= 1) return null;
-        Variant best = null;
-        for (Variant variant : variants) if (best == null || variant.betterThan(best)) best = variant;
-        if (best == null || best.score() <= 0) return null;
-        boolean[] skip = new boolean[lines.length];
-        for (Variant variant : variants) {
-            if (variant == best) continue;
-            skip[variant.tagLine] = true;
-            skip[variant.uriLine] = true;
-        }
-        SpiderDebug.log(TAG, "master playlist select highest variant session=%d variants=%d bandwidth=%d resolution=%dx%d", session, variants.size(), best.bandwidth, best.width, best.height);
-        return skip;
-    }
-
-    private int nextUriLine(String[] lines, int start) {
-        for (int i = start; i < lines.length; i++) {
-            String line = trimCr(lines[i]).trim();
-            if (line.isEmpty()) continue;
-            if (!line.startsWith("#")) return i;
-            if (line.startsWith("#EXT-X-STREAM-INF")) return -1;
-        }
-        return -1;
-    }
-
-    private long variantBandwidth(String line) {
-        long average = parseLongAttribute(line, "AVERAGE-BANDWIDTH");
-        return average > 0 ? average : parseLongAttribute(line, "BANDWIDTH");
-    }
-
-    private int variantWidth(String line) {
-        return variantResolution(line)[0];
-    }
-
-    private int variantHeight(String line) {
-        return variantResolution(line)[1];
-    }
-
-    private int[] variantResolution(String line) {
-        String value = attributeValue(line, "RESOLUTION");
-        if (TextUtils.isEmpty(value)) return new int[]{0, 0};
-        String[] parts = value.toLowerCase(Locale.US).split("x", 2);
-        if (parts.length < 2) return new int[]{0, 0};
-        try {
-            return new int[]{Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim())};
-        } catch (Throwable ignored) {
-            return new int[]{0, 0};
-        }
-    }
-
-    private long parseLongAttribute(String line, String name) {
-        String value = attributeValue(line, name);
-        if (TextUtils.isEmpty(value)) return 0;
-        try {
-            return Long.parseLong(value);
-        } catch (Throwable ignored) {
-            return 0;
-        }
-    }
-
-    @Nullable
-    private String attributeValue(String line, String name) {
-        int colon = line.indexOf(':');
-        if (colon < 0 || colon >= line.length() - 1) return null;
-        for (String part : line.substring(colon + 1).split(",")) {
-            int equals = part.indexOf('=');
-            if (equals <= 0) continue;
-            String key = part.substring(0, equals).trim();
-            if (!name.equalsIgnoreCase(key)) continue;
-            String value = part.substring(equals + 1).trim();
-            if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) value = value.substring(1, value.length() - 1);
-            return value;
-        }
-        return null;
-    }
-
-    private boolean isCacheableUriAttribute(String line) {
-        if (!line.startsWith("#EXT-X-MAP")) return false;
-        return !line.toUpperCase(Locale.US).contains("BYTERANGE=");
-    }
-
-    private String rewriteUriAttributes(String playlistUrl, String line, int session, boolean cacheable) {
-        Matcher matcher = URI_ATTR.matcher(line);
-        StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            String value = matcher.group(1);
-            String replacement = value;
-            if (!TextUtils.isEmpty(value) && !value.startsWith("data:")) {
-                replacement = proxyItemUrl(resolve(playlistUrl, value), session, cacheable);
-            }
-            matcher.appendReplacement(buffer, "URI=\"" + Matcher.quoteReplacement(replacement) + "\"");
-        }
-        matcher.appendTail(buffer);
-        return buffer.toString();
-    }
-
-    private String proxyItemUrl(String targetUrl, int session, boolean cacheable) {
-        String id = Long.toString(nextId.incrementAndGet());
-        targets.put(id, new Target(session, targetUrl, System.currentTimeMillis(), cacheable));
+    private String proxyItemUrl(
+            String targetUrl,
+            int session,
+            boolean cacheable,
+            @Nullable HlsPlaylistRewriter.Variant variant,
+            HlsPlaylistRewriter.UriRole role,
+            double startSeconds,
+            double durationSeconds) {
+        String id = MpvHlsTargetIdentity.stableId(
+                session, targetUrl, cacheable, variant, role);
+        targets.put(id, new Target(
+                session, targetUrl, System.currentTimeMillis(), cacheable,
+                variant, role, startSeconds, durationSeconds));
         return baseUrl() + "/mpv/item?s=" + session + "&id=" + id;
     }
 
     private String proxyDashItemUrl(String targetUrl, int session) {
         String id = Long.toString(nextId.incrementAndGet());
-        targets.put(id, new Target(session, targetUrl, System.currentTimeMillis(), true));
+        targets.put(id, new Target(
+                session, targetUrl, System.currentTimeMillis(), true, null,
+                HlsPlaylistRewriter.UriRole.OTHER, 0, 0));
         return baseUrl() + "/mpv/dash-item/" + id + "/media.m4s";
     }
 
@@ -614,51 +846,67 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     @Nullable
-    private Response serveCached(Session session, String url, @Nullable String rangeHeader) throws IOException {
-        if (!isCacheEnabled()) return null;
+    private Response serveCached(
+            Session session,
+            String url,
+            @Nullable String rangeHeader,
+            ForegroundLease foreground) throws IOException {
         File file = cacheFile(session, url);
         if (!file.isFile() || file.length() < MIN_CACHE_FILE_BYTES) return null;
         long length = file.length();
         Range range = parseRange(rangeHeader, length);
         if (rangeHeader != null && range == null) {
+            foreground.close();
             Response response = error(Status.RANGE_NOT_SATISFIABLE, "invalid range");
             response.addHeader("Content-Range", "bytes */" + length);
             return response;
         }
         long start = range == null ? 0 : range.start;
         long end = range == null ? length - 1 : range.end;
-        FileInputStream input = new FileInputStream(file);
-        skipFully(input, start);
-        //noinspection ResultOfMethodCallIgnored
-        file.setLastModified(System.currentTimeMillis());
-        Response response = newFixedLengthResponse(range == null ? Status.OK : Status.PARTIAL_CONTENT, cacheMime(url, file), new LimitedInputStream(input, end - start + 1), end - start + 1);
-        response.addHeader("Access-Control-Allow-Origin", "*");
-        response.addHeader("Cache-Control", "no-cache");
-        response.addHeader("Connection", "close");
-        response.addHeader("Accept-Ranges", "bytes");
-        if (range != null) response.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + length);
-        return response;
+        MpvHlsCacheCoordinator.ReadLease input = cacheCoordinator.openRead(file);
+        if (input == null) return null;
+        try {
+            skipFully(input, start);
+            InputStream stream = new ForegroundInputStream(
+                    new LimitedInputStream(input, end - start + 1), foreground);
+            Response response = newFixedLengthResponse(range == null ? Status.OK : Status.PARTIAL_CONTENT, cacheMime(url, file), stream, end - start + 1);
+            response.addHeader("Access-Control-Allow-Origin", "*");
+            response.addHeader("Cache-Control", "no-cache");
+            response.addHeader("Connection", "close");
+            response.addHeader("Accept-Ranges", "bytes");
+            if (range != null) response.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + length);
+            return response;
+        } catch (Throwable error) {
+            try {
+                input.close();
+            } catch (Throwable ignored) {
+            }
+            foreground.close();
+            if (error instanceof IOException io) throw io;
+            throw new IOException(error);
+        }
     }
 
     private InputStream maybeCacheStreaming(Session session, Target target, InputStream source, int status, @Nullable String range, @Nullable String contentRange, long contentLength, String mime) {
+        refreshCacheCoordinator();
         if (!shouldWriteThroughCache(target, status, range, contentRange, contentLength)) return source;
         File file = cacheFile(session, target.url);
-        if (file.isFile() && file.length() >= MIN_CACHE_FILE_BYTES) return source;
-        String key = file.getName();
-        if (!preloading.add(key)) return source;
-        File dir = cacheDir();
-        if (!dir.exists() && !dir.mkdirs()) {
-            preloading.remove(key);
+        if (file.isFile() && file.length() >= MIN_CACHE_FILE_BYTES) {
+            recordCachedTarget(session, target);
             return source;
         }
-        File temp = tempFile(dir, file);
+        String key = file.getName();
+        MpvHlsCacheCoordinator.ReservationDecision decision = cacheCoordinator.tryReserve(
+                key, file, contentLength, configuredCacheLimitBytes(), MpvHlsCacheCoordinator.WriterType.FOREGROUND);
+        if (!decision.granted()) return source;
+        MpvHlsCacheCoordinator.WriteReservation reservation = decision.reservation();
         try {
-            return new CacheWritingInputStream(source, new FileOutputStream(temp), temp, file, key, target.url, contentLength, mime);
+            return new CacheWritingInputStream(
+                    source, new FileOutputStream(reservation.tempFile()),
+                    reservation, mime, session, target);
         } catch (Throwable e) {
-            preloading.remove(key);
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-            SpiderDebug.log(TAG, "stream cache open failed url=%s error=%s", shortUrl(target.url), e.getMessage());
+            reservation.fail(e);
+            logCacheFailure("foreground-open", e);
             return source;
         }
     }
@@ -668,50 +916,97 @@ public final class MpvHlsProxy extends NanoHTTPD {
         if (!isCacheEnabled() || !stats(target.sessionId).vod) return false;
         if (!isHttpUrl(target.url)) return false;
         if (contentLength < MIN_CACHE_FILE_BYTES) return false;
-        if (contentLength > cacheLimitBytes()) return false;
+        if (contentLength > configuredCacheLimitBytes()) return false;
         if (status == 200) return true;
         return status == 206 && isCompleteRangeResponse(range, contentRange, contentLength);
     }
 
-    private void preloadSegments(Session session, List<Segment> segments, double startSeconds) {
-        if (!PreloadSetting.isPreload(kernel) || !isCacheEnabled() || segments.isEmpty()) return;
-        double seconds = 0;
-        for (Segment segment : segments) {
+    private synchronized void preloadSegments(Session session, List<HlsPlaylistRewriter.Segment> segments, double startSeconds) {
+        refreshCacheCoordinator();
+        long preloadGeneration = preloadGate.acquire();
+        if (preloadGeneration < 0
+                || automaticPreloadMode && activePreloadTransfers.get() > 0
+                || !PreloadSetting.isPreload(kernel)
+                || !isPausePreloadAllowed()
+                || configuredPreloadLimitBytes() <= 0
+                || !cacheCoordinator.canStartPreload(configuredPreloadLimitBytes())
+                || segments.isEmpty()) return;
+        ExecutorService executor = getPreloadExecutor();
+        int remainingSubmissions = resolvePreloadSubmissionBudget(preloading.size());
+        if (remainingSubmissions <= 0) return;
+        double submittedSeconds = 0;
+        double batchSeconds = Math.max(0, PreloadSetting.getPreloadTimeSeconds(kernel));
+        double aheadSeconds = preloadAheadWindowSeconds();
+        double windowEndSeconds = Double.isInfinite(aheadSeconds)
+                ? Double.POSITIVE_INFINITY : startSeconds + aheadSeconds;
+        for (HlsPlaylistRewriter.Segment segment : segments) {
+            if (!preloadGate.allows(preloadGeneration)) break;
             if (segment.endSeconds() <= startSeconds) continue;
-            if (segment.startSeconds <= startSeconds && segment.endSeconds() > startSeconds) continue;
-            if (segment.byteRange) continue;
-            if (seconds >= PreloadSetting.getPreloadTimeSeconds(kernel)) break;
-            seconds += Math.max(0, segment.durationSeconds);
-            preloadSegment(session, segment.url);
+            if (segment.startSeconds() <= startSeconds && segment.endSeconds() > startSeconds) continue;
+            if (segment.byteRange()) continue;
+            if (segment.startSeconds() >= windowEndSeconds) break;
+            if (submittedSeconds >= batchSeconds) break;
+            if (!preloadSegment(session, segment, preloadGeneration, executor)) continue;
+            submittedSeconds += Math.max(0, segment.durationSeconds());
+            if (--remainingSubmissions <= 0) break;
         }
     }
 
-    private void preloadSegment(Session session, String url) {
-        if (!isHttpUrl(url)) return;
+    private boolean preloadSegment(
+            Session session,
+            HlsPlaylistRewriter.Segment segment,
+            long preloadGeneration,
+            ExecutorService executor) {
+        String url = segment.uri();
+        if (!preloadGate.allows(preloadGeneration) || !isHttpUrl(url)) return false;
         File file = cacheFile(session, url);
-        if (file.isFile() && file.length() > 0) return;
+        if (file.isFile() && file.length() > 0) {
+            recordCachedSegment(session, segment);
+            return false;
+        }
         String key = file.getName();
-        if (!preloading.add(key)) return;
-        getPreloadExecutor().execute(() -> {
-            try {
-                prefetchToCache(session, url, file);
-            } catch (Throwable e) {
-                SpiderDebug.log(TAG, "preload failed url=%s error=%s", shortUrl(url), e.getMessage());
-            } finally {
-                preloading.remove(key);
-            }
-        });
+        if (cacheCoordinator.isKeyBusyOrCached(key, file)) return false;
+        if (!preloading.add(key)) return false;
+        try {
+            executor.execute(() -> {
+                activePreloadTransfers.incrementAndGet();
+                try {
+                    if (prefetchToCache(session, url, file, preloadGeneration)) {
+                        recordCachedSegment(session, segment);
+                    }
+                } catch (Throwable e) {
+                    SpiderDebug.log(TAG, "preload failed errorType=%s action=stop-cache-write", e.getClass().getSimpleName());
+                } finally {
+                    activePreloadTransfers.updateAndGet(value -> Math.max(0, value - 1));
+                    preloading.remove(key);
+                }
+            });
+            return true;
+        } catch (Throwable error) {
+            preloading.remove(key);
+            SpiderDebug.log(TAG, "preload submit failed errorType=%s action=stop-cache-write", error.getClass().getSimpleName());
+            return false;
+        }
     }
 
     private synchronized ExecutorService getPreloadExecutor() {
-        int threads = PreloadSetting.getPreloadThreads(kernel);
+        int threads = MpvPreloadPolicy.resolveExecutorThreads(
+                automaticPreloadMode,
+                PreloadSetting.getPreloadThreads(kernel));
         if (preloadExecutor != null && preloadThreads == threads) return preloadExecutor;
         releasePreloadExecutor();
+        preloading.clear();
         preloadThreads = threads;
         return preloadExecutor = Executors.newFixedThreadPool(threads);
     }
 
     private synchronized void cancelPreloads() {
+        preloadGate.invalidate();
+        releasePreloadWork(false);
+    }
+
+    private synchronized void releasePreloadWork(boolean invalidate) {
+        if (invalidate) preloadGate.invalidate();
         releasePreloadExecutor();
         preloading.clear();
     }
@@ -722,44 +1017,128 @@ public final class MpvHlsProxy extends NanoHTTPD {
         preloadExecutor = null;
     }
 
-    private void prefetchToCache(Session session, String url, File file) throws IOException {
-        if (!isCacheEnabled() || (file.isFile() && file.length() > 0)) return;
+    private boolean prefetchToCache(
+            Session session,
+            String url,
+            File file,
+            long preloadGeneration) throws IOException {
+        refreshCacheCoordinator();
+        if (!preloadGate.allows(preloadGeneration)
+                || !isPausePreloadAllowed()
+                || configuredPreloadLimitBytes() <= 0
+                || !cacheCoordinator.canStartPreload(configuredPreloadLimitBytes())
+                || (file.isFile() && file.length() > 0)) return false;
         try (okhttp3.Response response = fetch(session, url, null, true)) {
+            if (!preloadGate.allows(preloadGeneration)) return false;
             ResponseBody body = response.body();
-            if (!response.isSuccessful() || body == null || isPlaylistUrl(url, body.contentType()) || isPngMime(body.contentType())) return;
-            long contentLength = body.contentLength();
-            if (contentLength < MIN_CACHE_FILE_BYTES || contentLength > cacheLimitBytes()) return;
-            writeCacheFile(body.byteStream(), file, contentLength, mediaMimeFromUrl(url, body.contentType()));
-            SpiderDebug.log(TAG, "preload cached length=%d url=%s", contentLength, shortUrl(url));
+            if (!response.isSuccessful() || body == null
+                    || isPlaylistUrl(url, body.contentType())) return false;
+            long upstreamLength = body.contentLength();
+            if (upstreamLength < MIN_CACHE_FILE_BYTES) return false;
+            boolean stripPngPrefix = MpvHlsSegmentContentPolicy.shouldProbePngPrefix(
+                    body.contentType() == null ? null : body.contentType().toString(), true);
+            InputStream source = body.byteStream();
+            long cacheLength = upstreamLength;
+            String cacheMime = mediaMimeFromUrl(url, body.contentType());
+            if (stripPngPrefix) {
+                PngPrefixStrippingInputStream stripping =
+                        new PngPrefixStrippingInputStream(source, url);
+                int strippedBytes = stripping.initializeAndGetStrippedPrefixBytes();
+                cacheLength = MpvHlsSegmentContentPolicy.strippedContentLength(
+                        upstreamLength, strippedBytes);
+                if (cacheLength < MIN_CACHE_FILE_BYTES) return false;
+                source = stripping;
+                cacheMime = MIME_TS;
+            }
+            if (cacheLength > configuredPreloadLimitBytes()) return false;
+            String key = file.getName();
+            MpvHlsCacheCoordinator.ReservationDecision decision = cacheCoordinator.tryReserve(
+                    key, file, cacheLength, configuredPreloadLimitBytes(), MpvHlsCacheCoordinator.WriterType.PREFETCH);
+            if (!decision.granted()) return false;
+            return writeCacheFile(source, decision.reservation(), cacheLength,
+                    cacheMime, preloadGeneration);
         }
     }
 
-    private void writeCacheFile(InputStream input, File file, long expectedLength, String mime) throws IOException {
-        File dir = cacheDir();
-        if (!dir.exists() && !dir.mkdirs()) return;
-        File temp = tempFile(dir, file);
+    private boolean writeCacheFile(InputStream input, MpvHlsCacheCoordinator.WriteReservation reservation,
+                                   long expectedLength, String mime,
+                                   long preloadGeneration) throws IOException {
         long written = 0;
-        try (InputStream in = input; OutputStream out = new FileOutputStream(temp)) {
+        OutputStream output;
+        try {
+            output = new FileOutputStream(reservation.tempFile());
+        } catch (Throwable error) {
+            reservation.fail(error);
+            logCacheFailure("prefetch-open", error);
+            return false;
+        }
+        try (InputStream in = input; OutputStream out = output) {
             byte[] buffer = new byte[64 * 1024];
             int read;
             while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
+                if (!preloadGate.allows(preloadGeneration) || !isPausePreloadAllowed()) {
+                    reservation.abort();
+                    return false;
+                }
+                if (!reservation.canWrite(read)) {
+                    reservation.abort();
+                    return false;
+                }
+                try {
+                    out.write(buffer, 0, read);
+                } catch (Throwable error) {
+                    reservation.fail(error);
+                    logCacheFailure("prefetch-write", error);
+                    return false;
+                }
                 written += read;
-                if (written > cacheLimitBytes()) throw new IOException("cache item exceeds limit");
+                if (!reservation.recordWritten(read)) {
+                    reservation.abort();
+                    return false;
+                }
             }
-        } catch (Throwable e) {
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-            if (e instanceof IOException io) throw io;
-            throw new IOException(e);
+        } catch (Throwable error) {
+            reservation.abort();
+            if (error instanceof IOException io) throw io;
+            throw new IOException(error);
         }
         if (expectedLength > 0 && written != expectedLength) {
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-            return;
+            reservation.abort();
+            return false;
         }
-        commitCacheFile(temp, file, mime);
-        pruneCache();
+        try {
+            boolean committed = preloadGate.commitIfAllowed(
+                    preloadGeneration,
+                    () -> reservation.commit(mime));
+            if (committed) {
+                SpiderDebug.log(TAG, "cache-write action=preload-commit bytes=%d", written);
+            } else {
+                reservation.abort();
+            }
+            return committed;
+        } catch (Throwable error) {
+            reservation.fail(error);
+            logCacheFailure("prefetch-commit", error);
+            return false;
+        }
+    }
+
+    private void recordCachedSegment(
+            Session session, HlsPlaylistRewriter.Segment segment) {
+        diskBufferStore.recordCompleted(
+                session.mediaKey(),
+                secondsToMilliseconds(segment.startSeconds()),
+                secondsToMilliseconds(segment.endSeconds()));
+    }
+
+    private void recordCachedTarget(Session session, Target target) {
+        if (target == null
+                || target.role() != HlsPlaylistRewriter.UriRole.MEDIA_SEGMENT
+                || target.durationSeconds() <= 0) return;
+        diskBufferStore.recordCompleted(
+                session.mediaKey(),
+                secondsToMilliseconds(target.startSeconds()),
+                secondsToMilliseconds(target.endSeconds()));
     }
 
     private File cacheFile(Session session, String url) {
@@ -771,40 +1150,48 @@ public final class MpvHlsProxy extends NanoHTTPD {
     }
 
     private boolean isCacheEnabled() {
-        return cacheLimitBytes() > 0;
+        return configuredCacheLimitBytes() > 0;
     }
 
     private long cacheLimitBytes() {
+        return cacheCoordinator.effectiveCapacityBytes(configuredCacheLimitBytes());
+    }
+
+    private long configuredCacheLimitBytes() {
         long playCache = Math.max(0, PlayerSetting.getPlayCacheSize(kernel));
-        long preloadCache = PreloadSetting.isPreload(kernel) ? Math.max(0, PreloadSetting.getPreloadSizeBytes(kernel)) : playCache;
-        return Math.max(0, Math.min(playCache, preloadCache));
+        return Math.max(playCache, configuredPreloadLimitBytes());
+    }
+
+    private long configuredPreloadLimitBytes() {
+        return PreloadSetting.isPreload(kernel)
+                ? Math.max(0, PreloadSetting.getPreloadSizeBytes(kernel)) : 0;
+    }
+
+    private double preloadAheadWindowSeconds() {
+        int seconds = PreloadSetting.getPreloadAheadSeconds(kernel);
+        return seconds == PreloadSetting.WHOLE_MEDIA_AHEAD_SECONDS
+                ? Double.POSITIVE_INFINITY : Math.max(0, seconds);
+    }
+
+    private boolean desiredPreloadAllowed() {
+        if (!isPausePreloadAllowed()) return false;
+        if (!automaticPreloadMode) return true;
+        return automaticResourceAllowed && (playbackPaused || automaticTrafficAllowed);
+    }
+
+    private boolean isPausePreloadAllowed() {
+        return PreloadPausePolicy.evaluate(
+                !playbackPaused,
+                PreloadSetting.getPausePreloadPolicy(kernel),
+                PlaybackSystemConditionMonitor.process().currentNetworkSnapshot()).allowed();
     }
 
     private void pruneCache() {
-        File dir = cacheDir();
-        if (!dir.exists() && !dir.mkdirs()) return;
-        File[] files = dir.listFiles(file -> file.isFile() && file.getName().endsWith(CACHE_FILE_SUFFIX));
-        if (files == null || files.length == 0) return;
-        long total = 0;
-        for (File file : files) total += Math.max(0, file.length());
-        long limit = cacheLimitBytes();
-        if (limit <= 0 || total <= limit) return;
-        Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        for (File file : files) {
-            if (total <= limit) break;
-            long length = Math.max(0, file.length());
-            if (file.delete()) {
-                deleteMeta(file);
-                total -= length;
-            }
-        }
+        cacheCoordinator.prune(configuredCacheLimitBytes());
     }
 
     private long cacheBytes() {
-        File[] files = cacheDir().listFiles(file -> file.isFile() && file.getName().endsWith(CACHE_FILE_SUFFIX));
-        long total = 0;
-        if (files != null) for (File file : files) total += Math.max(0, file.length());
-        return total;
+        return cacheCoordinator.cacheBytes();
     }
 
     private int parseSessionId(IHTTPSession session) {
@@ -838,17 +1225,65 @@ public final class MpvHlsProxy extends NanoHTTPD {
         if (isVodPlaylist(text)) stats.vod = true;
     }
 
-    private void recordPlaylistDetails(int session, String text, List<Segment> segments) {
+    private void recordPlaylistDetails(
+            int session,
+            String playlistUrl,
+            String text,
+            HlsPlaylistRewriter.Result result,
+            @Nullable HlsPlaylistRewriter.Variant inheritedVariant) {
         SessionStats stats = stats(session);
-        stats.vod = isVodPlaylist(text);
-        if (stats.vod && !segments.isEmpty()) stats.segments = List.copyOf(segments);
-        else if (!stats.vod) stats.segments = List.of();
+        Session owner = sessions.get(session);
+        if (owner != null) {
+            PlaybackResourceClassifier.Classification classification = PlaybackResourceClassifier.classifyHls(
+                    playerPlaylistUri(session), owner.url, text, SystemClock.elapsedRealtime());
+            stats.observeHls(playlistUrl, classification);
+        }
+        long now = SystemClock.elapsedRealtime();
+        PlaybackResourceClassifier.Classification effective =
+                stats.resourceClassification(now);
+        stats.vod = effective.streamKind()
+                == PlaybackAutoContext.StreamKind.VOD;
+        String playlistKey = playlistUrl == null
+                ? "direct" : Util.md5(playlistUrl);
+        if (kernel == PlayerSetting.IJK
+                && !result.mediaUnits().isEmpty()
+                && (effective.streamKind() == PlaybackAutoContext.StreamKind.LIVE
+                || effective.streamKind()
+                == PlaybackAutoContext.StreamKind.LOW_LATENCY_LIVE)) {
+            stats.observeLivePlaylist(
+                    playlistKey, result.mediaUnits(), now);
+        } else if (kernel == PlayerSetting.IJK
+                && !result.mediaUnits().isEmpty()) {
+            stats.clearLivePlaylist(playlistKey);
+        }
+        String upper = text.toUpperCase(Locale.US);
+        if (upper.contains("#EXT-X-BYTERANGE:") || upper.contains("BYTERANGE=")) stats.hasByteRange = true;
+        if (!result.variants().isEmpty()) stats.recordVariants(result.variants());
+        if (stats.vod && !result.segments().isEmpty()) {
+            stats.recordSegments(inheritedVariant, result.segments());
+        } else if (!stats.vod) {
+            stats.clearSegments(inheritedVariant);
+        }
+    }
+
+    private void recordSelectedVariant(Target target) {
+        HlsPlaylistRewriter.Variant variant = target.variant();
+        if (variant == null
+                || variant.kind() != HlsPlaylistRewriter.VariantKind.STREAM) return;
+        SessionStats stats = stats(target.sessionId());
+        if (!stats.recordSelectedVariant(variant)) return;
+        SpiderDebug.log(TAG, "variant requested session=%d peak=%d average=%d resolution=%dx%d", target.sessionId(), variant.bandwidth(), variant.averageBandwidth(), variant.width(), variant.height());
     }
 
     private void recordItemResponse(int session, int status, String url) {
         SessionStats stats = stats(session);
         stats.itemRequests++;
         recordStatus(stats, status, url);
+    }
+
+    private String playerPlaylistUri(int session) {
+        if (!started || getListeningPort() <= 0) return null;
+        return baseUrl() + "/mpv/index.m3u8?s=" + session;
     }
 
     private SessionStats stats(int session) {
@@ -870,22 +1305,11 @@ public final class MpvHlsProxy extends NanoHTTPD {
         if (stats == null) return "playlist -";
         String type = stats.vod ? "vod" : stats.seenPlaylist ? "live" : "-";
         String status = stats.lastStatus <= 0 ? "-" : String.valueOf(stats.lastStatus);
-        return "playlist " + type + " p" + stats.playlistRequests + "/i" + stats.itemRequests + " last " + status + (stats.hasByteRange ? " byterange" : "");
+        return "playlist " + type + " p" + stats.playlistRequests + "/i" + stats.itemRequests + " last " + status + stats.variantText() + (stats.hasByteRange ? " byterange" : "");
     }
 
     private static boolean isVodPlaylist(String text) {
         return text != null && text.toUpperCase(Locale.US).contains("#EXT-X-ENDLIST");
-    }
-
-    private static double parseExtInfDuration(String line) {
-        try {
-            int colon = line.indexOf(':');
-            int comma = line.indexOf(',', colon + 1);
-            String value = comma >= 0 ? line.substring(colon + 1, comma) : line.substring(colon + 1);
-            return Double.parseDouble(value.trim());
-        } catch (Throwable ignored) {
-            return 0;
-        }
     }
 
     private static boolean isHttpUrl(String url) {
@@ -969,10 +1393,6 @@ public final class MpvHlsProxy extends NanoHTTPD {
         }
     }
 
-    private static String trimCr(String value) {
-        return value.endsWith("\r") ? value.substring(0, value.length() - 1) : value;
-    }
-
     private static boolean isPlaylistUrl(String url, @Nullable MediaType type) {
         String mime = type == null ? "" : type.toString().toLowerCase(Locale.US);
         if (mime.contains("mpegurl") || mime.contains("m3u8")) return true;
@@ -1027,37 +1447,8 @@ public final class MpvHlsProxy extends NanoHTTPD {
         return mediaMimeFromUrl(url, null);
     }
 
-    private void writeCacheMeta(File file, String mime) throws IOException {
-        if (TextUtils.isEmpty(mime)) mime = MIME_BINARY;
-        try (OutputStream out = new FileOutputStream(metaFile(file))) {
-            out.write(mime.getBytes(StandardCharsets.UTF_8));
-        }
-    }
-
     private File metaFile(File file) {
         return new File(file.getParentFile(), file.getName() + CACHE_META_SUFFIX);
-    }
-
-    private void deleteMeta(File file) {
-        //noinspection ResultOfMethodCallIgnored
-        metaFile(file).delete();
-    }
-
-    private File tempFile(File dir, File file) {
-        return new File(dir, file.getName() + "." + Thread.currentThread().getId() + "." + System.nanoTime() + ".tmp");
-    }
-
-    private void commitCacheFile(File temp, File file, String mime) throws IOException {
-        if (file.exists()) {
-            //noinspection ResultOfMethodCallIgnored
-            file.delete();
-        }
-        deleteMeta(file);
-        if (!temp.renameTo(file)) throw new IOException("rename cache failed");
-        try {
-            writeCacheMeta(file, mime);
-        } catch (IOException ignored) {
-        }
     }
 
     private static String stripQuery(String url) {
@@ -1141,58 +1532,230 @@ public final class MpvHlsProxy extends NanoHTTPD {
         return value.substring(0, 120) + "...";
     }
 
-    private record Session(String url, Map<String, String> headers, long createdAtMs) {
+    private static String resolveMediaKey(String mediaKey, String url) {
+        return mediaKey == null || mediaKey.isBlank() ? (url == null ? "" : url) : mediaKey;
     }
 
-    private record Target(int sessionId, String url, long createdAtMs, boolean cacheable) {
+    private static long secondsToMilliseconds(double seconds) {
+        if (!Double.isFinite(seconds) || seconds <= 0) return 0;
+        double milliseconds = seconds * 1000d;
+        return milliseconds >= Long.MAX_VALUE ? Long.MAX_VALUE : Math.round(milliseconds);
     }
 
-    private record Segment(String url, double durationSeconds, double startSeconds, boolean byteRange) {
-        double endSeconds() {
+    private static double finiteNonNegative(double value) {
+        return Double.isFinite(value) ? Math.max(0, value) : 0;
+    }
+
+    private void logCacheFailure(String action, Throwable error) {
+        String type = error == null ? "unknown" : error.getClass().getSimpleName();
+        MpvHlsCacheCoordinator.CapacitySnapshot snapshot = cacheCoordinator.snapshot(configuredCacheLimitBytes());
+        SpiderDebug.log(TAG, "cache-write action=%s errorType=%s policy=%s physicalBytes=%d reservedBytes=%d effectiveBytes=%d circuit=%s",
+                action, type, snapshot.policy().state(), snapshot.physicalBytes(), snapshot.reservedBytes(),
+                snapshot.policy().effectiveCapacityBytes(), snapshot.circuitOpen());
+    }
+
+    private record Session(
+            String url, Map<String, String> headers, long createdAtMs, String mediaKey) {
+    }
+
+    private record Target(
+            int sessionId,
+            String url,
+            long createdAtMs,
+            boolean cacheable,
+            @Nullable HlsPlaylistRewriter.Variant variant,
+            HlsPlaylistRewriter.UriRole role,
+            double startSeconds,
+            double durationSeconds) {
+
+        private Target {
+            role = role == null
+                    ? HlsPlaylistRewriter.UriRole.OTHER : role;
+            startSeconds = finiteNonNegative(startSeconds);
+            durationSeconds = finiteNonNegative(durationSeconds);
+        }
+
+        private double endSeconds() {
             return startSeconds + durationSeconds;
-        }
-    }
-
-    private record Variant(int tagLine, int uriLine, long bandwidth, int width, int height) {
-        long area() {
-            return (long) width * height;
-        }
-
-        long score() {
-            return Math.max(bandwidth, area());
-        }
-
-        boolean betterThan(Variant other) {
-            if (bandwidth != other.bandwidth) return bandwidth > other.bandwidth;
-            return area() > other.area();
         }
     }
 
     private record Range(long start, long end) {
     }
 
+    private final class ForegroundLease implements AutoCloseable {
+
+        private final boolean managed;
+        private boolean closed;
+
+        private ForegroundLease(boolean managed) {
+            this.managed = managed;
+        }
+
+        @Override
+        public synchronized void close() {
+            if (closed) return;
+            closed = true;
+            if (managed) preloadGate.foregroundEnded();
+        }
+    }
+
+    private static final class ForegroundInputStream extends FilterInputStream {
+
+        private final ForegroundLease foreground;
+        private boolean closed;
+
+        private ForegroundInputStream(InputStream input, ForegroundLease foreground) {
+            super(input);
+            this.foreground = foreground;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value == -1) close();
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int value = super.read(buffer, offset, length);
+            if (value == -1) close();
+            return value;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) return;
+            closed = true;
+            try {
+                super.close();
+            } finally {
+                foreground.close();
+            }
+        }
+    }
+
+    private static final class UpstreamTelemetryInputStream extends FilterInputStream {
+
+        private final long expectedLength;
+        private final MpvHlsUpstreamEstimator estimator;
+        private final long estimatorGeneration;
+        private long firstReadAtNanos = -1;
+        private long lastReadAtNanos = -1;
+        private long blockedReadNanos;
+        private long bytes;
+        private boolean eof;
+        private boolean finished;
+
+        private UpstreamTelemetryInputStream(
+                InputStream input,
+                long expectedLength,
+                MpvHlsUpstreamEstimator estimator) {
+            super(input);
+            this.expectedLength = expectedLength;
+            this.estimator = estimator;
+            this.estimatorGeneration = estimator.generation();
+        }
+
+        @Override
+        public int read() throws IOException {
+            long started = System.nanoTime();
+            markStarted(started);
+            int value = super.read();
+            long ended = System.nanoTime();
+            recordReadTiming(started, ended);
+            if (value == -1) {
+                eof = true;
+                finish(true);
+            } else {
+                bytes++;
+                finishIfExpectedLengthReached();
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            long started = System.nanoTime();
+            markStarted(started);
+            int value = super.read(buffer, offset, length);
+            long ended = System.nanoTime();
+            recordReadTiming(started, ended);
+            if (value == -1) {
+                eof = true;
+                finish(true);
+            } else if (value > 0) {
+                bytes = saturatedAdd(bytes, value);
+                finishIfExpectedLengthReached();
+            }
+            return value;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                super.close();
+            } finally {
+                finish(eof || expectedLength > 0 && bytes == expectedLength);
+            }
+        }
+
+        private void markStarted(long started) {
+            if (firstReadAtNanos < 0) firstReadAtNanos = started;
+        }
+
+        private void recordReadTiming(long started, long ended) {
+            lastReadAtNanos = Math.max(started, ended);
+            blockedReadNanos = saturatedAdd(
+                    blockedReadNanos, Math.max(0, ended - started));
+        }
+
+        private void finishIfExpectedLengthReached() {
+            if (expectedLength > 0 && bytes == expectedLength) finish(true);
+        }
+
+        private void finish(boolean complete) {
+            if (finished) return;
+            finished = true;
+            long wallNanos = firstReadAtNanos < 0 || lastReadAtNanos < firstReadAtNanos
+                    ? 0 : lastReadAtNanos - firstReadAtNanos;
+            estimator.recordForeground(
+                    estimatorGeneration,
+                    bytes,
+                    blockedReadNanos,
+                    wallNanos,
+                    complete,
+                    SystemClock.elapsedRealtime());
+        }
+
+        private static long saturatedAdd(long first, long second) {
+            return second > 0 && first > Long.MAX_VALUE - second
+                    ? Long.MAX_VALUE : first + second;
+        }
+    }
+
     private final class CacheWritingInputStream extends FilterInputStream {
 
-        private final File temp;
-        private final File file;
-        private final String key;
-        private final String url;
+        private final MpvHlsCacheCoordinator.WriteReservation reservation;
         private final long expectedLength;
         private final String mime;
+        private final Session session;
+        private final Target target;
         private OutputStream cache;
         private long written;
         private boolean completed;
-        private boolean released;
 
-        CacheWritingInputStream(InputStream in, OutputStream cache, File temp, File file, String key, String url, long expectedLength, String mime) {
+        CacheWritingInputStream(InputStream in, OutputStream cache,
+                                MpvHlsCacheCoordinator.WriteReservation reservation,
+                                String mime, Session session, Target target) {
             super(in);
             this.cache = cache;
-            this.temp = temp;
-            this.file = file;
-            this.key = key;
-            this.url = url;
-            this.expectedLength = expectedLength;
+            this.reservation = reservation;
+            this.expectedLength = reservation.expectedBytes();
             this.mime = mime;
+            this.session = session;
+            this.target = target;
         }
 
         @Override
@@ -1230,11 +1793,16 @@ public final class MpvHlsProxy extends NanoHTTPD {
             OutputStream out = cache;
             if (out == null) return;
             try {
+                if (!reservation.canWrite(1)) {
+                    disableCache(null);
+                    return;
+                }
                 out.write(value);
                 written++;
-                checkCacheProgress();
+                if (!reservation.recordWritten(1)) disableCache(null);
+                else checkCacheProgress();
             } catch (Throwable e) {
-                disableCache(e.getMessage());
+                disableCache(e);
             }
         }
 
@@ -1242,19 +1810,22 @@ public final class MpvHlsProxy extends NanoHTTPD {
             OutputStream out = cache;
             if (out == null) return;
             try {
+                if (!reservation.canWrite(length)) {
+                    disableCache(null);
+                    return;
+                }
                 out.write(buffer, offset, length);
                 written += length;
-                checkCacheProgress();
+                if (!reservation.recordWritten(length)) disableCache(null);
+                else checkCacheProgress();
             } catch (Throwable e) {
-                disableCache(e.getMessage());
+                disableCache(e);
             }
         }
 
         private void checkCacheProgress() {
             if (expectedLength > 0 && written > expectedLength) {
-                disableCache("item exceeds expected length");
-            } else if (written > cacheLimitBytes()) {
-                disableCache("item exceeds limit");
+                disableCache(new IOException("cache item exceeds expected length"));
             } else if (expectedLength > 0 && written == expectedLength) {
                 finishCache();
             }
@@ -1268,46 +1839,34 @@ public final class MpvHlsProxy extends NanoHTTPD {
             try {
                 if (out != null) out.close();
                 if (expectedLength > 0 && written != expectedLength) {
-                    //noinspection ResultOfMethodCallIgnored
-                    temp.delete();
-                    SpiderDebug.log(TAG, "stream cache discard length=%d expected=%d url=%s", written, expectedLength, shortUrl(url));
+                    reservation.abort();
                     return;
                 }
-                commitCacheFile(temp, file, mime);
-                pruneCache();
-                SpiderDebug.log(TAG, "stream cached length=%d url=%s", written, shortUrl(url));
+                if (reservation.commit(mime)) {
+                    recordCachedTarget(session, target);
+                    SpiderDebug.log(TAG, "cache-write action=foreground-commit bytes=%d", written);
+                }
             } catch (Throwable e) {
-                //noinspection ResultOfMethodCallIgnored
-                temp.delete();
-                SpiderDebug.log(TAG, "stream cache commit failed url=%s error=%s", shortUrl(url), e.getMessage());
-            } finally {
-                releaseKey();
+                reservation.fail(e);
+                logCacheFailure("foreground-commit", e);
             }
         }
 
-        private void disableCache(String reason) {
+        private void disableCache(@Nullable Throwable error) {
+            if (completed) return;
+            completed = true;
             OutputStream out = cache;
             cache = null;
             closeQuietly(out);
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-            releaseKey();
-            SpiderDebug.log(TAG, "stream cache disabled url=%s error=%s", shortUrl(url), reason);
+            reservation.fail(error);
+            logCacheFailure("foreground-drop", error);
         }
 
         private void abortCache() {
             OutputStream out = cache;
             cache = null;
             closeQuietly(out);
-            //noinspection ResultOfMethodCallIgnored
-            temp.delete();
-            releaseKey();
-        }
-
-        private void releaseKey() {
-            if (released) return;
-            released = true;
-            preloading.remove(key);
+            reservation.abort();
         }
 
         private void closeQuietly(@Nullable OutputStream out) {
@@ -1445,12 +2004,262 @@ public final class MpvHlsProxy extends NanoHTTPD {
         private volatile int lastStatus;
         private volatile long lastErrorAtMs;
         private volatile String lastUrl;
-        private volatile List<Segment> segments = List.of();
+        private volatile PlaybackResourceClassifier.Classification classification;
+        private final HlsManifestTimelineTracker hlsTimeline = new HlsManifestTimelineTracker();
+        private final HlsProxyLiveLagTracker liveLag =
+                new HlsProxyLiveLagTracker();
+        private volatile HlsPlaylistRewriter.Variant selectedVariant;
+        private volatile int variantCount;
+        private volatile List<HlsVariant> variants = List.of();
+        private volatile List<HlsPlaylistRewriter.Segment> segments = List.of();
+        private final Map<Long, List<HlsPlaylistRewriter.Segment>> variantSegments =
+                new ConcurrentHashMap<>();
+
+        private void recordVariants(List<HlsPlaylistRewriter.VariantEntry> variants) {
+            variantCount = variants.size();
+            this.variants = buildVariantLadder(variants);
+        }
+
+        private synchronized boolean recordSelectedVariant(HlsPlaylistRewriter.Variant variant) {
+            if (variant.equals(selectedVariant)) return false;
+            selectedVariant = variant;
+            return true;
+        }
+
+        private void recordSegments(
+                @Nullable HlsPlaylistRewriter.Variant variant,
+                List<HlsPlaylistRewriter.Segment> segments) {
+            List<HlsPlaylistRewriter.Segment> safe = segments == null
+                    ? List.of() : List.copyOf(segments);
+            long bits = variantBits(variant);
+            if (bits > 0) variantSegments.put(bits, safe);
+            else this.segments = safe;
+        }
+
+        private void clearSegments(@Nullable HlsPlaylistRewriter.Variant variant) {
+            long bits = variantBits(variant);
+            if (bits > 0) variantSegments.remove(bits);
+            else segments = List.of();
+        }
+
+        private List<HlsPlaylistRewriter.Segment> segmentsForVariant(
+                long selectedBitsPerSecond) {
+            return resolveAutomaticPreloadSegments(
+                    variantSegments, segments, selectedBitsPerSecond);
+        }
+
+        private static long variantBits(
+                @Nullable HlsPlaylistRewriter.Variant variant) {
+            if (variant == null
+                    || variant.kind() != HlsPlaylistRewriter.VariantKind.STREAM) return 0;
+            return Math.max(0, variant.bandwidth() > 0
+                    ? variant.bandwidth() : variant.averageBandwidth());
+        }
+
+        private String variantText() {
+            HlsPlaylistRewriter.Variant variant = selectedVariant;
+            if (variant == null) return variantCount == 0 ? "" : " variants " + variantCount;
+            return " variant " + variant.width() + "x" + variant.height() + " peak " + variant.bandwidth() + " average " + variant.averageBandwidth();
+        }
+
+        private HlsVariantSnapshot variantSnapshot() {
+            return new HlsVariantSnapshot(variants, variantCount);
+        }
+
+        private void observeHls(
+                String playlistUrl,
+                PlaybackResourceClassifier.Classification observation) {
+            hlsTimeline.observe(playlistUrl == null ? "direct" : Util.md5(playlistUrl), observation);
+        }
+
+        private PlaybackResourceClassifier.Classification resourceClassification(
+                long nowElapsedMs) {
+            PlaybackResourceClassifier.Classification fallback = classification;
+            return hlsTimeline.snapshot(fallback, nowElapsedMs).classification();
+        }
+
+        private void observeLivePlaylist(
+                String playlistKey,
+                List<HlsPlaylistRewriter.MediaUnit> mediaUnits,
+                long observedAtElapsedMs) {
+            liveLag.observePlaylist(
+                    playlistKey, mediaUnits, observedAtElapsedMs);
+        }
+
+        private void clearLivePlaylist(String playlistKey) {
+            liveLag.clearPlaylist(playlistKey);
+        }
+
+        private void observeLiveMediaRequest(
+                String uri,
+                long requestedAtElapsedMs) {
+            liveLag.observeMediaRequest(uri, requestedAtElapsedMs);
+        }
+
+        private HlsProxyLiveLagTracker.Snapshot liveLagSnapshot(
+                long nowElapsedMs,
+                long nativeBufferedDurationMs) {
+            return liveLag.snapshot(nowElapsedMs, nativeBufferedDurationMs);
+        }
+    }
+
+    public record LiveLagSnapshot(
+            boolean known,
+            long lowerBoundMs,
+            long nativeBufferedDurationMs,
+            boolean outsideWindow) {
+
+        public LiveLagSnapshot {
+            lowerBoundMs = Math.max(0, lowerBoundMs);
+            nativeBufferedDurationMs = Math.max(0,
+                    nativeBufferedDurationMs);
+        }
+
+        public static LiveLagSnapshot unknown() {
+            return new LiveLagSnapshot(false, 0, 0, false);
+        }
+    }
+
+    record HlsVariant(
+            long bandwidthBitsPerSecond,
+            long averageBandwidthBitsPerSecond,
+            int width,
+            int height) {
+
+        private static HlsVariant from(HlsPlaylistRewriter.Variant variant) {
+            return new HlsVariant(
+                    Math.max(0, variant.bandwidth()),
+                    Math.max(0, variant.averageBandwidth()),
+                    Math.max(0, variant.width()),
+                    Math.max(0, variant.height()));
+        }
+
+        long selectionBitsPerSecond() {
+            return bandwidthBitsPerSecond > 0
+                    ? bandwidthBitsPerSecond : averageBandwidthBitsPerSecond;
+        }
+    }
+
+    record HlsVariantSnapshot(
+            List<HlsVariant> variants,
+            int declaredVariantCount) {
+
+        HlsVariantSnapshot {
+            variants = variants == null ? List.of() : List.copyOf(variants);
+            declaredVariantCount = Math.max(0, declaredVariantCount);
+        }
+
+        static HlsVariantSnapshot empty() {
+            return new HlsVariantSnapshot(List.of(), 0);
+        }
+    }
+
+    record PreloadRuntimeSnapshot(
+            boolean preloadConfigured,
+            boolean vod,
+            long upstreamBitsPerSecond,
+            boolean throughputKnown,
+            boolean throughputFresh,
+            long throughputSampleAtElapsedMs,
+            long throughputAgeMs,
+            int acceptedThroughputSamples,
+            int rejectedThroughputSamples,
+            String lastThroughputRejectReason,
+            int foregroundRequests,
+            boolean cacheEnabled,
+            boolean cacheStorageKnown,
+            boolean cacheBudgetAvailable,
+            boolean cacheCircuitOpen,
+            long cachePhysicalBytes,
+            long cacheReservedBytes,
+            long cacheNewWriteBudgetBytes,
+            long cacheEffectiveCapacityBytes,
+            int preloadTasks) {
+
+        PreloadRuntimeSnapshot {
+            upstreamBitsPerSecond = Math.max(0, upstreamBitsPerSecond);
+            acceptedThroughputSamples = Math.max(0, acceptedThroughputSamples);
+            rejectedThroughputSamples = Math.max(0, rejectedThroughputSamples);
+            lastThroughputRejectReason = lastThroughputRejectReason == null
+                    ? "none" : lastThroughputRejectReason;
+            foregroundRequests = Math.max(0, foregroundRequests);
+            cachePhysicalBytes = Math.max(0, cachePhysicalBytes);
+            cacheReservedBytes = Math.max(0, cacheReservedBytes);
+            cacheNewWriteBudgetBytes = Math.max(0, cacheNewWriteBudgetBytes);
+            cacheEffectiveCapacityBytes = Math.max(0, cacheEffectiveCapacityBytes);
+            preloadTasks = Math.max(0, preloadTasks);
+        }
+    }
+
+    static List<HlsVariant> buildVariantLadder(
+            List<HlsPlaylistRewriter.VariantEntry> variants) {
+        Map<Long, HlsVariant> byBitrate = new LinkedHashMap<>();
+        if (variants != null) {
+            for (HlsPlaylistRewriter.VariantEntry entry : variants) {
+                HlsPlaylistRewriter.Variant variant = entry == null
+                        ? null : entry.variant();
+                if (variant == null
+                        || variant.kind()
+                        != HlsPlaylistRewriter.VariantKind.STREAM) continue;
+                HlsVariant safe = HlsVariant.from(variant);
+                if (safe.selectionBitsPerSecond() <= 0) continue;
+                byBitrate.putIfAbsent(safe.selectionBitsPerSecond(), safe);
+            }
+        }
+        List<HlsVariant> ladder = new ArrayList<>(byBitrate.values());
+        ladder.sort(java.util.Comparator.comparingLong(
+                HlsVariant::selectionBitsPerSecond));
+        return List.copyOf(ladder);
+    }
+
+    static List<HlsPlaylistRewriter.Segment> resolveAutomaticPreloadSegments(
+            Map<Long, List<HlsPlaylistRewriter.Segment>> variantSegments,
+            List<HlsPlaylistRewriter.Segment> directSegments,
+            long selectedBitsPerSecond) {
+        Map<Long, List<HlsPlaylistRewriter.Segment>> variants =
+                variantSegments == null ? Map.of() : variantSegments;
+        List<HlsPlaylistRewriter.Segment> direct = directSegments == null
+                ? List.of() : directSegments;
+        long selected = Math.max(0, selectedBitsPerSecond);
+        if (!variants.isEmpty()) {
+            if (selected <= 0) return List.of();
+            List<HlsPlaylistRewriter.Segment> exact = variants.get(selected);
+            if (exact != null) return List.copyOf(exact);
+            return List.of();
+        }
+        return List.copyOf(direct);
+    }
+
+    static int resolvePreloadSubmissionBudget(int pendingTasks) {
+        return Math.max(0, MAX_PENDING_PRELOAD_SEGMENTS - Math.max(0, pendingTasks));
+    }
+
+    /**
+     * Resolves the actual native-selected track bitrate against the proxy ladder.
+     * Proxy child-playlist request order is not selection evidence because FFmpeg
+     * parses every child playlist in an HLS master.
+     */
+    @Nullable
+    static HlsVariant resolveSelectedVariant(
+            List<HlsVariant> variants,
+            long selectedBitsPerSecond) {
+        long selected = Math.max(0, selectedBitsPerSecond);
+        if (selected <= 0) return null;
+        if (variants != null) {
+            for (HlsVariant variant : variants) {
+                if (variant != null
+                        && variant.selectionBitsPerSecond() == selected) {
+                    return variant;
+                }
+            }
+        }
+        return new HlsVariant(selected, 0, 0, 0);
     }
 
     private static final class LimitedInputStream extends FilterInputStream {
 
         private long remaining;
+        private boolean closed;
 
         LimitedInputStream(InputStream in, long length) {
             super(in);
@@ -1459,18 +2268,35 @@ public final class MpvHlsProxy extends NanoHTTPD {
 
         @Override
         public int read() throws IOException {
-            if (remaining <= 0) return -1;
+            if (remaining <= 0) {
+                close();
+                return -1;
+            }
             int value = super.read();
             if (value != -1) remaining--;
+            else close();
+            if (remaining <= 0) close();
             return value;
         }
 
         @Override
         public int read(byte[] buffer, int offset, int length) throws IOException {
-            if (remaining <= 0) return -1;
+            if (remaining <= 0) {
+                close();
+                return -1;
+            }
             int read = super.read(buffer, offset, (int) Math.min(length, remaining));
             if (read != -1) remaining -= read;
+            else close();
+            if (remaining <= 0) close();
             return read;
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) return;
+            closed = true;
+            super.close();
         }
     }
 
@@ -1493,18 +2319,26 @@ public final class MpvHlsProxy extends NanoHTTPD {
         }
     }
 
-    private static final class PngPrefixStrippingInputStream extends InputStream {
+    static final class PngPrefixStrippingInputStream extends InputStream {
 
         private final InputStream upstream;
         private final String url;
+        private final boolean diagnostics;
         private byte[] prefix;
         private int prefixOffset;
         private int prefixLength;
+        private int strippedPrefixBytes;
         private boolean initialized;
 
         PngPrefixStrippingInputStream(InputStream upstream, String url) {
+            this(upstream, url, true);
+        }
+
+        PngPrefixStrippingInputStream(
+                InputStream upstream, String url, boolean diagnostics) {
             this.upstream = upstream;
             this.url = url;
+            this.diagnostics = diagnostics;
         }
 
         @Override
@@ -1531,17 +2365,28 @@ public final class MpvHlsProxy extends NanoHTTPD {
             upstream.close();
         }
 
+        int initializeAndGetStrippedPrefixBytes() throws IOException {
+            ensureInitialized();
+            return strippedPrefixBytes;
+        }
+
         private void ensureInitialized() throws IOException {
             if (initialized) return;
             initialized = true;
             prefix = readPrefix();
             prefixLength = prefix.length;
-            int stripOffset = pngStripOffset(prefix);
-            if (stripOffset > 0 && stripOffset < prefixLength && looksLikeTransportStream(prefix, stripOffset)) {
+            int stripOffset = MpvHlsSegmentContentPolicy.findPngWrappedTransportStreamOffset(prefix, prefixLength);
+            if (stripOffset > 0 && stripOffset < prefixLength) {
                 prefixOffset = stripOffset;
-                SpiderDebug.log(TAG, "strip png prefix offset=%d prefixBytes=%d url=%s", stripOffset, prefixLength, shortUrl(url));
+                strippedPrefixBytes = stripOffset;
+                if (diagnostics) {
+                    SpiderDebug.log(TAG,
+                            "strip png prefix offset=%d prefixBytes=%d url=%s",
+                            stripOffset, prefixLength, shortUrl(url));
+                }
             } else {
                 prefixOffset = 0;
+                strippedPrefixBytes = 0;
             }
         }
 
@@ -1552,8 +2397,8 @@ public final class MpvHlsProxy extends NanoHTTPD {
                 int read = upstream.read(buffer, length, buffer.length - length);
                 if (read == -1) break;
                 length += read;
-                if (length >= PNG_SIGNATURE.length && !startsWith(buffer, length, PNG_SIGNATURE)) break;
-                int offset = pngStripOffset(buffer, length);
+                if (length >= 8 && !MpvHlsSegmentContentPolicy.startsWithPngSignature(buffer, length)) break;
+                int offset = MpvHlsSegmentContentPolicy.findPngWrappedTransportStreamOffset(buffer, length);
                 if (offset > 0 && length > offset + 188) break;
             }
             byte[] result = new byte[length];
@@ -1561,42 +2406,5 @@ public final class MpvHlsProxy extends NanoHTTPD {
             return result;
         }
 
-        private static int pngStripOffset(byte[] data) {
-            return pngStripOffset(data, data.length);
-        }
-
-        private static int pngStripOffset(byte[] data, int length) {
-            if (!startsWith(data, length, PNG_SIGNATURE)) return -1;
-            int iend = indexOf(data, length, PNG_IEND);
-            return iend < 0 ? -1 : iend + PNG_IEND.length;
-        }
-
-        private static boolean looksLikeTransportStream(byte[] data, int offset) {
-            if (offset >= data.length || data[offset] != 0x47) return false;
-            if (offset + 188 < data.length && data[offset + 188] == 0x47) return true;
-            if (offset + 376 < data.length && data[offset + 376] == 0x47) return true;
-            return true;
-        }
-
-        private static boolean startsWith(byte[] data, int length, byte[] prefix) {
-            if (length < prefix.length) return false;
-            for (int i = 0; i < prefix.length; i++) if (data[i] != prefix[i]) return false;
-            return true;
-        }
-
-        private static int indexOf(byte[] data, int length, byte[] needle) {
-            int end = length - needle.length;
-            for (int i = 0; i <= end; i++) {
-                boolean match = true;
-                for (int j = 0; j < needle.length; j++) {
-                    if (data[i + j] != needle[j]) {
-                        match = false;
-                        break;
-                    }
-                }
-                if (match) return i;
-            }
-            return -1;
-        }
     }
 }

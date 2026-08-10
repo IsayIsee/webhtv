@@ -66,7 +66,7 @@ public class ProxySetting {
         collectDebugUrls(urls);
         for (String url : urls) {
             String host = host(url);
-            if (isUsefulHost(host)) hosts.add(host);
+            if (isSuggestedHost(host)) hosts.add(host);
         }
         return new Suggestion(new ArrayList<>(hosts), new ArrayList<>(urls));
     }
@@ -166,8 +166,40 @@ public class ProxySetting {
     }
 
     private static boolean isUsefulHost(String host) {
-        if (TextUtils.isEmpty(host) || isLocalHost(host)) return false;
+        if (host == null || host.isEmpty() || isLocalHost(host)) return false;
         return host.contains(".");
+    }
+
+    static boolean isSuggestedHost(String host) {
+        String value = normalizeHost(host);
+        return isUsefulHost(value) && !isIpLiteral(value);
+    }
+
+    private static boolean isIpLiteral(String host) {
+        String value = normalizeHost(host);
+        if (value.startsWith("[") && value.endsWith("]")) value = value.substring(1, value.length() - 1);
+        int zone = value.indexOf('%');
+        if (zone >= 0) value = value.substring(0, zone);
+        if (value.indexOf(':') >= 0) return isIpv6Literal(value);
+        if (value.indexOf('.') < 0) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c != '.' && !Character.isDigit(c)) return false;
+        }
+        return true;
+    }
+
+    private static boolean isIpv6Literal(String value) {
+        int colons = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c == ':') {
+                colons++;
+            } else if (c != '.' && Character.digit(c, 16) < 0) {
+                return false;
+            }
+        }
+        return colons >= 2;
     }
 
     private static boolean isLocalHost(String host) {

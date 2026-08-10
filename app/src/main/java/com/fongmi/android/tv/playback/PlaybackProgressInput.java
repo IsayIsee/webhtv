@@ -1,9 +1,7 @@
 package com.fongmi.android.tv.playback;
 
-import android.text.TextUtils;
-
-import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.db.AppDatabase;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -15,6 +13,8 @@ import java.util.Collections;
 import java.util.List;
 
 public class PlaybackProgressInput {
+
+    private static final Gson GSON = new Gson();
 
     @SerializedName("historyKey")
     public String historyKey;
@@ -67,21 +67,25 @@ public class PlaybackProgressInput {
         configKey = PlaybackConfigIdentity.normalizeKey(configKey);
         configName = safe(configName);
         configUrl = safe(configUrl);
-        if (TextUtils.isEmpty(configKey) && !TextUtils.isEmpty(configUrl)) configKey = PlaybackConfigIdentity.keyForUrl(configUrl);
+        if (empty(configKey) && !empty(configUrl)) configKey = PlaybackConfigIdentity.keyForUrl(configUrl);
         clientKey = safe(clientKey);
         if (speed <= 0) speed = 1f;
         if (durationMs > 0 && positionMs <= 0 && progress > 0) positionMs = Math.round(durationMs * progress);
         if (completed && durationMs > 0 && positionMs < durationMs) positionMs = durationMs;
-        if (updatedAt <= 0) updatedAt = System.currentTimeMillis();
         return this;
     }
 
     public String validate() {
+        return validate(true);
+    }
+
+    String validate(boolean defaultUpdatedAt) {
         normalize();
-        if (TextUtils.isEmpty(siteKey)) return "siteKey不能为空";
-        if (TextUtils.isEmpty(vodId)) return "vodId不能为空";
-        if (TextUtils.isEmpty(vodName)) return "vodName不能为空";
-        if (TextUtils.isEmpty(episodeName)) return "episodeName不能为空";
+        if (updatedAt <= 0 && defaultUpdatedAt) updatedAt = System.currentTimeMillis();
+        if (empty(siteKey)) return "siteKey不能为空";
+        if (empty(vodId)) return "vodId不能为空";
+        if (empty(vodName)) return "vodName不能为空";
+        if (empty(episodeName)) return "episodeName不能为空";
         if (positionMs <= 0) return "positionMs必须大于0";
         if (durationMs <= 0) return "durationMs必须大于0";
         if (positionMs > durationMs && durationMs > 0) positionMs = durationMs;
@@ -89,7 +93,7 @@ public class PlaybackProgressInput {
     }
 
     public static PlaybackProgressInput fromJson(JsonObject object) {
-        PlaybackProgressInput input = App.gson().fromJson(object, PlaybackProgressInput.class);
+        PlaybackProgressInput input = GSON.fromJson(object, PlaybackProgressInput.class);
         if (input == null) input = new PlaybackProgressInput();
         applyAliases(input, object);
         return input.normalize();
@@ -102,7 +106,7 @@ public class PlaybackProgressInput {
     }
 
     public static List<PlaybackProgressInput> listFromJson(String text) {
-        if (TextUtils.isEmpty(text)) return Collections.emptyList();
+        if (empty(text)) return Collections.emptyList();
         JsonElement element = JsonParser.parseString(text);
         if (element == null || element.isJsonNull()) return Collections.emptyList();
         JsonArray array = asArray(element);
@@ -114,7 +118,7 @@ public class PlaybackProgressInput {
 
     public String targetHistoryKey(int cid) {
         normalize();
-        if (!TextUtils.isEmpty(configKey) && !TextUtils.isEmpty(siteKey) && !TextUtils.isEmpty(vodId)) return siteKey + AppDatabase.SYMBOL + vodId + AppDatabase.SYMBOL + cid;
+        if (!empty(configKey) && !empty(siteKey) && !empty(vodId)) return siteKey + AppDatabase.SYMBOL + vodId + AppDatabase.SYMBOL + cid;
         if (validHistoryKey(historyKey)) return historyKey;
         return siteKey + AppDatabase.SYMBOL + vodId + AppDatabase.SYMBOL + cid;
     }
@@ -155,11 +159,11 @@ public class PlaybackProgressInput {
     }
 
     private boolean validHistoryKey(String key) {
-        return !TextUtils.isEmpty(key) && key.split(AppDatabase.SYMBOL).length >= 2;
+        return !empty(key) && key.split(AppDatabase.SYMBOL).length >= 2;
     }
 
     private static String firstString(String current, JsonObject object, String... keys) {
-        if (!TextUtils.isEmpty(current)) return current;
+        if (!empty(current)) return current;
         for (String key : keys) {
             try {
                 JsonElement value = object.get(key);
@@ -192,10 +196,14 @@ public class PlaybackProgressInput {
     }
 
     private static String fallback(String value, String fallback) {
-        return TextUtils.isEmpty(value) ? safe(fallback).trim() : value.trim();
+        return empty(value) ? safe(fallback).trim() : value.trim();
     }
 
     private static String safe(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static boolean empty(String value) {
+        return value == null || value.isEmpty();
     }
 }

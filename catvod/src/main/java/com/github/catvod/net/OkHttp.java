@@ -280,31 +280,31 @@ public class OkHttp {
         @Override
         public void callStart(@NonNull Call call) {
             if (!SpiderDebug.isEnabled()) return;
-            log(call, "start", "method=" + call.request().method() + ", headers=" + call.request().headers());
+            log(call, "start", "method=" + call.request().method() + OkHttpLogPolicy.requestMetadata(call.request().headers()));
         }
 
         @Override
         public void connectStart(@NonNull Call call, @NonNull InetSocketAddress inetSocketAddress, @NonNull java.net.Proxy proxy) {
             if (!SpiderDebug.isEnabled()) return;
-            log(call, "connectStart", "address=" + inetSocketAddress + ", proxy=" + proxy);
+            log(call, "connectStart", "host=" + OkHttpLogPolicy.redactHost(inetSocketAddress.getHostString()) + ", proxyType=" + proxy.type());
         }
 
         @Override
         public void connectEnd(@NonNull Call call, @NonNull InetSocketAddress inetSocketAddress, @NonNull java.net.Proxy proxy, @Nullable Protocol protocol) {
             if (!SpiderDebug.isEnabled()) return;
-            log(call, "connectEnd", "address=" + inetSocketAddress + ", proxy=" + proxy + ", protocol=" + protocol);
+            log(call, "connectEnd", "host=" + OkHttpLogPolicy.redactHost(inetSocketAddress.getHostString()) + ", proxyType=" + proxy.type() + ", protocol=" + protocol);
         }
 
         @Override
         public void connectFailed(@NonNull Call call, @NonNull InetSocketAddress inetSocketAddress, @NonNull java.net.Proxy proxy, @Nullable Protocol protocol, @NonNull IOException ioe) {
             if (!SpiderDebug.isEnabled()) return;
-            log(call, "connectFailed", "address=" + inetSocketAddress + ", proxy=" + proxy + ", protocol=" + protocol + ", error=" + error(ioe));
+            log(call, "connectFailed", "host=" + OkHttpLogPolicy.redactHost(inetSocketAddress.getHostString()) + ", proxyType=" + proxy.type() + ", protocol=" + protocol + ", error=" + error(ioe));
         }
 
         @Override
         public void connectionAcquired(@NonNull Call call, @NonNull Connection connection) {
             if (!SpiderDebug.isEnabled()) return;
-            log(call, "connectionAcquired", "route=" + connection.route());
+            log(call, "connectionAcquired", "protocol=" + connection.protocol() + ", proxyType=" + connection.route().proxy().type());
         }
 
         @Override
@@ -326,7 +326,7 @@ public class OkHttp {
         }
 
         private void log(Call call, String event, String message) {
-            SpiderDebug.log("okhttp-player", "%s url=%s %s", event, call.request().url(), message);
+            SpiderDebug.log("okhttp-player", "%s url=%s %s", event, OkHttpLogPolicy.redactUrl(call.request().url()), message);
         }
 
         private long elapsedMs() {
@@ -334,16 +334,7 @@ public class OkHttp {
         }
 
         private String error(Throwable error) {
-            StringBuilder builder = new StringBuilder();
-            Throwable current = error;
-            int depth = 0;
-            while (current != null && depth++ < 8) {
-                if (builder.length() > 0) builder.append(" <- ");
-                builder.append(current.getClass().getName());
-                if (current.getMessage() != null) builder.append(": ").append(current.getMessage());
-                current = current.getCause();
-            }
-            return builder.toString();
+            return OkHttpLogPolicy.errorChain(error);
         }
     }
 

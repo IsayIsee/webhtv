@@ -57,6 +57,15 @@ public class PlaybackRouteTest {
     }
 
     @Test
+    public void preservesLegacyRouteWhileExposingLanAndLocalLocationFacts() {
+        PlaybackRoute.Resolution lan = PlaybackRoute.resolve("http://192.168.1.12/movie.mp4");
+        assertEquals(PlaybackRoute.DIRECT_REMOTE_HTTP, lan.route());
+        assertEquals(PlaybackRoute.Location.LAN_PRIVATE, lan.location());
+        assertEquals(PlaybackRoute.Evidence.PRIVATE_HOST, lan.evidence());
+        assertEquals(PlaybackRoute.Location.LOCAL, PlaybackRoute.resolve("file:///storage/movie.mkv").location());
+    }
+
+    @Test
     public void externalProxyAlwaysUsesOnePreloadThreadWhileAppRouteKeepsCustomValue() {
         assertEquals(1, PlaybackRoute.EXTERNAL_LOOPBACK_PROXY.effectivePreloadThreads(4));
         assertEquals(4, PlaybackRoute.APP_LOCAL_SERVICE.effectivePreloadThreads(10));

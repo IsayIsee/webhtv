@@ -8,6 +8,12 @@ import static org.junit.Assert.assertTrue;
 public class ExoBufferBudgetTest {
 
     @Test
+    public void automaticCapacityRequestsHeapSafeMaximum() {
+        assertEquals(mib(256), ExoBufferBudget.resolveRequestedTargetBytes(0));
+        assertEquals(mib(128), ExoBufferBudget.resolveRequestedTargetBytes(mib(128)));
+    }
+
+    @Test
     public void lowRamDeviceUsesTwentyPercentHeapBudget() {
         assertEquals(percentOfMib(128, 20), effective(256, 128, true));
         assertEquals(percentOfMib(256, 20), effective(256, 256, true));

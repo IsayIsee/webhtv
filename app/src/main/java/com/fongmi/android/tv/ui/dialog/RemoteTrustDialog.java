@@ -39,6 +39,7 @@ import com.fongmi.android.tv.databinding.DialogRemoteTrustQrBinding;
 import com.fongmi.android.tv.databinding.DialogRemoteTrustTextCommandBinding;
 import com.fongmi.android.tv.remote.RemoteAgent;
 import com.fongmi.android.tv.remote.RemoteAgentService;
+import com.fongmi.android.tv.remote.RemoteLog;
 import com.fongmi.android.tv.remote.RemoteClient;
 import com.fongmi.android.tv.remote.RemoteConfigSiteParser;
 import com.fongmi.android.tv.remote.RemoteModels.BindCodeResponse;
@@ -64,7 +65,6 @@ import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.QRCode;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
-import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.button.MaterialButtonToggleGroup;
@@ -329,7 +329,7 @@ public final class RemoteTrustDialog {
         binding.server.setText(TextUtils.isEmpty(profile.serverUrl) ? profile.serverOrigin : profile.serverUrl);
         binding.enabled.setChecked(profile.enabled);
         binding.keepOnline.setChecked(true);
-        if (!profile.keepOnline) {
+        if (profile.enabled && !profile.keepOnline) {
             profile.keepOnline = true;
             RemoteStore.upsertProfile(profile);
             RemoteAgent.get().start();
@@ -429,7 +429,7 @@ public final class RemoteTrustDialog {
             RemoteStore.upsertProfile(profile);
             if (!enabled) clearRemoteCache(binding);
             if (enabled) RemoteAgent.get().start();
-            else RemoteAgent.get().start();
+            else RemoteAgent.get().stop();
         }
         render(activity, binding);
     }
@@ -1104,7 +1104,7 @@ public final class RemoteTrustDialog {
                     for (RemoteGroup group : new ArrayList<>(latest.groups)) refreshGroup(client, latest.serverOrigin, group);
                 }
             } catch (Throwable e) {
-                SpiderDebug.log("remote", "device status refresh failed error=%s", e.getMessage());
+                RemoteLog.log("device status refresh failed error=%s", e.getMessage());
             } finally {
                 App.post(() -> {
                     binding.deviceStatusRefreshing = false;

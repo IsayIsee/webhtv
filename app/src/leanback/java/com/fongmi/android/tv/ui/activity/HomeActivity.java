@@ -495,7 +495,7 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
 
     private void clearHistory() {
         mAdapter.removeItems(getHistoryIndex(), 1);
-        History.delete(VodConfig.getCid());
+        History.deleteAndSync(VodConfig.getCid());
         mPresenter.setDelete(false);
         mHistoryAdapter.clear();
     }
@@ -635,7 +635,7 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
 
     @Override
     public void onItemDelete(History item) {
-        mHistoryAdapter.remove(item.delete());
+        mHistoryAdapter.remove(item.deleteAndSync());
         if (mHistoryAdapter.size() > 0) return;
         mAdapter.removeItems(getHistoryIndex(), 1);
         mPresenter.setDelete(false);

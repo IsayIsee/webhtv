@@ -28,4 +28,9 @@ public class PlaybackProgressBatchResult {
             if ("deleted".equals(result.action)) deleted += result.affected;
         }
     }
+
+    public void addAll(PlaybackProgressBatchResult batch) {
+        if (batch == null || batch.items == null) return;
+        for (PlaybackProgressApplyResult item : batch.items) add(item);
+    }
 }

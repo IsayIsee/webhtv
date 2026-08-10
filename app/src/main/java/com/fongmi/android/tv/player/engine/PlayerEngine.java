@@ -10,6 +10,7 @@ import androidx.media3.common.Tracks;
 
 import com.fongmi.android.tv.bean.Track;
 import com.fongmi.android.tv.player.PlaybackRoute;
+import com.fongmi.android.tv.player.PlaybackResourceClassifier;
 import com.fongmi.android.tv.player.PlaybackTrace;
 import com.fongmi.android.tv.player.lut.MpvLutShader;
 
@@ -92,6 +93,11 @@ public interface PlayerEngine {
         return null;
     }
 
+    /** Returns only runtime-observed playback facts; requested decode/output values must not be substituted. */
+    default PlaybackFactsSnapshot getPlaybackFactsSnapshot() {
+        return PlaybackFactsSnapshot.empty();
+    }
+
     default PlayerCacheState getCacheState() {
         return PlayerCacheState.empty();
     }
@@ -106,6 +112,11 @@ public interface PlayerEngine {
 
     default long getDroppedFrames() {
         return 0;
+    }
+
+    /** Runtime metrics observed by a native engine. Unknown values are null. */
+    default RuntimeMetrics getRuntimeMetrics() {
+        return RuntimeMetrics.unknown();
     }
 
     default String getPlaybackTraceId() {
@@ -153,6 +164,15 @@ public interface PlayerEngine {
         return null;
     }
 
+    /**
+     * Returns the most recent resource classification observed by this engine.
+     * Implementations must return an immutable snapshot and may return null
+     * when the engine has not observed a stronger fact than the request itself.
+     */
+    default PlaybackResourceClassifier.Classification getResourceClassification() {
+        return null;
+    }
+
     default boolean selectEdition(MediaEdition edition) {
         return false;
     }
@@ -166,5 +186,61 @@ public interface PlayerEngine {
         RELOAD,
         DECODE,
         FATAL
+    }
+
+    enum DecoderKind {
+        HARDWARE,
+        SOFTWARE,
+        UNKNOWN
+    }
+
+    record PlaybackFactsSnapshot(
+            Format selectedVideoFormat,
+            Format selectedAudioFormat,
+            Format videoDecoderFormat,
+            Format audioDecoderFormat,
+            String videoDecoderName,
+            String audioDecoderName,
+            DecoderKind videoDecoderKind,
+            Boolean secureVideoDecoder,
+            String hwdecCurrent,
+            String currentVideoOutput,
+            Boolean tunneling) {
+
+        public PlaybackFactsSnapshot {
+            videoDecoderName = videoDecoderName == null ? "" : videoDecoderName;
+            audioDecoderName = audioDecoderName == null ? "" : audioDecoderName;
+            videoDecoderKind = videoDecoderKind == null ? DecoderKind.UNKNOWN : videoDecoderKind;
+            hwdecCurrent = hwdecCurrent == null ? "" : hwdecCurrent;
+            currentVideoOutput = currentVideoOutput == null ? "" : currentVideoOutput;
+        }
+
+        public static PlaybackFactsSnapshot empty() {
+            return new PlaybackFactsSnapshot(null, null, null, null, "", "",
+                    DecoderKind.UNKNOWN, null, "", "", null);
+        }
+    }
+
+    record RuntimeMetrics(
+            Long bandwidthBitsPerSecond,
+            Long mediaBitrateBitsPerSecond,
+            Float renderedFrameRate,
+            Long droppedFrames) {
+
+        public RuntimeMetrics {
+            bandwidthBitsPerSecond = nonNegative(bandwidthBitsPerSecond);
+            mediaBitrateBitsPerSecond = nonNegative(mediaBitrateBitsPerSecond);
+            renderedFrameRate = renderedFrameRate == null || !Float.isFinite(renderedFrameRate) || renderedFrameRate <= 0
+                    ? null : renderedFrameRate;
+            droppedFrames = nonNegative(droppedFrames);
+        }
+
+        public static RuntimeMetrics unknown() {
+            return new RuntimeMetrics(null, null, null, null);
+        }
+
+        private static Long nonNegative(Long value) {
+            return value == null || value < 0 ? null : value;
+        }
     }
 }

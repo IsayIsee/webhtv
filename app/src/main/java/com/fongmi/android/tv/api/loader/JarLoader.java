@@ -73,7 +73,7 @@ public class JarLoader {
         }
         String cachePath = Path.jar().getAbsolutePath();
         SpiderDebug.log("jar-loader", "load start key=%s file=%s size=%s cache=%s", key, file.getAbsolutePath(), file.length(), cachePath);
-        DexClassLoader loader = new DexClassLoader(file.getAbsolutePath(), cachePath, cachePath, App.get().getClassLoader());
+        DexClassLoader loader = new CspDexClassLoader(file.getAbsolutePath(), cachePath, cachePath, App.get().getClassLoader());
         invokeInit(key, loader);
         invokeNetworkCompat(key, loader);
         invokeProxy(key, loader);

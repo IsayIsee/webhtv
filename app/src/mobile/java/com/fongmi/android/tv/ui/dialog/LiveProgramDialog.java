@@ -18,6 +18,7 @@ import androidx.viewbinding.ViewBinding;
 
 import com.fongmi.android.tv.bean.Channel;
 import com.fongmi.android.tv.bean.Epg;
+import com.fongmi.android.tv.bean.EpgData;
 import com.fongmi.android.tv.databinding.DialogLiveProgramBinding;
 import com.fongmi.android.tv.ui.adapter.LiveProgramAdapter;
 import com.fongmi.android.tv.ui.adapter.LiveProgramDateAdapter;
@@ -31,12 +32,14 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Consumer;
 
-public class LiveProgramDialog extends BaseBottomSheetDialog implements LiveProgramDateAdapter.OnClickListener {
+public class LiveProgramDialog extends BaseBottomSheetDialog implements LiveProgramDateAdapter.OnClickListener, LiveProgramAdapter.OnClickListener {
 
     private DialogLiveProgramBinding binding;
     private LiveProgramDateAdapter dateAdapter;
     private LiveProgramAdapter programAdapter;
+    private Consumer<EpgData> listener;
     private Channel channel;
     private ZoneId zoneId;
 
@@ -51,6 +54,11 @@ public class LiveProgramDialog extends BaseBottomSheetDialog implements LiveProg
 
     public LiveProgramDialog zoneId(ZoneId zoneId) {
         this.zoneId = zoneId;
+        return this;
+    }
+
+    public LiveProgramDialog listener(Consumer<EpgData> listener) {
+        this.listener = listener;
         return this;
     }
 
@@ -88,7 +96,7 @@ public class LiveProgramDialog extends BaseBottomSheetDialog implements LiveProg
         binding.program.setHasFixedSize(false);
         binding.program.setItemAnimator(null);
         binding.date.setAdapter(dateAdapter = new LiveProgramDateAdapter(this));
-        binding.program.setAdapter(programAdapter = new LiveProgramAdapter());
+        binding.program.setAdapter(programAdapter = new LiveProgramAdapter(this));
         List<Epg> items = new ArrayList<>(channel.getDataList());
         items.sort(Comparator.comparing(Epg::getDate));
         String today = LocalDate.now(zoneId).format(Formatters.DATE);
@@ -99,6 +107,12 @@ public class LiveProgramDialog extends BaseBottomSheetDialog implements LiveProg
     @Override
     public void onDateClick(Epg epg) {
         showProgram(epg);
+    }
+
+    @Override
+    public void onProgramClick(EpgData item) {
+        if (listener != null) listener.accept(item);
+        dismiss();
     }
 
     private void showProgram(Epg epg) {
