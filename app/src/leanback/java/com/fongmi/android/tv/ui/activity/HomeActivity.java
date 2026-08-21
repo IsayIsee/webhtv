@@ -74,6 +74,7 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.PermissionUtil;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.UrlUtil;
+import com.fongmi.android.tv.utils.Util;
 import com.fongmi.android.tv.web.HomeWebController;
 import com.fongmi.android.tv.web.WebHomeViewport;
 import com.github.catvod.crawler.SpiderDebug;
@@ -783,7 +784,7 @@ public class HomeActivity extends BaseActivity implements CustomTitleView.Listen
     }
 
     private void confirmExitHome() {
-        if (PlaybackService.isRunning()) moveTaskToBack(true);
+        if (PlaybackService.isRunning()) Util.moveToBackground(this);
         else super.onBackInvoked();
     }
 

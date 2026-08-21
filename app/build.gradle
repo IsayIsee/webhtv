@@ -26,8 +26,8 @@ android {
         applicationId "com.fongmi.android.tv"
         minSdk libs.versions.minSdk.get().toInteger()
         targetSdk libs.versions.targetSdk.get().toInteger()
-        versionCode 556
-        versionName "5.5.6"
+        versionCode 560
+        versionName "5.6.0"
         buildConfigField "String", "BUILD_TIME", "\"${buildTime}\""
         buildConfigField "String", "BUILD_TAG", "\"${releaseTag}\""
         buildConfigField "String", "MEDIA3_VERSION", "\"${libs.versions.media3.get()}\""
@@ -130,6 +130,7 @@ dependencies {
     implementation libs.lifecycle.service
     implementation libs.media
     implementation libs.bundles.media3
+    implementation libs.exoplayer.hdr.utils
     implementation libs.nextlib.media3ext
     implementation libs.palette
     implementation libs.recyclerview

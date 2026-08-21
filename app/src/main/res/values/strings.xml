@@ -1022,6 +1022,7 @@
     <string name="lut_empty_favorites">No favorite LUT presets</string>
     <string name="lut_apply_failed">LUT color has been disabled temporarily</string>
     <string name="lut_unavailable_player">Current player engine does not support LUT color</string>
+    <string name="lut_unavailable_output_mode">Current output mode does not support LUT color. Switch to GPU output mode to use it</string>
     <string name="lut_unavailable_drm">DRM protected videos do not support LUT color</string>
     <string name="lut_unavailable_tunnel">Tunnel mode does not support LUT color</string>
     <string name="lut_unavailable_soft_decode">Software decode does not support LUT color</string>

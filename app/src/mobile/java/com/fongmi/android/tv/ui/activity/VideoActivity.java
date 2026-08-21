@@ -786,6 +786,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mBinding.control.action.prev.setOnClickListener(view -> checkPrev());
         mBinding.control.action.next.setOnClickListener(view -> checkNext());
         mBinding.control.action.decode.setOnClickListener(view -> onDecode());
+        mBinding.control.action.playParams.setOnClickListener(view -> onPlayParams());
         mBinding.control.action.ending.setOnClickListener(view -> onEnding());
         mBinding.control.action.repeat.setOnClickListener(view -> onRepeat());
         mBinding.control.action.opening.setOnClickListener(view -> onOpening());
@@ -980,6 +981,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mActionButtons = new HashMap<>();
         addActionButton(PlayerButtonSetting.PLAYER, mBinding.control.action.player);
         addActionButton(PlayerButtonSetting.DECODE, mBinding.control.action.decode);
+        addActionButton(PlayerButtonSetting.PLAY_PARAMS, mBinding.control.action.playParams);
         addActionButton(PlayerButtonSetting.SPEED, mBinding.control.action.speed);
         addActionButton(PlayerButtonSetting.SCALE, mBinding.control.action.scale);
         addActionButton(PlayerButtonSetting.LUT, mBinding.control.action.lut);
@@ -3521,6 +3523,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     @Override
+    public void onPlayParamsPanel() {
+        onPlayParams();
+    }
+
+    @Override
     public ActivityVideoBinding getControlBinding() {
         return mBinding;
     }
@@ -3637,9 +3644,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     @Override
     public void onLutSelected(LutPreset preset) {
         if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-ui", "activity select preset=%s enabledBefore=%s current=%s", preset == null ? "original" : preset.getId(), LutSetting.isEnabled(), LutSetting.getPresetId());
-        LutSetting.select(preset);
-        if (preset == null) player().applyLut(true);
-        else player().applyLutPreview(true);
+        if (!player().selectLut(preset, preset != null)) return;
         setLut();
         setR1Callback();
     }
@@ -3988,8 +3993,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mBinding.control.right.rotate.setVisibility(isFullscreen() && !isLock() ? View.VISIBLE : View.GONE);
         mBinding.control.fullscreen.setVisibility(isLock() ? View.GONE : View.VISIBLE);
         mBinding.control.keep.setVisibility(mHistory == null || isFullscreen() ? View.GONE : View.VISIBLE);
-        mBinding.control.osdDiagnostics.setVisibility(PlayerSetting.isOsdDiagnostics() && !player().isEmpty() ? View.VISIBLE : View.GONE);
+        boolean showPlayParams = PlayerButtonSetting.isVisible(PlayerButtonSetting.PLAY_PARAMS);
+        mBinding.control.action.playParams.setVisibility(showPlayParams ? View.VISIBLE : View.GONE);
+        mBinding.control.osdDiagnostics.setVisibility(PlayerSetting.isOsdDiagnostics() && PlayerButtonSetting.isVisible(PlayerButtonSetting.PLAY_PARAMS) && !player().isEmpty() ? View.VISIBLE : View.GONE);
         mBinding.control.osdDiagnostics.setAlpha(mOsd != null && mOsd.isDiagnosticsVisible() ? 1f : 0.72f);
+        mBinding.control.action.playParams.setSelected(mOsd != null && mOsd.isDiagnosticsVisible());
         mBinding.control.parse.setVisibility(isFullscreen() && isUseParse() ? View.VISIBLE : View.GONE);
         mBinding.control.action.getRoot().setVisibility(isFullscreen() ? View.VISIBLE : View.GONE);
         mBinding.control.right.lock.setVisibility(isFullscreen() ? View.VISIBLE : View.GONE);
@@ -4014,6 +4022,14 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private void onOsdDiagnostics() {
         if (mOsd == null) return;
         mOsd.toggleDiagnostics();
+        hideControl();
+    }
+
+    private void onPlayParams() {
+        if (mOsd == null) return;
+        boolean visible = !mOsd.isDiagnosticsVisible();
+        PlayerSetting.putOsdDiagnostics(visible);
+        mOsd.setDiagnosticsVisible(visible);
         hideControl();
     }
 
@@ -4397,7 +4413,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         public void onAudio() {
             setAudioOnly(true);
             syncPiPForPlaybackMode();
-            moveTaskToBack(true);
+            Util.moveToBackground(VideoActivity.this);
         }
     };
 
@@ -5605,6 +5621,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
                 break;
             case Player.STATE_ENDED:
                 checkEnded(true);
+                updatePlayControl(false, syncPiPForPlaybackMode());
                 break;
         }
     }
@@ -5616,15 +5633,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         syncLyricsPlaybackState(isPlaying);
         syncKaraokePosition();
         boolean audioMode = syncPiPForPlaybackMode();
-        if (isPlaying) {
-            if (!audioMode) mPiP.update(this, true);
-            mBinding.control.play.setImageResource(androidx.media3.ui.R.drawable.exo_icon_pause);
-            checkAudioPlayImg(true);
-        } else if (isPaused()) {
-            if (!audioMode) mPiP.update(this, false);
-            mBinding.control.play.setImageResource(androidx.media3.ui.R.drawable.exo_icon_play);
-            checkAudioPlayImg(false);
-        }
+        if (isPlaying || isPaused()) updatePlayControl(isPlaying, audioMode);
+    }
+
+    private void updatePlayControl(boolean isPlaying, boolean audioMode) {
+        if (!audioMode) mPiP.update(this, isPlaying);
+        mBinding.control.play.setImageResource(isPlaying ? androidx.media3.ui.R.drawable.exo_icon_pause : androidx.media3.ui.R.drawable.exo_icon_play);
+        checkAudioPlayImg(isPlaying);
     }
 
     @Override

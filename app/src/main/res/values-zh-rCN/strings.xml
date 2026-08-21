@@ -1020,6 +1020,7 @@
     <string name="lut_empty_favorites">暂无收藏 LUT</string>
     <string name="lut_apply_failed">LUT 调色已临时关闭</string>
     <string name="lut_unavailable_player">当前播放器内核不支持 LUT 调色</string>
+    <string name="lut_unavailable_output_mode">当前输出模式不支持 LUT 调色，请切换为 GPU 输出模式后使用</string>
     <string name="lut_unavailable_drm">DRM 保护视频不支持 LUT 调色</string>
     <string name="lut_unavailable_tunnel">隧道模式不支持 LUT 调色</string>
     <string name="lut_unavailable_soft_decode">软解不支持 LUT 调色</string>
