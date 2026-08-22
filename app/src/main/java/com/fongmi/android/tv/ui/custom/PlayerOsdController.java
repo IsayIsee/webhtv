@@ -369,7 +369,7 @@ public class PlayerOsdController {
                 row("视频", videoText),
                 row("音频", audioText),
                 row("网络", network),
-                player.isExo() && !localSource ? row("保流畅", strategy) : "",
+                player.isExo() && !localSource ? row("动态网络保护", strategy) : "",
                 TextUtils.isEmpty(renderDiagnostics) ? "" : row("MPV渲染", renderDiagnostics),
                 TextUtils.isEmpty(runtimeDiagnostics) ? "" : row("MPV运行", runtimeDiagnostics),
                 TextUtils.isEmpty(gpu) ? "" : row("GPU", gpu),

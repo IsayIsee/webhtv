@@ -45,6 +45,7 @@ import com.fongmi.android.tv.player.engine.MpvPlayerEngine;
 import com.fongmi.android.tv.player.engine.PlaySpec;
 import com.fongmi.android.tv.player.engine.PlayerCacheState;
 import com.fongmi.android.tv.player.engine.PlayerEngine;
+import com.fongmi.android.tv.player.cache.PlaybackDiskBufferStore;
 import com.fongmi.android.tv.player.exo.ExoDecoderResourceRecoveryLimiter;
 import com.fongmi.android.tv.player.exo.ExoNetworkGuardBufferPolicy;
 import com.fongmi.android.tv.player.exo.ExoNetworkGuardController;
@@ -143,6 +144,7 @@ public class PlayerManager implements ParseCallback {
     private static final long LIVE_DANMAKU_METRICS_INTERVAL_MS = 15000L;
     private static final long PLAYBACK_TELEMETRY_INTERVAL_MS = 5000L;
     private static final long MPV_FRAME_TIMING_LOG_INTERVAL_MS = 5000L;
+    private static final long DISK_RANGE_GAP_TOLERANCE_MS = 2000L;
     private static final long LUT_PREVIEW_FRAME_INTERVAL_MS = 16L;
     private static final float[] SPEED_PRESETS = new float[]{0.5f, 0.75f, 1f, 1.2f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 5f};
     private static final DecimalFormat SPEED_FORMAT = new DecimalFormat("0.##x");
@@ -517,13 +519,24 @@ public class PlayerManager implements ParseCallback {
         if (Math.abs(userPlaybackSpeed - 1f) > 0.001f) return "手动倍速时停用";
         if (!isVod()) return "仅支持点播";
         ExoNetworkGuardEligibility.Decision eligibility = getNetworkProtectionEligibility();
-        if (!eligibility.eligible()) return "未启用";
+        if (!eligibility.eligible()) return networkProtectionEligibilityText(eligibility.reason());
         return switch (networkProtectionState) {
             case NORMAL -> "正常";
             case WARNING -> "评估中";
             case PROTECT -> "降速中";
             case RECOVERY -> "恢复中";
             case UNSUSTAINABLE -> "网络不足";
+        };
+    }
+
+    private String networkProtectionEligibilityText(String reason) {
+        return switch (reason == null ? "" : reason) {
+            case "preserve-passthrough" -> "音频直通时停用";
+            case "preserve-tunneling" -> "隧道模式时停用";
+            case "speed-unsupported" -> "播放器不支持调速";
+            case "user-speed" -> "手动倍速时停用";
+            case "vod-only" -> "仅支持点播";
+            default -> "未启用";
         };
     }
 
@@ -596,11 +609,24 @@ public class PlayerManager implements ParseCallback {
     }
 
     public long getBufferedDuration() {
-        return Math.max(0, player.getBufferedPosition() - getPosition());
+        return Math.max(0, getEffectiveBufferedPosition() - getPosition());
     }
 
     public int getBufferedPercentage() {
-        return player.getBufferedPercentage();
+        if (!isExo()) return player.getBufferedPercentage();
+        long duration = player.getDuration();
+        if (duration == 0) return 100;
+        if (duration < 0) return 0;
+        return Math.max(0, Math.min(100, androidx.media3.common.util.Util.percentInt(
+                getEffectiveBufferedPosition(), duration)));
+    }
+
+    private long getEffectiveBufferedPosition() {
+        long nativeBuffered = Math.max(0, player.getBufferedPosition());
+        if (!isExo()) return nativeBuffered;
+        String mediaKey = PlaybackDiskBufferStore.mediaKey(player.getCurrentMediaItem());
+        return PlaybackDiskBufferStore.process().effectiveEnd(
+                mediaKey, nativeBuffered, player.getDuration(), DISK_RANGE_GAP_TOLERANCE_MS);
     }
 
     public boolean isLoading() {
