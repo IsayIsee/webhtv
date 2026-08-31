@@ -817,7 +817,13 @@ public class ExoUtil {
 
         @Override
         protected void buildAudioRenderers(Context context, int extensionRendererMode, MediaCodecSelector mediaCodecSelector, boolean enableDecoderFallback, AudioSink audioSink, Handler eventHandler, AudioRendererEventListener eventListener, ArrayList<Renderer> out) {
-            super.buildAudioRenderers(context, audioRenderMode, mediaCodecSelector, enableDecoderFallback, audioSink, eventHandler, eventListener, out);
+            MediaCodecSelector audioCodecSelector =
+                    ExoAudioCodecSelector.hardwareFirst(mediaCodecSelector);
+            // Audio fallback is part of the playback contract. It only runs
+            // after decoder initialization fails and does not affect buffers.
+            super.buildAudioRenderers(context, audioRenderMode,
+                    audioCodecSelector, true, audioSink, eventHandler,
+                    eventListener, out);
             if (audioRenderMode == EXTENSION_RENDERER_MODE_OFF) return;
             try {
                 out.add(getExtensionRendererIndex(audioRenderMode, audioPrefer, out), new CompatFfmpegAudioRenderer(context, eventHandler, eventListener, audioSink, softVideoTune));
