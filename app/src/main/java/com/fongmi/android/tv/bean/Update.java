@@ -11,6 +11,7 @@ public class Update {
 
     public String channel;
     public String name;
+    public String versionName;
     public String desc;
     public String notes;
     public String apk;

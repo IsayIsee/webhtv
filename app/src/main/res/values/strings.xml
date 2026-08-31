@@ -1111,6 +1111,7 @@
     <string name="update_download_incomplete">The update package was not fully downloaded. Please try again.</string>
     <string name="update_download_checksum">The update package failed verification. Please try again.</string>
     <string name="update_download_invalid">The update package is invalid. Please try again.</string>
+    <string name="update_download_identity">The update package identity or signature does not match this app.</string>
     <string name="update_confirm">Update</string>
     <string name="update_confirm_channel">Update %1$s</string>
     <string name="update_cancel">Cancel update</string>

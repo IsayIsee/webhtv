@@ -1,5 +1,9 @@
 package com.fongmi.android.tv;
 
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.os.Build;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.View;
@@ -28,7 +32,10 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.lang.ref.WeakReference;
 import java.security.MessageDigest;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Locale;
+import java.util.Set;
 
 public class Updater implements Download.Callback, UpdateListener {
 
@@ -286,8 +293,50 @@ public class Updater implements Download.Callback, UpdateListener {
         if (file == null || !file.exists() || file.length() <= 0) return ResUtil.getString(R.string.update_download_invalid);
         if (update != null && update.size > 0 && file.length() != update.size) return ResUtil.getString(R.string.update_download_incomplete);
         if (update != null && !TextUtils.isEmpty(update.sha256) && !update.sha256.equalsIgnoreCase(sha256(file))) return ResUtil.getString(R.string.update_download_checksum);
-        if (App.get().getPackageManager().getPackageArchiveInfo(file.getAbsolutePath(), 0) == null) return ResUtil.getString(R.string.update_download_invalid);
+        if (!validatePackage(file, update)) return ResUtil.getString(R.string.update_download_identity);
         return "";
+    }
+
+    private boolean validatePackage(File file, Update update) {
+        try {
+            PackageManager manager = App.get().getPackageManager();
+            int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
+            PackageInfo archive = manager.getPackageArchiveInfo(file.getAbsolutePath(), flags);
+            PackageInfo installed = manager.getPackageInfo(BuildConfig.APPLICATION_ID, flags);
+            if (archive == null || installed == null || !BuildConfig.APPLICATION_ID.equals(archive.packageName)) return false;
+            long archiveCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? archive.getLongVersionCode() : archive.versionCode;
+            if (update != null && update.code > 0 && archiveCode != update.code) return false;
+            if (update != null && !TextUtils.isEmpty(update.versionName) && !update.versionName.equals(archive.versionName)) return false;
+            return signaturesMatch(installed, archive);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean signaturesMatch(PackageInfo installed, PackageInfo archive) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (installed.signingInfo == null || archive.signingInfo == null) return false;
+            if (installed.signingInfo.hasMultipleSigners() || archive.signingInfo.hasMultipleSigners()) {
+                return fingerprints(installed.signingInfo.getApkContentsSigners()).equals(fingerprints(archive.signingInfo.getApkContentsSigners()));
+            }
+            Set<String> current = fingerprints(installed.signingInfo.getApkContentsSigners());
+            Set<String> candidateHistory = fingerprints(archive.signingInfo.getSigningCertificateHistory());
+            return !current.isEmpty() && candidateHistory.containsAll(current);
+        }
+        return fingerprints(installed.signatures).equals(fingerprints(archive.signatures));
+    }
+
+    private Set<String> fingerprints(Signature[] signatures) {
+        Set<String> values = new HashSet<>();
+        if (signatures == null) return values;
+        for (Signature signature : signatures) {
+            try {
+                MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                values.add(Arrays.toString(digest.digest(signature.toByteArray())));
+            } catch (Exception ignored) {
+            }
+        }
+        return values;
     }
 
     private String sha256(File file) {
