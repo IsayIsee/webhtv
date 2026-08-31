@@ -864,6 +864,7 @@ public class MpvPlayerEngine implements PlayerEngine {
                 .configDir(MpvConfigStore.configDir())
                 .hwdec(surfaceDirect ? "mediacodec" : decode == HARD ? MpvPerformanceSetting.getHwdecOption() : "no")
                 .audioSpdif(resolveAudioSpdifCodecs())
+                .multichannelPcm(MpvPerformanceSetting.isMultichannelPcm())
                 .logLevel(MpvPerformanceSetting.isVerboseLog() ? "all=v" : "all=warn")
                 .demuxerMaxBytes(getDemuxerMaxBytes())
                 .demuxerMaxBackBytes(getDemuxerMaxBackBytes())

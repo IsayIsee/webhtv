@@ -277,6 +277,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private boolean preferAacApplied;
     private boolean directAudioApplied;
     private boolean audioTrackManuallySelected;
+    private boolean dtsHdCoreFallbackAttempted;
+    private String activeAudioSpdif;
     private BiConsumer<Integer, Integer> videoSizeProbeListener;
     private boolean trackRefreshScheduled;
     private boolean trackRefreshPrioritized;
@@ -306,6 +308,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private String cachedGpuApi;
     private String cachedCurrentAo;
     private String cachedAudioDevice;
+    private String cachedAudioFormat;
+    private String cachedAudioCodecProfile;
     private String cachedHwdecCurrent;
     private double cachedAvSyncSeconds;
     private double cachedDisplayFps;
@@ -402,6 +406,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         subtitlePosition = 0f;
         playWhenReady = true;
         volume = 1f;
+        activeAudioSpdif = config.audioSpdif();
     }
 
     @Override
@@ -680,7 +685,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     public String getAudioSpdifCodecs() {
-        return config.audioSpdif();
+        return activeAudioSpdif;
     }
 
     public void setPlaybackTraceId(String playbackTraceId) {
@@ -1200,6 +1205,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             String line = MpvDiagnosticsPolicy.redactSensitive(prefix + ": " + text);
             rememberLog(line);
             markFailureSignal(line);
+            maybeRetryDtsHdAsCore(line);
             String lower = line.toLowerCase(Locale.US);
             if (lower.contains("sub") || lower.contains("font") || lower.contains("track switched") || lower.contains("mkv: select track")) appendSubtitleDiagnostic("native " + line);
             if (shouldDebugLogMpvLine(line)) PlaybackTrace.log("mpv", playbackTraceId, "%s", line);
@@ -1212,6 +1218,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         try {
             ensureInitialized();
             if (!mediaReplacementCoordinator.isCurrent(generation)) return;
+            restoreConfiguredAudioSpdifForNewMedia();
             playbackState = Player.STATE_BUFFERING;
             loading = true;
             playerError = null;
@@ -1384,6 +1391,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             applyPreInitOptions();
             mpvInit();
             initialized = true;
+            activeAudioSpdif = config.audioSpdif();
+            dtsHdCoreFallbackAttempted = false;
             MPVLib.addObserver(this);
             MPVLib.addLogObserver(this);
             applyPostInitOptions();
@@ -1568,6 +1577,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         observe("gpu-api", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("current-ao", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("audio-device", MPVLib.MpvFormat.MPV_FORMAT_STRING);
+        observe("audio-params/format", MPVLib.MpvFormat.MPV_FORMAT_STRING);
+        observe("current-tracks/audio/codec-profile", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("hwdec-current", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("avsync", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE);
         observe("display-fps", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE);
@@ -1780,6 +1791,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             case "gpu-api" -> cachedGpuApi = stringValue(value, cachedGpuApi);
             case "current-ao" -> cachedCurrentAo = stringValue(value, cachedCurrentAo);
             case "audio-device" -> cachedAudioDevice = stringValue(value, cachedAudioDevice);
+            case "audio-params/format" -> cachedAudioFormat = stringValue(value, "");
+            case "current-tracks/audio/codec-profile" ->
+                    cachedAudioCodecProfile = stringValue(value, "");
             case "hwdec-current" -> {
                 observedHwdecCurrent = value instanceof String;
                 cachedHwdecCurrent = value instanceof String text ? text : cachedHwdecCurrent;
@@ -4035,7 +4049,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                     info.id, info.lang, info.codec, info.title, info.channels));
         }
         MpvDirectAudioPolicy.Selection selection = MpvDirectAudioPolicy.select(
-                candidates, selected.id, config.audioSpdif());
+                candidates, selected.id, activeAudioSpdif,
+                config.multichannelPcm());
         directAudioApplied = true;
         preferAacApplied = true;
         TrackInfo target = selected;
@@ -4590,6 +4605,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         cachedGpuApi = null;
         cachedCurrentAo = null;
         cachedAudioDevice = null;
+        cachedAudioFormat = null;
+        cachedAudioCodecProfile = null;
         cachedHwdecCurrent = null;
         cachedAvSyncSeconds = 0;
         cachedDisplayFps = 0;
@@ -4731,6 +4748,39 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (MpvDiagnosticsPolicy.allowsSynchronousProperties(MpvDiagnosticsPolicy.Request.ERROR_DETAILED, SpiderDebug.isEnabled())) PlaybackTrace.log("mpv", playbackTraceId, "fail code=%d message=%s diagnostics=%s", errorCode, MpvDiagnosticsPolicy.redactSensitive(e.getMessage()), diagnosticSummary());
         invalidateState();
         stopMainThreadWatchdog();
+    }
+
+    private void maybeRetryDtsHdAsCore(String line) {
+        if (!initialized || mediaItem == null || !loadStarted) return;
+        String audioFormat = firstNonEmpty(cachedAudioFormat,
+                stringProperty("audio-params/format", ""));
+        String codecProfile = firstNonEmpty(cachedAudioCodecProfile,
+                stringProperty("current-tracks/audio/codec-profile", ""));
+        MpvDtsHdFallbackPolicy.Decision decision =
+                MpvDtsHdFallbackPolicy.evaluate(activeAudioSpdif,
+                        audioFormat, codecProfile, line,
+                        dtsHdCoreFallbackAttempted);
+        if (!decision.retry()) return;
+        dtsHdCoreFallbackAttempted = true;
+        boolean applied = setRuntimeStringChecked(
+                "audio-spdif", decision.codecs());
+        if (applied) activeAudioSpdif = decision.codecs();
+        SpiderDebug.log("mpv-audio",
+                "dts-hd fallback attempted=true applied=%s reason=%s format=%s profile=%s codecs=%s",
+                applied, decision.reason(), audioFormat, codecProfile,
+                applied ? activeAudioSpdif : "unchanged");
+    }
+
+    private void restoreConfiguredAudioSpdifForNewMedia() {
+        if (!TextUtils.equals(activeAudioSpdif, config.audioSpdif())) {
+            boolean restored = setRuntimeStringChecked(
+                    "audio-spdif", config.audioSpdif());
+            if (restored) activeAudioSpdif = config.audioSpdif();
+            SpiderDebug.log("mpv-audio",
+                    "dts-hd fallback reset restored=%s codecs=%s",
+                    restored, restored ? activeAudioSpdif : "unchanged");
+        }
+        dtsHdCoreFallbackAttempted = false;
     }
 
     private String diagnosticSummary() {
@@ -4982,8 +5032,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (value == null) value = "";
         if (!initialized) return false;
         try {
-            mpvSetPropertyString(name, value);
-            return true;
+            return mpvSetPropertyString(name, value) >= 0;
         } catch (Throwable ignored) {
             return false;
         }
