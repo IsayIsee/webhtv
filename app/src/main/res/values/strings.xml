@@ -1129,6 +1129,38 @@
     <string name="update_current_version">Current version <xliff:g name="name">%s</xliff:g></string>
     <string name="update_error">Checking updates error\n<xliff:g name="name">%s</xliff:g></string>
     <string name="update_islatest">Current version is latest version</string>
+    <string name="update_settings">Update settings</string>
+    <string name="update_settings_title">Update settings</string>
+    <string name="update_settings_source">Download method</string>
+    <string name="update_source_github">GitHub</string>
+    <string name="update_source_oci">OCI</string>
+    <string name="update_github_proxy">GitHub proxy</string>
+    <string name="update_github_proxy_value">GitHub proxy · %1$s</string>
+    <string name="update_oci_mirror">OCI Registry mirror</string>
+    <string name="update_oci_mirror_value">OCI mirror · %1$s</string>
+    <string name="update_custom_url">Custom HTTPS origin</string>
+    <string name="update_proxy_mode_full">Full URL prefix</string>
+    <string name="update_proxy_mode_strip">Remove https://</string>
+    <string name="update_proxy_direct">Direct</string>
+    <string name="update_proxy_custom">Custom</string>
+    <string name="update_proxy_invalid">Enter a valid HTTPS origin without credentials or a path.</string>
+    <string name="update_settings_save">Save</string>
+    <string name="update_settings_saved">Update settings saved</string>
+
+    <!-- APK Push -->
+    <string name="apk_push_url_busy">Another APK link download is already active</string>
+    <string name="apk_push_url_schedule_failed">Unable to start the APK link download</string>
+    <string name="apk_push_url_downloading">APK link received. Downloading on this device...</string>
+    <string name="apk_push_url_install_ready">APK downloaded. Confirm installation.</string>
+    <string name="apk_push_url_download_failed">APK link download failed: %1$s</string>
+    <string name="apk_push_url_progress_title">Receiving APK</string>
+    <string name="apk_push_url_progress_hint">Downloading the APK sent over your LAN. Android will still ask you to confirm installation.</string>
+    <string name="apk_push_url_progress_known">Receiving %1$d%% · %2$s / %3$s</string>
+    <string name="apk_push_url_progress_unknown">Received %1$s</string>
+    <string name="apk_push_url_progress_detail_remaining">%1$s/s · %2$s left · %3$s elapsed</string>
+    <string name="apk_push_url_progress_detail">%1$s/s · %2$s elapsed</string>
+    <string name="apk_push_url_cancel">Cancel download</string>
+    <string name="apk_push_url_canceled">APK download canceled</string>
 
     <!-- Crash -->
     <string name="crash_info">An unexpected error occurred.\nSorry for the inconvenience.</string>
