@@ -40,6 +40,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 
+import com.fongmi.android.tv.player.AudioPlaybackDiagnostics;
 import com.fongmi.android.tv.player.PlaybackAutoContext;
 import com.fongmi.android.tv.player.PlaybackRoute;
 import com.fongmi.android.tv.player.PlaybackResourceClassifier;
@@ -207,6 +208,10 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private Tracks currentTracks;
     private VideoTrackDiagnostics selectedVideoTrackDiagnostics;
     private VideoTrackDiagnostics availableVideoTrackDiagnostics;
+    private AudioPlaybackDiagnostics.Track selectedAudioTrackDiagnostics;
+    private AudioPlaybackDiagnostics.Track automaticAudioOriginalTrack;
+    private AudioPlaybackDiagnostics.Track automaticAudioActiveTrack;
+    private AudioPlaybackDiagnostics.Track dtsHdFallbackSourceTrack;
     private List<MediaEdition> currentChapters;
     private VideoSize videoSize;
     private String lastVideoSizeCandidateLog;
@@ -278,6 +283,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private boolean directAudioApplied;
     private boolean audioTrackManuallySelected;
     private boolean dtsHdCoreFallbackAttempted;
+    private String automaticAudioDowngradeReason;
     private String activeAudioSpdif;
     private BiConsumer<Integer, Integer> videoSizeProbeListener;
     private boolean trackRefreshScheduled;
@@ -309,7 +315,13 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private String cachedCurrentAo;
     private String cachedAudioDevice;
     private String cachedAudioFormat;
+    private String cachedAudioOutFormat;
+    private String cachedAudioDecoder;
     private String cachedAudioCodecProfile;
+    private int cachedAudioChannels;
+    private int cachedAudioSampleRate;
+    private int cachedAudioOutChannels;
+    private int cachedAudioOutSampleRate;
     private String cachedHwdecCurrent;
     private double cachedAvSyncSeconds;
     private double cachedDisplayFps;
@@ -392,6 +404,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         currentTracks = Tracks.EMPTY;
         selectedVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
         availableVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
+        resetAudioPlaybackDiagnostics();
         currentChapters = List.of();
         videoSize = VideoSize.UNKNOWN;
         playbackState = Player.STATE_IDLE;
@@ -476,6 +489,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         currentTracks = Tracks.EMPTY;
         selectedVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
         availableVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
+        resetAudioPlaybackDiagnostics();
         pendingOsdLoadGeneration = C.INDEX_UNSET;
         osdSurfaceUsedForCurrentMedia = initialOsdSurfaceRequested;
         setOsdSurfaceRequested(initialOsdSurfaceRequested);
@@ -1578,6 +1592,12 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         observe("current-ao", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("audio-device", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("audio-params/format", MPVLib.MpvFormat.MPV_FORMAT_STRING);
+        observe("audio-params/channel-count", MPVLib.MpvFormat.MPV_FORMAT_INT64);
+        observe("audio-params/samplerate", MPVLib.MpvFormat.MPV_FORMAT_INT64);
+        observe("audio-out-params/format", MPVLib.MpvFormat.MPV_FORMAT_STRING);
+        observe("audio-out-params/channel-count", MPVLib.MpvFormat.MPV_FORMAT_INT64);
+        observe("audio-out-params/samplerate", MPVLib.MpvFormat.MPV_FORMAT_INT64);
+        observe("current-tracks/audio/decoder", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("current-tracks/audio/codec-profile", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("hwdec-current", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("avsync", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE);
@@ -1792,6 +1812,17 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             case "current-ao" -> cachedCurrentAo = stringValue(value, cachedCurrentAo);
             case "audio-device" -> cachedAudioDevice = stringValue(value, cachedAudioDevice);
             case "audio-params/format" -> cachedAudioFormat = stringValue(value, "");
+            case "audio-params/channel-count" -> cachedAudioChannels = Math.max(0,
+                    (int) longValue(value, cachedAudioChannels));
+            case "audio-params/samplerate" -> cachedAudioSampleRate = Math.max(0,
+                    (int) longValue(value, cachedAudioSampleRate));
+            case "audio-out-params/format" -> cachedAudioOutFormat = stringValue(value, "");
+            case "audio-out-params/channel-count" -> cachedAudioOutChannels = Math.max(0,
+                    (int) longValue(value, cachedAudioOutChannels));
+            case "audio-out-params/samplerate" -> cachedAudioOutSampleRate = Math.max(0,
+                    (int) longValue(value, cachedAudioOutSampleRate));
+            case "current-tracks/audio/decoder" ->
+                    cachedAudioDecoder = stringValue(value, "");
             case "current-tracks/audio/codec-profile" ->
                     cachedAudioCodecProfile = stringValue(value, "");
             case "hwdec-current" -> {
@@ -1839,6 +1870,54 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
 
     public VideoTrackDiagnostics getSelectedVideoTrackDiagnostics() {
         return selectedVideoTrackDiagnostics;
+    }
+
+    public AudioPlaybackDiagnostics.Snapshot getAudioPlaybackDiagnostics() {
+        AudioPlaybackDiagnostics.Track current = selectedAudioTrackDiagnostics == null
+                ? AudioPlaybackDiagnostics.Track.empty() : selectedAudioTrackDiagnostics;
+        boolean automaticTrackDowngrade = !TextUtils.isEmpty(
+                automaticAudioDowngradeReason)
+                && sameAudioTrack(current, automaticAudioActiveTrack);
+        AudioPlaybackDiagnostics.Track original = automaticTrackDowngrade
+                ? automaticAudioOriginalTrack : current;
+        AudioPlaybackDiagnostics.Track active = current;
+        String reason = automaticTrackDowngrade
+                ? automaticAudioDowngradeReason : "";
+        String outputFormat = firstNonEmpty(cachedAudioOutFormat, cachedAudioFormat);
+        AudioPlaybackDiagnostics.OutputMode outputMode =
+                AudioPlaybackDiagnostics.mpvOutputMode(outputFormat);
+        if (outputMode == AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH) {
+            AudioPlaybackDiagnostics.Track passthrough =
+                    AudioPlaybackDiagnostics.passthroughTrack(active, outputFormat);
+            String originalCodec = original.codec().toLowerCase(Locale.US);
+            if ("DTS Core".equals(passthrough.codec())
+                    && (originalCodec.contains("dts-hd")
+                    || originalCodec.contains("dts:x"))) {
+                if (dtsHdFallbackSourceTrack.available()) {
+                    original = dtsHdFallbackSourceTrack;
+                }
+                active = AudioPlaybackDiagnostics.passthroughTrack(original, outputFormat);
+                reason = "dts-hd-core";
+            } else {
+                active = passthrough;
+            }
+        }
+        AudioPlaybackDiagnostics.DecodeMode decodeMode =
+                outputMode == AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH
+                        ? AudioPlaybackDiagnostics.DecodeMode.NONE
+                        : isRawPcmTrack(active)
+                        ? AudioPlaybackDiagnostics.DecodeMode.NONE
+                        : outputMode == AudioPlaybackDiagnostics.OutputMode.PCM
+                        && (active.available() || !TextUtils.isEmpty(cachedAudioDecoder))
+                        ? AudioPlaybackDiagnostics.DecodeMode.SOFTWARE
+                        : AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
+        int outputChannels = cachedAudioOutChannels > 0
+                ? cachedAudioOutChannels : cachedAudioChannels;
+        int outputSampleRate = cachedAudioOutSampleRate > 0
+                ? cachedAudioOutSampleRate : cachedAudioSampleRate;
+        return new AudioPlaybackDiagnostics.Snapshot(original, active,
+                decodeMode, cachedAudioDecoder, outputMode, outputChannels,
+                outputSampleRate, false, reason);
     }
 
     /** Metadata for the first video track, including when mpv temporarily reports vid=no. */
@@ -1894,6 +1973,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     public void resetTrackSelection() {
         audioTrackManuallySelected = true;
         preferAacApplied = true;
+        clearAutomaticAudioDowngrade();
         setMpvTrack(C.TRACK_TYPE_VIDEO, "auto");
         setMpvTrack(C.TRACK_TYPE_AUDIO, "auto");
         setMpvTrack(C.TRACK_TYPE_TEXT, "auto");
@@ -1907,6 +1987,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (type == C.TRACK_TYPE_AUDIO) {
             audioTrackManuallySelected = true;
             preferAacApplied = true;
+            clearAutomaticAudioDowngrade();
         }
         if (type == C.TRACK_TYPE_TEXT) logSubtitleState("before-select requested=" + mpvId);
         setMpvTrack(type, mpvId);
@@ -2926,6 +3007,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         currentTracks = Tracks.EMPTY;
         selectedVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
         availableVideoTrackDiagnostics = VideoTrackDiagnostics.empty();
+        resetAudioPlaybackDiagnostics();
         cachedSelectedHlsBitrate = 0;
         currentChapters = List.of();
         videoSize = VideoSize.UNKNOWN;
@@ -3994,6 +4076,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         }
         TrackInfo selectedAudioInfo = findTrack(
                 infos, C.TRACK_TYPE_AUDIO, selectedAudio);
+        selectedAudioTrackDiagnostics = selectedAudioInfo == null
+                ? AudioPlaybackDiagnostics.Track.empty()
+                : selectedAudioInfo.toAudioPlaybackTrack(cachedAudioCodecProfile);
         TrackInfo firstVideoInfo = firstTrack(infos, C.TRACK_TYPE_VIDEO);
         availableVideoTrackDiagnostics = firstVideoInfo == null
                 ? VideoTrackDiagnostics.empty()
@@ -4061,7 +4146,13 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 break;
             }
         }
-        if (selection.changed()) setMpvTrack(C.TRACK_TYPE_AUDIO, selection.id());
+        if (selection.changed()) {
+            automaticAudioOriginalTrack = selected.toAudioPlaybackTrack(
+                    cachedAudioCodecProfile);
+            automaticAudioActiveTrack = target.toAudioPlaybackTrack("");
+            automaticAudioDowngradeReason = selection.reason();
+            setMpvTrack(C.TRACK_TYPE_AUDIO, selection.id());
+        }
         SpiderDebug.log("mpv", "direct automatic audio selection changed=%s reason=%s previous=%s/%s/%dch/%s selected=%s/%s/%dch/%s",
                 selection.changed(), selection.reason(), selected.id, selected.codec,
                 selected.channels, selected.lang, target.id, target.codec,
@@ -4606,7 +4697,13 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         cachedCurrentAo = null;
         cachedAudioDevice = null;
         cachedAudioFormat = null;
+        cachedAudioOutFormat = null;
+        cachedAudioDecoder = null;
         cachedAudioCodecProfile = null;
+        cachedAudioChannels = 0;
+        cachedAudioSampleRate = 0;
+        cachedAudioOutChannels = 0;
+        cachedAudioOutSampleRate = 0;
         cachedHwdecCurrent = null;
         cachedAvSyncSeconds = 0;
         cachedDisplayFps = 0;
@@ -4620,6 +4717,36 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         cachedMistimedFrames = 0;
         cachedDelayedFrames = 0;
         cachedDisplaySyncActive = false;
+    }
+
+    private void resetAudioPlaybackDiagnostics() {
+        selectedAudioTrackDiagnostics = AudioPlaybackDiagnostics.Track.empty();
+        automaticAudioOriginalTrack = AudioPlaybackDiagnostics.Track.empty();
+        automaticAudioActiveTrack = AudioPlaybackDiagnostics.Track.empty();
+        dtsHdFallbackSourceTrack = AudioPlaybackDiagnostics.Track.empty();
+        automaticAudioDowngradeReason = "";
+    }
+
+    private void clearAutomaticAudioDowngrade() {
+        automaticAudioOriginalTrack = AudioPlaybackDiagnostics.Track.empty();
+        automaticAudioActiveTrack = AudioPlaybackDiagnostics.Track.empty();
+        automaticAudioDowngradeReason = "";
+    }
+
+    private boolean sameAudioTrack(AudioPlaybackDiagnostics.Track first,
+                                   AudioPlaybackDiagnostics.Track second) {
+        if (first == null || second == null || !first.available() || !second.available()) {
+            return false;
+        }
+        return TextUtils.equals(first.codec(), second.codec())
+                && (first.channels() <= 0 || second.channels() <= 0
+                || first.channels() == second.channels())
+                && (first.sampleRate() <= 0 || second.sampleRate() <= 0
+                || first.sampleRate() == second.sampleRate());
+    }
+
+    private boolean isRawPcmTrack(AudioPlaybackDiagnostics.Track track) {
+        return track != null && "PCM".equalsIgnoreCase(track.codec());
     }
 
     private void resetVideoMetadataCache() {
@@ -4764,7 +4891,10 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         dtsHdCoreFallbackAttempted = true;
         boolean applied = setRuntimeStringChecked(
                 "audio-spdif", decision.codecs());
-        if (applied) activeAudioSpdif = decision.codecs();
+        if (applied) {
+            activeAudioSpdif = decision.codecs();
+            dtsHdFallbackSourceTrack = selectedAudioTrackDiagnostics;
+        }
         SpiderDebug.log("mpv-audio",
                 "dts-hd fallback attempted=true applied=%s reason=%s format=%s profile=%s codecs=%s",
                 applied, decision.reason(), audioFormat, codecProfile,
@@ -4781,6 +4911,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                     restored, restored ? activeAudioSpdif : "unchanged");
         }
         dtsHdCoreFallbackAttempted = false;
+        dtsHdFallbackSourceTrack = AudioPlaybackDiagnostics.Track.empty();
     }
 
     private String diagnosticSummary() {
@@ -5410,6 +5541,11 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                     dolbyVisionProfile, dolbyVisionLevel,
                     sourceProfile, sourceLevel,
                     codec, decoder, colorInfo);
+        }
+
+        AudioPlaybackDiagnostics.Track toAudioPlaybackTrack(String profile) {
+            return AudioPlaybackDiagnostics.track(codec, title, profile,
+                    sampleMimeType(this), channels, sampleRate, lang, bitrate);
         }
 
         private String sourceCodecs(int profile, int level) {

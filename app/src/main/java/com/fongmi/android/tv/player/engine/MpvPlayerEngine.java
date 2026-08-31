@@ -18,6 +18,7 @@ import androidx.annotation.Nullable;
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.bean.Track;
+import com.fongmi.android.tv.player.AudioPlaybackDiagnostics;
 import com.fongmi.android.tv.player.PlayerHelper;
 import com.fongmi.android.tv.player.PlaybackRoute;
 import com.fongmi.android.tv.player.PlaybackResourceClassifier;
@@ -438,6 +439,11 @@ public class MpvPlayerEngine implements PlayerEngine {
                 isDolbyVisionHdr10Fallback(details, currentVo)
                         || fallbackConfigured,
                 details.sourceDolbyVisionProfile() == 7 && isDv7P81Active());
+    }
+
+    @Override
+    public AudioPlaybackDiagnostics.Snapshot getAudioPlaybackDiagnostics() {
+        return player.getAudioPlaybackDiagnostics();
     }
 
     static boolean isConfiguredDv7Hdr10Fallback(

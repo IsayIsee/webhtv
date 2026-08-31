@@ -1,5 +1,9 @@
 package com.fongmi.android.tv.player.engine;
 
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.os.Build;
+
 import androidx.media3.common.C;
 import androidx.media3.common.Effect;
 import androidx.media3.common.Format;
@@ -16,6 +20,7 @@ import androidx.media3.exoplayer.ExoPlayer;
 import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.bean.Track;
+import com.fongmi.android.tv.player.AudioPlaybackDiagnostics;
 import com.fongmi.android.tv.player.PlaybackTrace;
 import com.fongmi.android.tv.player.PlaybackResourceClassifier;
 import com.fongmi.android.tv.player.exo.ErrorMsgProvider;
@@ -617,6 +622,51 @@ public class ExoPlayerEngine implements PlayerEngine {
     }
 
     @Override
+    public AudioPlaybackDiagnostics.Snapshot getAudioPlaybackDiagnostics() {
+        PlaybackAnalyticsListener.Snapshot analytics =
+                PlaybackAnalyticsListener.getSnapshot();
+        boolean currentAnalyticsSession = !PlaybackTrace.NONE.equals(
+                getPlaybackTraceId()) && getPlaybackTraceId().equals(
+                PlaybackAnalyticsListener.getPlaybackTraceId());
+        Format selected = currentAnalyticsSession && analytics.audioFormat() != null
+                ? analytics.audioFormat()
+                : TrackUtil.explicitlySelectedFormat(getCurrentTracks(), C.TRACK_TYPE_AUDIO);
+        AudioPlaybackDiagnostics.Track original =
+                AudioPlaybackDiagnostics.track(selected, "");
+        PlaybackAnalyticsListener.AudioOutputSnapshot output =
+                currentAnalyticsSession
+                        ? PlaybackAnalyticsListener.getAudioOutputSnapshot()
+                        : PlaybackAnalyticsListener.AudioOutputSnapshot.empty();
+        if (!output.initialized()) {
+            return new AudioPlaybackDiagnostics.Snapshot(original, original,
+                    AudioPlaybackDiagnostics.DecodeMode.UNKNOWN,
+                    currentAnalyticsSession ? analytics.audioDecoderName() : "",
+                    AudioPlaybackDiagnostics.OutputMode.UNKNOWN,
+                    0, 0, false, "");
+        }
+        AudioPlaybackDiagnostics.OutputMode outputMode = output.offload()
+                ? AudioPlaybackDiagnostics.OutputMode.OFFLOAD
+                : androidx.media3.common.util.Util.isEncodingLinearPcm(output.encoding())
+                ? AudioPlaybackDiagnostics.OutputMode.PCM
+                : AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH;
+        AudioPlaybackDiagnostics.Track active = outputMode
+                == AudioPlaybackDiagnostics.OutputMode.PCM
+                ? original
+                : AudioPlaybackDiagnostics.encodedTrack(original, output.encoding());
+        String reason = isDtsCoreDowngrade(original, active)
+                ? "dts-hd-core" : "";
+        String decoderName = currentAnalyticsSession
+                ? analytics.audioDecoderName() : "";
+        AudioPlaybackDiagnostics.DecodeMode decodeMode = outputMode
+                == AudioPlaybackDiagnostics.OutputMode.PCM
+                ? audioDecodeMode(active, decoderName)
+                : AudioPlaybackDiagnostics.DecodeMode.NONE;
+        return new AudioPlaybackDiagnostics.Snapshot(original, active,
+                decodeMode, decoderName, outputMode, output.channels(),
+                output.sampleRate(), output.tunneling(), reason);
+    }
+
+    @Override
     public VideoPlaybackDetails getVideoPlaybackDetails() {
         PlaybackAnalyticsListener.Snapshot analytics =
                 PlaybackAnalyticsListener.getSnapshot();
@@ -877,6 +927,49 @@ public class ExoPlayerEngine implements PlayerEngine {
         return lower.contains(".secure")
                 || lower.contains("secure.decoder")
                 || lower.endsWith("-secure");
+    }
+
+    private AudioPlaybackDiagnostics.DecodeMode audioDecodeMode(
+            AudioPlaybackDiagnostics.Track track, String decoderName) {
+        if (track != null && "PCM".equalsIgnoreCase(track.codec())) {
+            return AudioPlaybackDiagnostics.DecodeMode.NONE;
+        }
+        if (decoderName == null || decoderName.isBlank()) {
+            return AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
+        }
+        String lower = decoderName.toLowerCase(Locale.US);
+        if (lower.startsWith("omx.google.") || lower.startsWith("c2.android.")
+                || lower.contains("ffmpeg") || lower.contains("software")
+                || lower.contains("libopus") || lower.contains("libflac")) {
+            return AudioPlaybackDiagnostics.DecodeMode.SOFTWARE;
+        }
+        try {
+            for (MediaCodecInfo info : new MediaCodecList(
+                    MediaCodecList.ALL_CODECS).getCodecInfos()) {
+                if (!info.getName().equalsIgnoreCase(decoderName)) continue;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    return info.isHardwareAccelerated()
+                            ? AudioPlaybackDiagnostics.DecodeMode.HARDWARE
+                            : AudioPlaybackDiagnostics.DecodeMode.SOFTWARE;
+                }
+                return lower.contains("google") || lower.contains("android")
+                        ? AudioPlaybackDiagnostics.DecodeMode.SOFTWARE
+                        : AudioPlaybackDiagnostics.DecodeMode.HARDWARE;
+            }
+        } catch (Throwable ignored) {
+        }
+        if (lower.startsWith("omx.") || lower.startsWith("c2.")) {
+            return AudioPlaybackDiagnostics.DecodeMode.HARDWARE;
+        }
+        return AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
+    }
+
+    private boolean isDtsCoreDowngrade(AudioPlaybackDiagnostics.Track original,
+                                       AudioPlaybackDiagnostics.Track active) {
+        if (original == null || active == null) return false;
+        String source = original.codec().toLowerCase(Locale.US);
+        return "DTS Core".equals(active.codec())
+                && (source.contains("dts-hd") || source.contains("dts:x"));
     }
 
     private static int[] dolbyVisionProfileLevel(Format format) {
