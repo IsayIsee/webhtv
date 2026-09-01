@@ -4915,3 +4915,12 @@ C3 的触发来源主要是 media `990abc2368fd74779f525ee345734470659f3d53`（`
 - 引擎边界：Exo 接管同一个 Media3 预加载源；MPV/IJK 只复用已解析 `Result`，本任务不改 native preload、ABI、JNI、lock 或二进制。
 - 必须保留：现有 `PreCache`、播放流量优先级、内存压力、seek、前后台、stop/release 保护；切集/源/清晰度/解析器/顺序/播放器/片头片尾设置变化全部使预取失效。
 - 当前状态：实现已完成；9 个聚焦控制器测试、mobile/leanback arm64 Debug Java 编译通过，等待 C5 task guard 原子 commit/tag。task guard 基线为 `6d3c96f3d46cb045e329a23b0da99a54a4de370d`。
+
+## 检查点 54：2026-09-01 P3-4 MPV 音频硬件解码优先
+
+- 稳定任务 ID：`P3-4`；唯一任务文档：[P3-4-mpv-audio-hardware-first.md](P3-4-mpv-audio-hardware-first.md)。
+- 当前缺陷：App 未设置 MPV 音频 `ad` 优先级；锁定 FFmpeg audio MediaCodec 使用 `createDecoderByType()`，可被 Android 分配到 `c2.android.*` 等软件 decoder，因此“硬解能力存在”不等于“实际使用硬解”。
+- 采用设计：只为当前真实存在的 AAC、MP3、AMR-NB、AMR-WB wrapper 设置硬件优先；FFmpeg audio MediaCodec 复用既有视频 codec-list helper，过滤软件实现并按硬件 codec 名创建；初始化失败由 mpv 继续普通 FFmpeg decoder。
+- 性能边界：硬件枚举只发生在 decoder 初始化，不进入 packet/buffer/AudioTrack 热路径；不并行解码、不预热、不新增线程。AC3/EAC3/DTS/TrueHD/FLAC/Opus/Vorbis wrapper 因缺少格式适配与设备验证不在本阶段虚假扩展。
+- 来源：FongMi FFmpeg `177f090e0503b7e013922ca903bde14b1c375f18`、FongMi mpv `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`、mpvRex `52477d85f578547288081ee35fc80e0e3e28a446`、SaltPlayerSource `48b2fde247d6b5529fee14ebf0d4198c9436cd3d`。
+- 当前状态：App/FFmpeg 实现、聚焦 JVM/Java 检查、双 ABI native rebuild/install、ELF/marker 校验和 Mobile arm64 Debug APK 资产一致性均通过；APK SHA-256 为 `e7c60388d449211902502dca81ff3c30ccf21d2447224bf44ab10ebf157dad2a`，两 ABI `libplayer.so` 未变化。当前 ADB 无设备且旧无线地址拒绝连接，实际 decoder、软件回退、seek/切轨和 CPU/温度仍是提交前门禁；下一动作是设备恢复后完成一次聚焦实机验收。
