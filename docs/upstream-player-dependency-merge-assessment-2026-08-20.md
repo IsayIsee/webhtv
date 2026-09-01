@@ -49,6 +49,7 @@
 | 24 | `P4-3` | MPV | 终止退出时抑制无 Surface 的 MediaCodec 重初始化 | **已实施并通过定向测试/真机验收**：`8250e2204f4054601202a3a3f2fe04f8766744ee` / `recovery/P4-3-MPV-SURFACE-TEARDOWN/20260829132806-8250e2204f40`；终止退出后不再创建一次性 decoder，PiP 返回和快速重开正常，不改 native/FFmpeg | [P4-3-mpv-surface-teardown.md](P4-3-mpv-surface-teardown.md) |
 | 25 | `P4-4` | MPV | 自动播放意图与延迟 pause 回调隔离 | **已完成**：`e8a1582d74844df0292cb27c6c8259a3d5eb5dfa` / `recovery/P4-4-MPV-AUTOPLAY-PAUSE-RACE/20260829135715-e8a1582d7484`；V2453A/API 35 冷启动和两次快速媒体替换均保持自动播放，两个暖切换样本约 3 秒推进约 2.8 秒；不改 native/FFmpeg/渲染链 | [P4-4-mpv-autoplay-pause-race.md](P4-4-mpv-autoplay-pause-race.md) |
 | 26 | `E10` | Exo | 音频真实硬件 MediaCodec 优先与可信能力展示 | **已实施并通过聚焦单测/App 编译**：真实硬件稳定置顶、查询缓存和视频不受影响；设备离线，实际 decoder/启动时延待补验；不改 Media3 AAR、nextlib 或 native | [E10-exo-audio-hardware-first.md](E10-exo-audio-hardware-first.md) |
+| 27 | `E11` | Exo | 普通压缩音频 AudioTrack/DSP 硬件直出优先 | **实施中**：复用 Media3 encoded access-unit/offload 管线；标准 offload 或系统 direct playback 明确支持时启用，初始化/写入失败回退同轨 PCM | [E11-exo-compressed-audio-direct.md](E11-exo-compressed-audio-direct.md) |
 
 `C1` 是跨播放器真实输入验收维度，不单独形成代码任务或文档；它写入对应的 E/P 任务文档。`E-SP3` 已在 `fongmi-sync` 完成 App/Media3 合并，保留既有 `E4-J1`/`E6-1`/`E7-1`/`E7-2 + C3` 能力；`E9-3` 与已完成的 `P1` 现已共同进入集成树，后续按既定顺序处理 P2 阶段。
 

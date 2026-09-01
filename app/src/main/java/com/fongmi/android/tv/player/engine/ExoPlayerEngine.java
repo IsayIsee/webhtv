@@ -26,6 +26,7 @@ import com.fongmi.android.tv.player.PlaybackResourceClassifier;
 import com.fongmi.android.tv.player.exo.ErrorMsgProvider;
 import com.fongmi.android.tv.player.exo.ExoDecoderRuntimeProfiles;
 import com.fongmi.android.tv.player.exo.ExoDecoderRuntimeSession;
+import com.fongmi.android.tv.player.exo.ExoCompressedAudioDirectPolicy;
 import com.fongmi.android.tv.player.exo.ExoDolbyVisionPlaybackState;
 import com.fongmi.android.tv.player.exo.ExoFrameSchedulingPlayerSettings;
 import com.fongmi.android.tv.player.exo.ExoFrameSchedulingSessionLock;
@@ -57,6 +58,7 @@ public class ExoPlayerEngine implements PlayerEngine {
     private final PreCache preCache;
     private final Set<String> attemptedFormats;
     private final ExoDecoderRuntimeSession decoderRuntimeSession;
+    private final ExoCompressedAudioDirectPolicy compressedAudioDirectPolicy;
     private final ExoDolbyVisionPlaybackState dolbyVisionPlaybackState;
     private final ExoFrameSchedulingSessionLock frameSchedulingSessionLock;
     private PlaySpec spec;
@@ -133,6 +135,7 @@ public class ExoPlayerEngine implements PlayerEngine {
 
     public ExoPlayerEngine(int decode, Player.Listener listener) {
         this.decoderRuntimeSession = ExoDecoderRuntimeProfiles.process().newSession();
+        this.compressedAudioDirectPolicy = new ExoCompressedAudioDirectPolicy(App.get());
         this.dolbyVisionPlaybackState = new ExoDolbyVisionPlaybackState();
         this.decoderRuntimeEnabledForPlayer =
                 PlaybackPerformanceSetting.isAuto(PlayerSetting.EXO);
@@ -153,7 +156,8 @@ public class ExoPlayerEngine implements PlayerEngine {
                     false,
                     decoderRuntimeSession,
                     frameSchedulingSettings,
-                    dolbyVisionPlaybackState);
+                    dolbyVisionPlaybackState,
+                    compressedAudioDirectPolicy);
         } catch (RuntimeException | Error e) {
             MediaSourceFactory.releaseCacheSession();
             throw e;
@@ -219,7 +223,8 @@ public class ExoPlayerEngine implements PlayerEngine {
                 tunnelingFallbackAttempted,
                 decoderRuntimeSession,
                 schedulingSettings,
-                dolbyVisionPlaybackState);
+                dolbyVisionPlaybackState,
+                compressedAudioDirectPolicy);
         frameSchedulingSettings = schedulingSettings;
         frameSchedulingSessionLock.onRendererRebuilt(
                 schedulingSettings.decision());
@@ -740,6 +745,16 @@ public class ExoPlayerEngine implements PlayerEngine {
 
     @Override
     public ErrorAction handleError(PlaybackException e) {
+        if (isAudioOutputFailure(e)
+                && compressedAudioDirectPolicy.consumePcmFallbackRequest()) {
+            if (retryAudioOutputWithPcm()) {
+                PlaybackTrace.log(
+                        "player-engine",
+                        getPlaybackTraceId(),
+                        "audio output direct failed; restarted current item with PCM");
+                return ErrorAction.RECOVERED;
+            }
+        }
         ErrorAction action = switch (e.errorCode) {
             case PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> seekToDefaultPosition();
             case PlaybackException.ERROR_CODE_DECODER_INIT_FAILED, PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED, PlaybackException.ERROR_CODE_DECODING_FAILED -> ErrorAction.DECODE;
@@ -748,6 +763,41 @@ public class ExoPlayerEngine implements PlayerEngine {
         };
         PlaybackTrace.log("player-engine", getPlaybackTraceId(), "handleError code=%d action=%s decode=%d format=%s originalFormat=%s", e.errorCode, action, decode, activeFormat, spec == null ? null : spec.getFormat());
         return action;
+    }
+
+    private boolean retryAudioOutputWithPcm() {
+        if (player == null || spec == null) return false;
+        long position = Math.max(0, player.getCurrentPosition());
+        boolean shouldPlay = playWhenReady;
+        preCache.stop("audio-output-pcm-fallback");
+        try {
+            startInternal(position, shouldPlay);
+            if (SpiderDebug.isEnabled()) {
+                SpiderDebug.log(
+                        "exo-audio-direct",
+                        "fallback=pcm position=%d play=%s format=%s",
+                        position,
+                        shouldPlay,
+                        activeFormat);
+            }
+            return true;
+        } catch (RuntimeException error) {
+            PlaybackTrace.log(
+                    "player-engine",
+                    getPlaybackTraceId(),
+                    "audio output PCM fallback failed type=%s message=%s",
+                    error.getClass().getSimpleName(),
+                    error.getMessage());
+            return false;
+        }
+    }
+
+    private static boolean isAudioOutputFailure(PlaybackException error) {
+        if (error == null) return false;
+        return error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED;
     }
 
     public boolean observeDecoderRuntimeFailure(PlaybackException error) {
