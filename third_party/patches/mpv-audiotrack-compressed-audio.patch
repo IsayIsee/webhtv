@@ -13,7 +13,7 @@ index fbba7a3..b22aae4 100644
      double speed;
  };
 @@ -67,6 +70,7 @@ struct mp_aframe *mp_aframe_new_ref(struct mp_aframe *frame)
- 
+
      dst->chmap = frame->chmap;
      dst->format = frame->format;
 +    dst->data_size = frame->data_size;
@@ -543,10 +543,10 @@ index 50b7ec4..ac1b5cb 100644
 +    MP_JNI_LOCAL_FREEP(&tmp);
 +    tmp = MP_JNI_CALL_OBJECT(builder, AudioTrackBuilder.setSessionId, p->cfg_session_id);
 +    MP_JNI_LOCAL_FREEP(&tmp);
-+    if (offload && AudioTrackBuilder.setOffloadedPlayback &&
-+        BuildVersion.SDK_INT >= 29)
++    if (AudioTrackBuilder.setOffloadedPlayback && BuildVersion.SDK_INT >= 29)
 +    {
-+        tmp = MP_JNI_CALL_OBJECT(builder, AudioTrackBuilder.setOffloadedPlayback, JNI_TRUE);
++        tmp = MP_JNI_CALL_OBJECT(builder, AudioTrackBuilder.setOffloadedPlayback,
++                                 offload ? JNI_TRUE : JNI_FALSE);
 +        MP_JNI_LOCAL_FREEP(&tmp);
 +    }
 +    jobject result = MP_JNI_CALL_OBJECT(builder, AudioTrackBuilder.build);
@@ -576,9 +576,26 @@ index 50b7ec4..ac1b5cb 100644
 +            bool can_offload = AudioTrackBuilder.setOffloadedPlayback &&
 +                               BuildVersion.SDK_INT >= 29;
 +            audiotrack = AudioTrack_Build(ao, attr, format, can_offload);
-+            if (MP_JNI_EXCEPTION_LOG(ao) < 0 || !audiotrack) {
++            if (MP_JNI_EXCEPTION_LOG(ao) < 0 ||
++                (audiotrack && MP_JNI_CALL_INT(audiotrack, AudioTrack.getState)
++                    != AudioTrack.STATE_INITIALIZED)) {
++                if (audiotrack) {
++                    MP_JNI_CALL_VOID(audiotrack, AudioTrack.release);
++                    MP_JNI_EXCEPTION_LOG(ao);
++                    MP_JNI_LOCAL_FREEP(&audiotrack);
++                }
 +                MP_VERBOSE(ao, "Offloaded AudioTrack rejected; retrying direct encoded output\n");
 +                audiotrack = AudioTrack_Build(ao, attr, format, false);
++                if (MP_JNI_EXCEPTION_LOG(ao) < 0 ||
++                    (audiotrack && MP_JNI_CALL_INT(audiotrack, AudioTrack.getState)
++                        != AudioTrack.STATE_INITIALIZED)) {
++                    if (audiotrack) {
++                        MP_JNI_CALL_VOID(audiotrack, AudioTrack.release);
++                        MP_JNI_EXCEPTION_LOG(ao);
++                        MP_JNI_LOCAL_FREEP(&audiotrack);
++                    }
++                    audiotrack = NULL;
++                }
 +                p->offload = false;
 +            } else {
 +                p->offload = can_offload;
@@ -697,6 +714,20 @@ index 50b7ec4..ac1b5cb 100644
          p->format = AudioFormat.ENCODING_IEC61937;
          if (!p->format || !AudioTrack.writeShortV23) {
              MP_ERR(ao, "spdif passthrough not supported by API\n");
+@@ -746,8 +746,14 @@ static int init(struct ao *ao)
+     min = MP_ALIGN_UP(min, bps);
+     max = MP_ALIGN_UP(max, bps);
+     p->size = MPCLAMP(buffer_size * 2, min, max);
++    if (p->compressed) {
++        // Compressed AudioTrack profiles commonly reject the tiny buffer
++        // calculated from encoded bytes. Keep one bounded 256 KiB packet
++        // window, matching the proven direct-output probe and Media3 path.
++        p->size = MPMAX(p->size, 256 * 1024);
++    }
+     MP_VERBOSE(ao, "Setting bufferSize = %d (driver=%d, min=%d, max=%d)\n", p->size, buffer_size, min, max);
+     mp_assert(p->size % bps == 0);
+     ao->device_buffer = p->size / bps;
+
 diff --git a/audio/out/buffer.c b/audio/out/buffer.c
 index 277b524..16258b1 100644
 --- a/audio/out/buffer.c
@@ -806,7 +837,7 @@ index b3e975d..ecdc5df 100644
                  goto init_error;
              reset_audio_state(mpctx);
              mp_output_chain_reset_harder(ao_c->filter);
-@@ -767,7 +777,11 @@ void reload_audio_output(struct MPContext *mpctx)
+@@ -767,6 +777,10 @@ void reload_audio_output(struct MPContext *mpctx)
      if (!mpctx->ao)
          return;
  

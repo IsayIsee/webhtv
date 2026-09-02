@@ -55,13 +55,13 @@
 - [x] Best-practice review recorded from Android API, Media3, local mpv source and device probe.
 - [x] `bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.AudioPlaybackDiagnosticsTest --no-daemon` passed (`BUILD SUCCESSFUL`, 4 tests).
 - [x] App-side compressed capability probing now keeps a `Set<String>` until the final MPV option join; the affected Mobile arm64 Java compile and diagnostics test passed after fixing the type mismatch.
-- [ ] Decide/implement the raw compressed frame bridge only after source-level lifecycle review. The ignored build cache currently contains a prototype, but it is not yet a tracked patch or formal build input.
+- [x] Raw compressed frame bridge is tracked in `third_party/patches/mpv-audiotrack-compressed-audio.patch`; the complete patch stack now applies to locked MPV source.
 - [ ] Build both MPV ABIs, verify ELF/assets, build Mobile arm64 APK.
 - [ ] On V2453A, play AAC/MP3, capture `audio-out-params`, panel text, AudioFlinger track, seek and media replacement; verify one-shot PCM fallback on forced failure.
 
-Current status: the deterministic `硬解`/`软解` wording unit and App-side compressed capability probe are implemented and verified. The native raw-frame bridge remains unimplemented in the repository build graph: a cache-only prototype still needs its raw decoder flag, lifecycle/compile review, and a tracked patch applied by `scripts/build_mpv_native.sh`; the existing IEC61937 path is intentionally unchanged.
+Current status: the deterministic `硬解`/`软解` wording unit, App-side compressed capability probe, and native raw AAC/MP3 frame bridge are tracked. The bridge preserves IEC61937 formats and is wired into the formal `scripts/build_mpv_native.sh` patch stack; native binaries and device behavior remain pending.
 
-Next action: close this verified App unit, then reopen the same P3-5 record for the native bridge with a tracked patch and one-shot fallback tests.
+Next action: build both MPV ABIs, verify ELF/assets, then build and install the Mobile ARM64 APK for device playback evidence.
 
 ## Checkpoint 2026-09-02 20:14 CST
 
@@ -69,4 +69,29 @@ Next action: close this verified App unit, then reopen the same P3-5 record for 
 - `git diff --check` passed, and `git apply --check --recount --verbose third_party/patches/mpv-audiotrack-compressed-audio.patch` passed for every patched file before source preparation.
 - `bash scripts/build_mpv_native.sh --abi arm64-v8a --prepare-only --incremental --work-dir build/mpv-native` passed; all locked sources were downloaded/pinned and the patch stack prepared successfully.
 - Device playback, native compilation, and packaged asset verification remain pending; no claim is made yet about AAC/MP3 runtime behavior.
-- Next action: create the separate ALAC/MP3-AV3A Exo/MPV task record and inspect the test-library media against the current decoder paths.
+- Next action: build both MPV ABIs and verify the packaged assets before device playback.
+
+## Checkpoint 2026-09-02 23:35 CST
+
+- Corrected the `reload_audio_output()` patch hunk by restoring the blank context line required by MPV `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`.
+- `bash .codex/scripts/task_guard.sh check` passed before the build.
+- `scripts/build_mpv_native.sh --abi arm64-v8a --prepare-only --incremental --work-dir build/mpv-native` passed; all locked sources and the full patch stack prepared successfully.
+- No production source or dependency lock was changed; only the task-owned patch and this record are in scope.
+- Unresolved: native compilation, packaged asset identity, and V2453A playback remain unverified because ADB still reports no device.
+- Next action: run the dual-ABI native build/install, then build and install the Mobile ARM64 APK.
+
+## Checkpoint 2026-09-03 00:49 CST
+
+- `scripts/build_mpv_native.sh --abi all --install --work-dir build/mpv-native` completed successfully; both `arm64-v8a` and `armeabi-v7a` outputs are ready.
+- `bash scripts/verify_mpv_native_assets.sh --require-elf` passed for both ABIs and confirmed the locked asset contract.
+- `bash ./gradlew :app:assembleMobileArm64_v8aDebug --no-daemon` passed (`BUILD SUCCESSFUL`); APK: `app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk`.
+- Device verification is still blocked: after restarting ADB, `adb devices -l` is empty; `system_profiler SPUSBDataType` reports no Android/vivo USB endpoint, and `adb connect 192.168.1.9:5555` is refused.
+- No claim is made yet about installation, AudioFlinger mode, panel text, or AAC/MP3 runtime playback.
+- Next action: once the authorized USB or wireless ADB endpoint appears, install the APK and run the AAC/ALAC/AV3A/MP3 first-play and media-switch checks.
+
+## Checkpoint 2026-09-03 00:58 CST
+
+- Added the generated native asset directories to the active P3-5 scope because the rebuilt MPV/FFmpeg binaries are the runtime payload for this patch.
+- Removed an unnecessary blank context line from the `reload_audio_output()` hunk; the prepared source had already been patched by the native build, so a second `git apply --check` against that non-clean tree is not meaningful.
+- `bash .codex/scripts/task_guard.sh check` passes with the expanded scope. Device installation and runtime playback remain unresolved because USB enumeration is absent and `192.168.1.9:5555` refuses connections.
+- Next action: commit/tag the locally verified native and patch state, then install and run device playback as soon as ADB exposes the phone.
