@@ -1884,7 +1884,11 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         AudioPlaybackDiagnostics.Track active = current;
         String reason = automaticTrackDowngrade
                 ? automaticAudioDowngradeReason : "";
-        String outputFormat = firstNonEmpty(cachedAudioOutFormat, cachedAudioFormat);
+        // audio-params/* describes the decoder/filter side, not the active
+        // AudioTrack.  Do not infer PCM from it before mpv publishes the
+        // actual audio-out-params/* values; the panel must report runtime
+        // output rather than a configured or intermediate format.
+        String outputFormat = cachedAudioOutFormat;
         AudioPlaybackDiagnostics.OutputMode outputMode =
                 AudioPlaybackDiagnostics.mpvOutputMode(outputFormat);
         if (outputMode == AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH) {
@@ -1909,8 +1913,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                         : isRawPcmTrack(active)
                         ? AudioPlaybackDiagnostics.DecodeMode.NONE
                         : outputMode == AudioPlaybackDiagnostics.OutputMode.PCM
-                        && (active.available() || !TextUtils.isEmpty(cachedAudioDecoder))
-                        ? AudioPlaybackDiagnostics.DecodeMode.SOFTWARE
+                        ? mpvAudioDecodeMode(cachedAudioDecoder)
                         : AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
         int outputChannels = cachedAudioOutChannels > 0
                 ? cachedAudioOutChannels : cachedAudioChannels;
@@ -4748,6 +4751,25 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
 
     private boolean isRawPcmTrack(AudioPlaybackDiagnostics.Track track) {
         return track != null && "PCM".equalsIgnoreCase(track.codec());
+    }
+
+    private AudioPlaybackDiagnostics.DecodeMode mpvAudioDecodeMode(String decoderName) {
+        if (TextUtils.isEmpty(decoderName)) {
+            return AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
+        }
+        String lower = decoderName.toLowerCase(Locale.US);
+        // The patched FFmpeg MediaCodec decoders are named <codec>_mediacodec.
+        if (lower.contains("mediacodec")) {
+            return AudioPlaybackDiagnostics.DecodeMode.HARDWARE;
+        }
+        // A spdif decoder is an encoded/direct path; wait for audio-out-params
+        // to identify the concrete output mode instead of calling it PCM soft decode.
+        if (lower.startsWith("spdif_")) {
+            return AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
+        }
+        // Once mpv exposes a concrete non-MediaCodec audio decoder, it is the
+        // FFmpeg software path (including codec-specific lavc decoder names).
+        return AudioPlaybackDiagnostics.DecodeMode.SOFTWARE;
     }
 
     private void resetVideoMetadataCache() {
