@@ -52,6 +52,7 @@
 | 27 | `E11` | Exo | 普通压缩音频 AudioTrack/DSP 硬件直出优先 | **实施中**：复用 Media3 encoded access-unit/offload 管线；标准 offload 或系统 direct playback 明确支持时启用，初始化/写入失败回退同轨 PCM | [E11-exo-compressed-audio-direct.md](E11-exo-compressed-audio-direct.md) |
 | 28 | `P3-5` | MPV | 普通压缩音频原生 AudioTrack/direct/offload 优先 | **实施中**：保持 IEC61937 直通不变，新增经证实的 AAC/MP3 raw access-unit 输出；初始化/写入失败回退同轨 PCM；同步修复播放参数文案为“硬解/软解” | [P3-5-mpv-compressed-audio-offload.md](P3-5-mpv-compressed-audio-offload.md) |
 | 29 | `E12` | Exo | ALAC/MP3/AV3A 解码兼容性与 MP4/CMAF 音轨可达性 | **研究完成，实施拆分为 E12-1**：nextlib native AAR 已含 ALAC/MP3/AV3A 与 FFmpeg 7 channel-layout 修复；锁定 Media3 extractor 缺少 MP4 `av3a` sample-entry 分支，另需验证 ALAC/MP3 PCM 输出契约 | [E12-exo-audio-codec-compat.md](E12-exo-audio-codec-compat.md) |
+| 30 | `P3-6` | MPV | MP3/AV3A 音轨 MIME 与主轨诊断兼容性 | **实施中**：MP3 保持 `audio/mpeg` 与封面流过滤；补齐 MPV AV3A 到 `audio/av3a` 的轨道映射，沿用 FFmpeg `libarcdav3a` 软件解码，不伪造不存在的 MediaCodec 硬解 | [P3-6-mpv-audio-codec-compat.md](P3-6-mpv-audio-codec-compat.md) |
 
 `C1` 是跨播放器真实输入验收维度，不单独形成代码任务或文档；它写入对应的 E/P 任务文档。`E-SP3` 已在 `fongmi-sync` 完成 App/Media3 合并，保留既有 `E4-J1`/`E6-1`/`E7-1`/`E7-2 + C3` 能力；`E9-3` 与已完成的 `P1` 现已共同进入集成树，后续按既定顺序处理 P2 阶段。
 

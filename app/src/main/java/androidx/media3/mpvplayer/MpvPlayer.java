@@ -4548,14 +4548,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             return TextUtils.isEmpty(codec) ? MimeTypes.TEXT_UNKNOWN : MimeTypes.BASE_TYPE_TEXT + "/" + codec;
         }
         if (info.type == C.TRACK_TYPE_AUDIO) {
-            if (codec.contains("aac")) return MimeTypes.AUDIO_AAC;
-            if (codec.contains("ac3")) return MimeTypes.AUDIO_AC3;
-            if (codec.contains("eac3") || codec.contains("e-ac-3")) return MimeTypes.AUDIO_E_AC3;
-            if (codec.contains("opus")) return MimeTypes.AUDIO_OPUS;
-            if (codec.contains("vorbis")) return MimeTypes.AUDIO_VORBIS;
-            if (codec.contains("flac")) return MimeTypes.AUDIO_FLAC;
-            if (codec.contains("mp3")) return MimeTypes.AUDIO_MPEG;
-            return MimeTypes.BASE_TYPE_AUDIO + "/" + (TextUtils.isEmpty(codec) ? "unknown" : codec);
+            return audioSampleMimeType(codec);
         }
         if (codec.contains("hevc") || codec.contains("h265")) return MimeTypes.VIDEO_H265;
         if (codec.contains("h264") || codec.contains("avc")) return MimeTypes.VIDEO_H264;
@@ -4564,6 +4557,10 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         if (codec.contains("vp8")) return MimeTypes.VIDEO_VP8;
         if (codec.contains("mpeg2")) return MimeTypes.VIDEO_MPEG2;
         return MimeTypes.BASE_TYPE_VIDEO + "/" + (TextUtils.isEmpty(codec) ? "unknown" : codec);
+    }
+
+    static String audioSampleMimeType(String codec) {
+        return MpvAudioMimeTypes.fromCodec(codec);
     }
 
     private long doublePropertyMs(String property, long fallback) {
