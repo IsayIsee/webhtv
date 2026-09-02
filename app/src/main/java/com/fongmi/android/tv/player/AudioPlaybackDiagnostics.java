@@ -211,8 +211,8 @@ public final class AudioPlaybackDiagnostics {
 
     private static String decodeText(DecodeMode mode) {
         return switch (mode) {
-            case HARDWARE -> "硬件解码";
-            case SOFTWARE -> "软件解码";
+            case HARDWARE -> "硬解";
+            case SOFTWARE -> "软解";
             case NONE -> "";
             case UNKNOWN -> "解码待确认";
         };

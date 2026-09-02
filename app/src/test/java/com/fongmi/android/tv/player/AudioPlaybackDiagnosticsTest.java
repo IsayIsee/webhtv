@@ -28,7 +28,7 @@ public class AudioPlaybackDiagnosticsTest {
                 AudioPlaybackDiagnostics.OutputMode.PCM,
                 2, 48_000, false, "same-language-stereo");
 
-        assertEquals("DTS-HD MA 5.1/降级AAC 2.0 · 软件解码 · PCM 2.0 · 48kHz · 192kbps",
+        assertEquals("DTS-HD MA 5.1/降级AAC 2.0 · 软解 · PCM 2.0 · 48kHz · 192kbps",
                 AudioPlaybackDiagnostics.format(snapshot));
     }
 
@@ -40,7 +40,7 @@ public class AudioPlaybackDiagnosticsTest {
                 "c2.vendor.eac3.decoder", AudioPlaybackDiagnostics.OutputMode.PCM,
                 6, 48_000, false, "");
 
-        assertEquals("E-AC-3 5.1 · 硬件解码 · PCM 5.1 · 48kHz · 768kbps",
+        assertEquals("E-AC-3 5.1 · 硬解 · PCM 5.1 · 48kHz · 768kbps",
                 AudioPlaybackDiagnostics.format(snapshot));
     }
 
