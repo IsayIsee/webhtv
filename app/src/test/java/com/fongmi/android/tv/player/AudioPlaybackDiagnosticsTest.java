@@ -52,7 +52,7 @@ public class AudioPlaybackDiagnosticsTest {
                 AudioPlaybackDiagnostics.OutputMode.OFFLOAD,
                 6, 48_000, false, "");
 
-        assertEquals("E-AC-3 5.1 · 硬件卸载 · 48kHz · 768kbps",
+        assertEquals("E-AC-3 5.1 · 硬解 · 卸载 · 48kHz · 768kbps",
                 AudioPlaybackDiagnostics.format(snapshot));
     }
 
@@ -66,6 +66,14 @@ public class AudioPlaybackDiagnosticsTest {
                 AudioPlaybackDiagnostics.passthroughTrack(source, "spdif-dts").codec());
         assertEquals(AudioPlaybackDiagnostics.OutputMode.PCM,
                 AudioPlaybackDiagnostics.mpvOutputMode("float"));
+        assertEquals(AudioPlaybackDiagnostics.OutputMode.COMPRESSED_DIRECT,
+                AudioPlaybackDiagnostics.mpvOutputMode("aac"));
+        assertEquals(AudioPlaybackDiagnostics.OutputMode.COMPRESSED_DIRECT,
+                AudioPlaybackDiagnostics.mpvOutputMode("mp3"));
+        assertEquals(AudioPlaybackDiagnostics.OutputMode.OFFLOAD,
+                AudioPlaybackDiagnostics.mpvOutputMode("aac", "offload"));
+        assertEquals(AudioPlaybackDiagnostics.OutputMode.COMPRESSED_DIRECT,
+                AudioPlaybackDiagnostics.mpvOutputMode("aac", "compressed-direct"));
     }
 
     @Test

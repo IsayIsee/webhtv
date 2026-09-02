@@ -937,8 +937,9 @@ public class MpvPlayerEngine implements PlayerEngine {
 
     private String resolveAudioSpdifCodecs() {
         boolean enabled = PlayerSetting.isAudioPassThrough(PlayerSetting.MPV);
-        String codecs = enabled ? MpvAudioCapabilities.getAudioSpdifCodecs(App.get()) : "";
-        SpiderDebug.log("mpv-audio", "configured enabled=%s codecs=%s",
+        String codecs = enabled ? MpvAudioCapabilities.getAudioSpdifCodecs(App.get())
+                : String.join(",", MpvAudioCapabilities.getAudioCompressedCodecs(App.get()));
+        SpiderDebug.log("mpv-audio", "configured passthrough=%s codecs=%s",
                 enabled, codecs.isEmpty() ? "pcm" : codecs);
         return codecs;
     }

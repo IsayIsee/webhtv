@@ -9,6 +9,7 @@ MPV_DOVI_SURFACE_PATCH="$ROOT/third_party/patches/mpv-android-dovi-el-surface.pa
 MPV_DOVI_HDR10_BL_PATCH="$ROOT/third_party/patches/mpv-dovi-profile7-hdr10-base-layer.patch"
 MPV_DOVI_P81_PATCH="$ROOT/third_party/patches/mpv-dovi-profile7-p81.patch"
 MPV_AUDIO_TRUEHD_PATCH="$ROOT/third_party/patches/mpv-audiotrack-truehd-channel-mask.patch"
+MPV_AUDIO_COMPRESSED_PATCH="$ROOT/third_party/patches/mpv-audiotrack-compressed-audio.patch"
 MPV_OPTIONAL_OSD_PATCH="$ROOT/third_party/patches/mpv-mediacodec-embed-optional-osd.patch"
 MPV_MEDIACODEC_TIMED_RELEASE_PATCH="$ROOT/third_party/patches/mpv-mediacodec-embed-timed-release.patch"
 MPV_MEDIACODEC_TIMING_DIAGNOSTICS_PATCH="$ROOT/third_party/patches/mpv-mediacodec-output-timing-diagnostics.patch"
@@ -552,6 +553,13 @@ prepare_sources() {
     die "MPV AudioTrack Android 12 carrier gate is absent"
   grep -Fq 'ao->channels.num == 8' "$deps/mpv/audio/out/ao_audiotrack.c" || \
     die "MPV AudioTrack 8-channel carrier gate is absent"
+  [ -f "$MPV_AUDIO_COMPRESSED_PATCH" ] || die "missing MPV compressed AudioTrack patch: $MPV_AUDIO_COMPRESSED_PATCH"
+  git -C "$deps/mpv" apply --check --recount "$MPV_AUDIO_COMPRESSED_PATCH"
+  git -C "$deps/mpv" apply --recount "$MPV_AUDIO_COMPRESSED_PATCH"
+  grep -Fq 'spdif_ctx->raw_compressed = true' "$deps/mpv/audio/decode/ad_spdif.c" || \
+    die "MPV raw compressed decoder flag is absent"
+  grep -Fq 'AudioTrack compressed access-unit decoder' "$deps/mpv/audio/decode/ad_spdif.c" || \
+    die "MPV compressed AudioTrack decoder registration is absent"
   [ -f "$MPV_MEDIACODEC_TIMED_RELEASE_PATCH" ] || die "missing MPV MediaCodec timed-release patch: $MPV_MEDIACODEC_TIMED_RELEASE_PATCH"
   git -C "$deps/mpv" apply --check --recount "$MPV_MEDIACODEC_TIMED_RELEASE_PATCH"
   git -C "$deps/mpv" apply --recount "$MPV_MEDIACODEC_TIMED_RELEASE_PATCH"

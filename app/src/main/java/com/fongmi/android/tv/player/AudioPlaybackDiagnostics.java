@@ -22,6 +22,7 @@ public final class AudioPlaybackDiagnostics {
     public enum OutputMode {
         PASSTHROUGH,
         PCM,
+        COMPRESSED_DIRECT,
         OFFLOAD,
         UNKNOWN
     }
@@ -129,8 +130,21 @@ public final class AudioPlaybackDiagnostics {
     }
 
     public static OutputMode mpvOutputMode(String outputFormat) {
+        return mpvOutputMode(outputFormat, "");
+    }
+
+    public static OutputMode mpvOutputMode(String outputFormat, String outputMode) {
+        String observed = lower(outputMode);
+        if (observed.equals("passthrough")) return OutputMode.PASSTHROUGH;
+        if (observed.equals("offload")) return OutputMode.OFFLOAD;
+        if (observed.equals("compressed-direct")) return OutputMode.COMPRESSED_DIRECT;
+        if (observed.equals("pcm")) return OutputMode.PCM;
         String value = lower(outputFormat);
         if (value.isEmpty()) return OutputMode.UNKNOWN;
+        if (value.equals("aac") || value.equals("mp3")
+                || value.equals("encoded-aac") || value.equals("encoded-mp3")) {
+            return OutputMode.COMPRESSED_DIRECT;
+        }
         return value.startsWith("spdif-") ? OutputMode.PASSTHROUGH : OutputMode.PCM;
     }
 
@@ -146,7 +160,14 @@ public final class AudioPlaybackDiagnostics {
         add(parts, track);
         switch (snapshot.outputMode()) {
             case PASSTHROUGH -> add(parts, "直通");
-            case OFFLOAD -> add(parts, "硬件卸载");
+            case COMPRESSED_DIRECT -> {
+                add(parts, "硬解");
+                add(parts, "直出");
+            }
+            case OFFLOAD -> {
+                add(parts, "硬解");
+                add(parts, "卸载");
+            }
             case PCM -> {
                 add(parts, decodeText(snapshot.decodeMode()));
                 add(parts, "PCM" + channelSuffix(snapshot.outputChannels()));
