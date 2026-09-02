@@ -778,7 +778,7 @@ index b3e975d..ecdc5df 100644
          ao_flags |= AO_INIT_NULL_FALLBACK;
  
      if (opts->audio_stream_silence)
-@@ -465,11 +466,11 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
+@@ -465,13 +466,22 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
      }
  
      if (!mpctx->ao) {
@@ -788,13 +788,25 @@ index b3e975d..ecdc5df 100644
 +        // If compressed output was used, fall back to the decoder's PCM path.
 +        if (compressed_fallback && ao_c->track && ao_c->track->dec) {
 +            MP_VERBOSE(mpctx, "Falling back to PCM output after compressed AO failure.\n");
++            bool encoded = af_fmt_is_encoded(out_format);
++            if (encoded) {
++                // Drop queued raw access units before replacing the decoder.
++                mp_decoder_wrapper_suspend(ao_c->track->dec);
++                mp_output_chain_reset_harder(ao_c->filter);
++            }
              ao_c->spdif_passthrough = false;
 -            ao_c->spdif_failed = true;
 +            ao_c->spdif_failed = af_fmt_is_spdif(out_format);
              mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, false);
-             if (!mp_decoder_wrapper_reinit(ao_c->track->dec))
+-            if (!mp_decoder_wrapper_reinit(ao_c->track->dec))
++            bool reinit_ok = mp_decoder_wrapper_reinit(ao_c->track->dec);
++            if (encoded)
++                mp_decoder_wrapper_resume(ao_c->track->dec);
++            if (!reinit_ok)
                  goto init_error;
-@@ -767,6 +768,9 @@ void reload_audio_output(struct MPContext *mpctx)
+             reset_audio_state(mpctx);
+             mp_output_chain_reset_harder(ao_c->filter);
+@@ -767,7 +777,11 @@ void reload_audio_output(struct MPContext *mpctx)
      if (!mpctx->ao)
          return;
  
@@ -803,17 +815,26 @@ index b3e975d..ecdc5df 100644
 +
      ao_reset(mpctx->ao);
      uninit_audio_out(mpctx);
-     reinit_audio_filters(mpctx); // mostly to issue refresh seek
-@@ -778,6 +782,17 @@ void reload_audio_output(struct MPContext *mpctx)
+-    reinit_audio_filters(mpctx); // mostly to issue refresh seek
++    if (!encoded_output_failed)
++        reinit_audio_filters(mpctx); // mostly to issue refresh seek
+     struct ao_chain *ao_c = mpctx->ao_chain;
+@@ -778,6 +792,23 @@ void reload_audio_output(struct MPContext *mpctx)
          mp_output_chain_reset_harder(ao_c->filter);
      }
  
 +    if (encoded_output_failed && ao_c && ao_c->track && ao_c->track->dec) {
 +        MP_VERBOSE(mpctx, "Falling back to PCM after compressed AudioTrack write failure.\n");
++        mp_decoder_wrapper_suspend(ao_c->track->dec);
++        // Clear stale encoded frames before replacing the decoder.
++        mp_output_chain_reset_harder(ao_c->filter);
 +        ao_c->spdif_passthrough = false;
 +        ao_c->spdif_failed = false;
 +        mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, false);
-+        if (!mp_decoder_wrapper_reinit(ao_c->track->dec)) {
++        bool reinit_ok = mp_decoder_wrapper_reinit(ao_c->track->dec);
++        mp_decoder_wrapper_resume(ao_c->track->dec);
++        reinit_audio_filters(mpctx); // rebuild after PCM decoder is active
++        if (!reinit_ok) {
 +            MP_ERR(mpctx, "Error reinitializing audio after compressed output failure.\n");
 +            error_on_track(mpctx, ao_c->track);
 +        }

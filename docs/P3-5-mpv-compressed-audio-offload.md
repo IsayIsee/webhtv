@@ -54,10 +54,19 @@
 
 - [x] Best-practice review recorded from Android API, Media3, local mpv source and device probe.
 - [x] `bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.AudioPlaybackDiagnosticsTest --no-daemon` passed (`BUILD SUCCESSFUL`, 4 tests).
-- [ ] Decide/implement the raw compressed frame bridge only after source-level lifecycle review.
+- [x] App-side compressed capability probing now keeps a `Set<String>` until the final MPV option join; the affected Mobile arm64 Java compile and diagnostics test passed after fixing the type mismatch.
+- [ ] Decide/implement the raw compressed frame bridge only after source-level lifecycle review. The ignored build cache currently contains a prototype, but it is not yet a tracked patch or formal build input.
 - [ ] Build both MPV ABIs, verify ELF/assets, build Mobile arm64 APK.
 - [ ] On V2453A, play AAC/MP3, capture `audio-out-params`, panel text, AudioFlinger track, seek and media replacement; verify one-shot PCM fallback on forced failure.
 
-Current status: the deterministic `硬解`/`软解` wording unit is implemented and verified. The native raw-frame bridge remains unimplemented pending a safe answer for variable access-unit boundaries and source sample-rate propagation; the existing IEC61937 path is intentionally unchanged.
+Current status: the deterministic `硬解`/`软解` wording unit and App-side compressed capability probe are implemented and verified. The native raw-frame bridge remains unimplemented in the repository build graph: a cache-only prototype still needs its raw decoder flag, lifecycle/compile review, and a tracked patch applied by `scripts/build_mpv_native.sh`; the existing IEC61937 path is intentionally unchanged.
 
-Next action: close this verified wording unit, then reopen the same P3-5 record for the native bridge only after its input/frame contract is proven by a compile-time and device-testable design.
+Next action: close this verified App unit, then reopen the same P3-5 record for the native bridge with a tracked patch and one-shot fallback tests.
+
+## Checkpoint 2026-09-02 20:14 CST
+
+- Repaired the tracked compressed AudioTrack patch hunk against mpv `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`; the queue suspend/reset/resume path is now represented by a valid unified diff.
+- `git diff --check` passed, and `git apply --check --recount --verbose third_party/patches/mpv-audiotrack-compressed-audio.patch` passed for every patched file before source preparation.
+- `bash scripts/build_mpv_native.sh --abi arm64-v8a --prepare-only --incremental --work-dir build/mpv-native` passed; all locked sources were downloaded/pinned and the patch stack prepared successfully.
+- Device playback, native compilation, and packaged asset verification remain pending; no claim is made yet about AAC/MP3 runtime behavior.
+- Next action: create the separate ALAC/MP3-AV3A Exo/MPV task record and inspect the test-library media against the current decoder paths.
