@@ -117,7 +117,18 @@ public final class ExoCompressedAudioDirectPolicy
                     throws AudioOutputProvider.ConfigurationException {
                 OutputKey key = OutputKey.from(config.format);
                 if (key == null || !vendorDirectConfigs.contains(key)) {
-                    return super.getOutputConfig(config);
+                    try {
+                        return super.getOutputConfig(config);
+                    } catch (RuntimeException error) {
+                        // AudioTrackAudioOutputProvider currently lets an invalid
+                        // channel mask escape as IllegalStateException from
+                        // getMinBufferSize(). Convert it to the provider contract
+                        // so Media3 reports a recoverable audio-track init error
+                        // instead of ERROR_CODE_FAILED_RUNTIME_CHECK.
+                        throw new AudioOutputProvider.ConfigurationException(
+                                "AudioTrack output configuration failed: "
+                                        + error.getMessage());
+                    }
                 }
                 if (SpiderDebug.isEnabled()) {
                     SpiderDebug.log("exo-audio-direct",
