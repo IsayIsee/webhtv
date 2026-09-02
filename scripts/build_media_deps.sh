@@ -246,6 +246,7 @@ apply_media_patches() {
     "$patch_dir/media3-exo-iso-reader-safety.patch"
     "$patch_dir/media3-exo-iso-multi-extent.patch"
     "$patch_dir/media3-precache-hls-safety.patch"
+    "$patch_dir/media3-exo-av3a-mp4.patch"
   )
   for patch_file in "${patches[@]}"; do
     [[ -f "$patch_file" ]] || continue

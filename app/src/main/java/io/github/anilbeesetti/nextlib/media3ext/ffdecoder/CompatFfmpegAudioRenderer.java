@@ -9,6 +9,7 @@ import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.CodecSpecificDataUtil;
 import androidx.media3.common.util.TraceUtil;
 import androidx.media3.common.util.Util;
 import androidx.media3.decoder.CryptoConfig;
@@ -93,6 +94,26 @@ public final class CompatFfmpegAudioRenderer extends DecoderAudioRenderer<Ffmpeg
         if (sampleMimeType == null) return format;
         if (sampleMimeType.startsWith(MimeTypes.AUDIO_DTS_HD + ";") || MimeTypes.AUDIO_MEDIA3_DTS_HD_MA_CORELESS.equals(sampleMimeType)) return format.buildUpon().setSampleMimeType(MimeTypes.AUDIO_DTS_HD).build();
         if (MimeTypes.AUDIO_AMR.equals(sampleMimeType)) return format.buildUpon().setSampleMimeType(MimeTypes.AUDIO_AMR_NB).build();
+        if (MimeTypes.AUDIO_AV3A.equals(sampleMimeType)
+                || (MimeTypes.AUDIO_MP4.equals(sampleMimeType)
+                && format.codecs != null
+                && format.codecs.toLowerCase(java.util.Locale.US).startsWith("av3a"))) {
+            return format.buildUpon().setSampleMimeType(MimeTypes.AUDIO_AV3A).build();
+        }
+        if (MimeTypes.AUDIO_ALAC.equals(sampleMimeType)
+                && (format.sampleRate == Format.NO_VALUE || format.channelCount == Format.NO_VALUE)
+                && !format.initializationData.isEmpty()) {
+            try {
+                int[] config = CodecSpecificDataUtil.parseAlacAudioSpecificConfig(
+                        format.initializationData.get(0));
+                Format.Builder builder = format.buildUpon();
+                if (format.sampleRate == Format.NO_VALUE && config[0] > 0) builder.setSampleRate(config[0]);
+                if (format.channelCount == Format.NO_VALUE && config[1] > 0) builder.setChannelCount(config[1]);
+                return builder.build();
+            } catch (RuntimeException ignored) {
+                // Keep the original format; the decoder will report malformed ALAC data.
+            }
+        }
         return format;
     }
 

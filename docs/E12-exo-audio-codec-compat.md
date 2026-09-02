@@ -38,3 +38,12 @@
 - Rollback anchor: `d00aa5737980d976cbae491948bf65dab906bf68` and recovery tag `recovery/P3-5-aac-compressed-fallback/20260902201621-d00aa5737980`.
 - E12 research identifies the missing Media3 MP4 AV3A branch as the concrete first implementation action.
 - Next action: implement E12-1 with Media3 extractor patch, rebuild/publish the coupled artifacts, then compile and run representative tests.
+
+## Checkpoint 1: 2026-09-02 20:52 CST
+
+- E12-1 implementation: added the reproducible Media3 MP4/CMAF `av3a` sample-entry and RFC 6381 MIME mapping patch; wired it into `scripts/build_media_deps.sh` and `third_party/media-lock.json`.
+- App adapter: `CompatFfmpegAudioRenderer` now normalizes `audio/mp4 + av3a.*` and fills missing ALAC sample rate/channel count from the magic cookie before sink capability checks.
+- Validation so far: `git -C third_party/sources/media apply --check --unidiff-zero third_party/patches/media3-exo-av3a-mp4.patch` passes; source AAR inspection confirms both ABIs contain AV3A/ALAC/MP3 decoders and patched swresample symbols.
+- Media3 publication: rebuilt and retained only the affected `media3-common`, `media3-container`, and `media3-extractor` coordinates. AAR/source SHA-256 values are recorded in `third_party/media-lock.json`; unaffected modules were restored to the baseline publication.
+- Verification: `bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests io.github.anilbeesetti.nextlib.media3ext.ffdecoder.CompatFfmpegAudioRendererTest --tests androidx.media3.mpvplayer.MpvAudioDecoderPolicyTest --tests com.fongmi.android.tv.player.AudioPlaybackDiagnosticsTest :app:compileMobileArm64_v8aDebugJavaWithJavac --no-daemon` passed (73 tasks, 46s). The test-library metadata confirms ALAC/MP3/AV3A fixtures are present; no ADB device was online for playback.
+- E12-1 status: Exo source, patch, publication and App compile contracts are complete. MPV AV3A track mapping remains a separate P3-6 unit and is not claimed here.
