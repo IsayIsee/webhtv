@@ -3,6 +3,8 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 import static androidx.media3.exoplayer.audio.AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY;
 
 import android.content.Context;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
 import android.os.Handler;
 
 import androidx.media3.common.C;
@@ -130,7 +132,26 @@ public final class CompatFfmpegAudioRenderer extends DecoderAudioRenderer<Ffmpeg
     }
 
     private boolean sinkSupportsFormat(Format format, int pcmEncoding, int channelCount) {
-        return sinkSupportsFormat(Util.getPcmFormat(pcmEncoding, channelCount, format.sampleRate));
+        Format pcmFormat = Util.getPcmFormat(pcmEncoding, channelCount, format.sampleRate);
+        if (!sinkSupportsFormat(pcmFormat)) return false;
+
+        // Media3's PCM sink reports 16-bit PCM as supported on every device, but
+        // some vendor HALs still reject a particular channel mask at AudioTrack
+        // creation time (for example 5.1 on the built-in speaker route). Probe
+        // the cheap deterministic gate here so the decoder can downmix to stereo
+        // before its first output buffer instead of failing in getMinBufferSize().
+        if (format.sampleRate <= 0 || channelCount <= 0) return true;
+        int channelConfig = format.channelMask != Format.NO_VALUE
+                ? format.channelMask
+                : Util.getAudioTrackChannelConfig(channelCount);
+        if (channelConfig == AudioFormat.CHANNEL_INVALID) return false;
+        try {
+            return AudioTrack.getMinBufferSize(
+                    format.sampleRate, channelConfig, pcmEncoding)
+                    != AudioTrack.ERROR_BAD_VALUE;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
     }
 
     private int getOutputChannelCount(Format format) {
