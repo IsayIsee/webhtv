@@ -1008,6 +1008,8 @@ public class PlayerManager implements ParseCallback {
     }
 
     private ExoNetworkGuardEligibility.Decision getNetworkProtectionEligibility() {
+        AudioPlaybackDiagnostics.OutputMode audioOutputMode = getAudioPlaybackDiagnostics()
+                .outputMode();
         return ExoNetworkGuardEligibility.resolve(new ExoNetworkGuardEligibility.Request(
                 ExoPerformanceSetting.isNetworkProtectionEnabled()
                         && experimentAllowed(
@@ -1017,16 +1019,19 @@ public class PlayerManager implements ParseCallback {
                 Math.abs(userPlaybackSpeed - 1f) < 0.001f,
                 player != null && player.isCommandAvailable(Player.COMMAND_SET_SPEED_AND_PITCH),
                 PlayerSetting.isTunnel(),
-                PlayerSetting.isAudioPassThrough(PlayerSetting.EXO)));
+                audioOutputMode));
     }
 
     private void scheduleNetworkProtection(long delayMs) {
         App.removeCallbacks(networkProtectionRunnable);
         ExoNetworkGuardEligibility.Decision eligibility = getNetworkProtectionEligibility();
+        AudioPlaybackDiagnostics.OutputMode audioOutputMode = getAudioPlaybackDiagnostics()
+                .outputMode();
         logNetworkGuard("schedule delay=" + delayMs + " eligible=" + eligibility.eligible()
                 + " reason=" + eligibility.reason() + " exo=" + isExo() + " vod=" + isVod()
                 + " userSpeed=" + userPlaybackSpeed + " tunnel=" + PlayerSetting.isTunnel()
-                + " passthrough=" + PlayerSetting.isAudioPassThrough(PlayerSetting.EXO)
+                + " configuredPassthrough=" + PlayerSetting.isAudioPassThrough(PlayerSetting.EXO)
+                + " audioOutput=" + audioOutputMode
                 + " state=" + (player == null ? -1 : player.getPlaybackState())
                 + " playing=" + (player != null && player.isPlaying()));
         if (!eligibility.eligible()) {
