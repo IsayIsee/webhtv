@@ -60,6 +60,10 @@
       {
         "path": "third_party/patches/media3-exo-av3a-mp4.patch",
         "sha256": "b12123fe9dd09c83fc36e106bf7ebe64ab67404b165ceb6b0acbf45706d36874"
+      },
+      {
+        "path": "third_party/patches/media3-exo-av3a-dash-channel-config.patch",
+        "sha256": "76a1a876c8d8493a54826ad54a789ed487e9d11fe324c701af58821b4539b987"
       }
     ],
     "artifact_overrides": [
@@ -86,6 +90,12 @@
         "aar_sha256": "cfea29681799509923174cac7ce31b7e944e542db9df58fd56b7a86499a5c07e",
         "sources_sha256": "83f4f83b4f44e621d52002c161f63fbcb77be6856af4b1e4a4cb0982b04549e1",
         "reason": "E3-1a/E4-1 baseline plus E7-2 Blu-ray/DVD logical multi-extent routing and E-SP3-B HLS pre-cache request safety"
+      },
+      {
+        "coordinate": "androidx.media3:media3-exoplayer-dash:1.11.0-alpha01-fongmi",
+        "aar_sha256": "de557f0b91512a1e0726155bd0cbb23879279ce05a819ab27a49bea069225546",
+        "sources_sha256": "5462494d6ed12e64b5597070b86206727775c760ebe040ef6d3a3a51244431d4",
+        "reason": "E12 AVS3A P7 DASH AudioChannelConfiguration mapping"
       },
       {
         "coordinate": "androidx.media3:media3-datasource:1.11.0-alpha01-fongmi",
