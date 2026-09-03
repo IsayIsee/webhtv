@@ -946,6 +946,54 @@ diff --git a/filters/f_decoder_wrapper.h b/filters/f_decoder_wrapper.h
  // Whether to decode only 1 frame and then stop, and cache the frame across resets.
  void mp_decoder_wrapper_set_coverart_flag(struct mp_decoder_wrapper *d, bool c);
 
+diff --git a/filters/f_swresample.c b/filters/f_swresample.c
+index 3a6a1b6..b0d65c2 100644
+--- a/filters/f_swresample.c
++++ b/filters/f_swresample.c
+@@ -155,6 +155,9 @@ static bool configure_lavrr(struct priv *p, bool verbose)
+     struct mp_chmap map_in = p->in_channels;
+     struct mp_chmap map_out = p->out_channels;
+-
++    bool unknown_stereo_downmix =
++        mp_chmap_is_unknown(&map_in) && map_in.num > 2 &&
++        mp_chmap_is_stereo(&map_out);
++
+     // Try not to do any remixing if at least one is "unknown". Some corner
+     // cases also benefit from disabling all channel handling logic if the
+     // src/dst layouts are the same (like fl-fr-na -> fl-fr-na).
+@@ -161,5 +164,6 @@ static bool configure_lavrr(struct priv *p, bool verbose)
+-    if (mp_chmap_is_unknown(&map_in) || mp_chmap_is_unknown(&map_out) ||
+-        mp_chmap_equals(&map_in, &map_out))
++    if (!unknown_stereo_downmix &&
++        (mp_chmap_is_unknown(&map_in) || mp_chmap_is_unknown(&map_out) ||
++         mp_chmap_equals(&map_in, &map_out)))
+     {
+         mp_chmap_set_unknown(&map_in, map_in.num);
+         mp_chmap_set_unknown(&map_out, map_out.num);
+@@ -242,4 +247,22 @@ static bool configure_lavrr(struct priv *p, bool verbose)
+     av_opt_set_int(p->avrctx, "out_sample_fmt",     out_samplefmtp, 0);
+-
++    if (unknown_stereo_downmix) {
++        // AV3A mixed content may append object channels to a sound bed. The
++        // decoder preserves their order but cannot describe them as fixed
++        // speakers, so fold every input index into both stereo outputs.
++        double matrix[2][MP_NUM_CHANNELS] = {{0}};
++        double gain = 1.0 / map_in.num;
++        for (int n = 0; n < map_in.num; n++) {
++            matrix[0][n] = gain;
++            matrix[1][n] = gain;
++        }
++        if (swr_set_matrix(p->avrctx, &matrix[0][0], MP_NUM_CHANNELS) < 0) {
++            MP_ERR(p, "Failed to configure unknown %d-channel stereo downmix.\n",
++                   map_in.num);
++            goto error;
++        }
++        MP_VERBOSE(p, "Using equal-gain stereo downmix for unknown %d-channel input.\n",
++                   map_in.num);
++    }
++
+     AVChannelLayout fake_layout;
+     av_channel_layout_default(&fake_layout, map_out.num);
 diff --git a/filters/f_decoder_wrapper.c b/filters/f_decoder_wrapper.c
 --- a/filters/f_decoder_wrapper.c
 +++ b/filters/f_decoder_wrapper.c
