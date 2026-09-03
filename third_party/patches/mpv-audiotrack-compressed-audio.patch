@@ -714,7 +714,44 @@ index 50b7ec4..ac1b5cb 100644
          p->format = AudioFormat.ENCODING_IEC61937;
          if (!p->format || !AudioTrack.writeShortV23) {
              MP_ERR(ao, "spdif passthrough not supported by API\n");
-@@ -746,8 +746,14 @@ static int init(struct ao *ao)
+@@ -713,13 +713,21 @@ static int init(struct ao *ao)
+     if (p->format == AudioFormat.ENCODING_IEC61937) {
+         // Android documents a stereo channel mask for IEC61937, but the
+         // mature VLC AudioTrack backend uses 7.1 for TrueHD because several
+         // Android TV firmwares reject or down-route its 8-channel carrier
+         // when it is declared as stereo.
+         if (ao->format == AF_FORMAT_S_TRUEHD) {
+             MP_VERBOSE(ao, "Using 7.1 IEC61937 carrier mask for TrueHD\n");
+             p->channel_config = AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
+         } else if (BuildVersion.SDK_INT >= ANDROID_API_LEVEL_S &&
+                    ao->channels.num == 8) {
+             MP_VERBOSE(ao, "Using 7.1 IEC61937 carrier mask for Android 12+ 8-channel stream\n");
+             p->channel_config = AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
+         } else {
+             p->channel_config = AudioFormat.CHANNEL_OUT_STEREO;
+         }
+     } else {
++        // Android AudioTrack exposes channel masks only through 7.1. AV3A
++        // can carry 9/12-channel layouts that cannot be represented here;
++        // force a deterministic stereo downmix instead of an arbitrary
++        // channel-map fallback (for example 9 -> 7).
++        if (ao->channels.num > 8) {
++            MP_VERBOSE(ao, "AudioTrack supports at most 8 channels; downmixing %d-channel audio to stereo\n",
++                       ao->channels.num);
++            ao->channels = (struct mp_chmap) MP_CHMAP_INIT_STEREO;
++        }
+         struct mp_chmap_sel sel = {0};
+         for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
+             if (layout_map[i])
+                 mp_chmap_sel_add_map(&sel, &layouts[i]);
+         }
+         if (!ao_chmap_sel_adjust(ao, &sel, &ao->channels))
+             goto error;
+         p->channel_config = layout_map[ao->channels.num];
+         mp_assert(p->channel_config);
+     }
+
+@@ -746,8 +754,14 @@ static int init(struct ao *ao)
      min = MP_ALIGN_UP(min, bps);
      max = MP_ALIGN_UP(max, bps);
      p->size = MPCLAMP(buffer_size * 2, min, max);
@@ -809,7 +846,7 @@ index b3e975d..ecdc5df 100644
          ao_flags |= AO_INIT_NULL_FALLBACK;
  
      if (opts->audio_stream_silence)
-@@ -465,13 +466,22 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
+@@ -465,13 +466,26 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
      }
  
      if (!mpctx->ao) {
@@ -826,6 +863,8 @@ index b3e975d..ecdc5df 100644
 +                mp_output_chain_reset_harder(ao_c->filter);
 +            }
              ao_c->spdif_passthrough = false;
++            if (encoded)
++                mp_decoder_wrapper_set_audio_software(ao_c->track->dec, true);
 -            ao_c->spdif_failed = true;
 +            ao_c->spdif_failed = af_fmt_is_spdif(out_format);
              mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, false);
@@ -833,6 +872,8 @@ index b3e975d..ecdc5df 100644
 +            bool reinit_ok = mp_decoder_wrapper_reinit(ao_c->track->dec);
 +            if (encoded)
 +                mp_decoder_wrapper_resume(ao_c->track->dec);
++            if (encoded)
++                issue_refresh_seek(mpctx, MPSEEK_EXACT);
 +            if (!reinit_ok)
                  goto init_error;
              reset_audio_state(mpctx);
@@ -849,8 +890,10 @@ index b3e975d..ecdc5df 100644
 -    reinit_audio_filters(mpctx); // mostly to issue refresh seek
 +    if (!encoded_output_failed)
 +        reinit_audio_filters(mpctx); // mostly to issue refresh seek
+-
++
      struct ao_chain *ao_c = mpctx->ao_chain;
-@@ -778,6 +792,23 @@ void reload_audio_output(struct MPContext *mpctx)
+@@ -778,6 +792,24 @@ void reload_audio_output(struct MPContext *mpctx)
          mp_output_chain_reset_harder(ao_c->filter);
      }
  
@@ -860,6 +903,7 @@ index b3e975d..ecdc5df 100644
 +        // Clear stale encoded frames before replacing the decoder.
 +        mp_output_chain_reset_harder(ao_c->filter);
 +        ao_c->spdif_passthrough = false;
++        mp_decoder_wrapper_set_audio_software(ao_c->track->dec, true);
 +        ao_c->spdif_failed = false;
 +        mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, false);
 +        bool reinit_ok = mp_decoder_wrapper_reinit(ao_c->track->dec);
@@ -874,3 +918,97 @@ index b3e975d..ecdc5df 100644
      // Whether we can use spdif might have changed. If we failed to use spdif
      // in the previous initialization, try it with spdif again (we'll fallback
      // to PCM again if necessary).
+diff --git a/audio/out/ao_opensles.c b/audio/out/ao_opensles.c
+--- a/audio/out/ao_opensles.c
++++ b/audio/out/ao_opensles.c
+@@ -102,5 +102,10 @@ static int init(struct ao *ao)
+ {
+     struct priv *p = ao->priv;
++    if (af_fmt_is_encoded(ao->format)) {
++        MP_ERR(ao, "OpenSLES cannot output encoded audio; requesting PCM fallback\n");
++        return -1;
++    }
+     SLDataLocator_BufferQueue locator_buffer_queue;
+     SLDataLocator_OutputMix locator_output_mix;
+     SLAndroidDataFormat_PCM_EX pcm;
+diff --git a/filters/f_decoder_wrapper.h b/filters/f_decoder_wrapper.h
+--- a/filters/f_decoder_wrapper.h
++++ b/filters/f_decoder_wrapper.h
+@@ -50,6 +50,10 @@ double mp_decoder_wrapper_get_container_fps(struct mp_decoder_wrapper *d);
+ // Whether to prefer spdif wrapper over real decoders on next reinit.
+ void mp_decoder_wrapper_set_spdif_flag(struct mp_decoder_wrapper *d, bool spdif);
++
++// Force the current audio track to use its named FFmpeg software decoder on
++// the next and subsequent reinitializations after compressed output failure.
++void mp_decoder_wrapper_set_audio_software(struct mp_decoder_wrapper *d, bool software);
+-
++
+ // Whether to decode only 1 frame and then stop, and cache the frame across resets.
+ void mp_decoder_wrapper_set_coverart_flag(struct mp_decoder_wrapper *d, bool c);
+
+diff --git a/filters/f_decoder_wrapper.c b/filters/f_decoder_wrapper.c
+--- a/filters/f_decoder_wrapper.c
++++ b/filters/f_decoder_wrapper.c
+@@ -230,6 +230,7 @@ struct priv {
+     // --- Protected by cache_lock.
+     char *cur_hwdec;
+     bool try_spdif;
++    bool force_software_audio;
+     bool attached_picture;
+     bool pts_reset;
+@@ -465,6 +466,7 @@ static bool reinit_decoder(struct priv *p)
+     const struct mp_decoder_fns *driver = NULL;
+     struct mp_decoder_list *list = NULL;
+     char *user_list = NULL;
++    bool force_software_audio = false;
+     char *fallback = NULL;
+@@ -477,8 +479,9 @@ static bool reinit_decoder(struct priv *p)
+         fallback = "aac";
+-
++
+         mp_mutex_lock(&p->cache_lock);
+         bool try_spdif = p->try_spdif;
++        force_software_audio = p->force_software_audio;
+         mp_mutex_unlock(&p->cache_lock);
+@@ -492,6 +495,20 @@ static bool reinit_decoder(struct priv *p)
+             }
+         }
+     }
+-
++
++    if (force_software_audio && p->codec->type == STREAM_AUDIO &&
++        p->codec->codec)
++    {
++        // The previous attempt may have selected ad_spdif.  Force the
++        // software decoder driver as well as its candidate entry; otherwise
++        // ad_spdif accepts the name but keeps producing encoded frames.
++        if (list) {
++            talloc_free(list);
++            list = NULL;
++        }
++        driver = &ad_lavc;
++        list = talloc_zero(NULL, struct mp_decoder_list);
++        if (list)
++            mp_add_decoder(list, p->codec->codec, p->codec->codec,
++                           "FFmpeg software audio decoder");
++    }
++
+     if (!driver)
+         return false;
+@@ -587,6 +599,16 @@ void mp_decoder_wrapper_set_spdif_flag(struct mp_decoder_wrapper *d, bool spdif)
+     mp_mutex_unlock(&p->cache_lock);
+ }
+-
++
++void mp_decoder_wrapper_set_audio_software(struct mp_decoder_wrapper *d,
++                                           bool software)
++{
++    struct priv *p = d->f->priv;
++    mp_mutex_lock(&p->cache_lock);
++    p->force_software_audio = software;
++    mp_mutex_unlock(&p->cache_lock);
++}
++
+ void mp_decoder_wrapper_set_coverart_flag(struct mp_decoder_wrapper *d, bool c)
+ {
+     struct priv *p = d->f->priv;

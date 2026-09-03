@@ -56,12 +56,54 @@
 - [x] `bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.AudioPlaybackDiagnosticsTest --no-daemon` passed (`BUILD SUCCESSFUL`, 4 tests).
 - [x] App-side compressed capability probing now keeps a `Set<String>` until the final MPV option join; the affected Mobile arm64 Java compile and diagnostics test passed after fixing the type mismatch.
 - [x] Raw compressed frame bridge is tracked in `third_party/patches/mpv-audiotrack-compressed-audio.patch`; the complete patch stack now applies to locked MPV source.
-- [ ] Build both MPV ABIs, verify ELF/assets, build Mobile arm64 APK.
+- [x] Build both MPV ABIs, verify ELF/assets, build Mobile arm64 APK.
 - [ ] On V2453A, play AAC/MP3, capture `audio-out-params`, panel text, AudioFlinger track, seek and media replacement; verify one-shot PCM fallback on forced failure.
 
-Current status: the deterministic `硬解`/`软解` wording unit, App-side compressed capability probe, and native raw AAC/MP3 frame bridge are tracked. The bridge preserves IEC61937 formats and is wired into the formal `scripts/build_mpv_native.sh` patch stack; native binaries and device behavior remain pending.
+Current status: the deterministic `硬解`/`软解` wording unit, App-side compressed capability probe, and native raw AAC/MP3 frame bridge are tracked. The bridge preserves IEC61937 formats and is wired into the formal `scripts/build_mpv_native.sh` patch stack. The AV3A channel-layout fallback is now included; dual-ABI build, ELF/assets verification, and Mobile ARM64 APK packaging have passed. Device acceptance remains open because the authorized V2453A endpoint is currently absent from ADB and USB enumeration.
 
-Next action: build both MPV ABIs, verify ELF/assets, then build and install the Mobile ARM64 APK for device playback evidence.
+Next action: reconnect V2453A, install the APK, then run one continuous MPV session and one continuous Exo session with per-file completion evidence for every requested fixture.
+
+## Checkpoint 2026-09-03 14:15 CST: build complete, device unavailable
+
+- `scripts/build_mpv_native.sh --abi all --install` completed successfully; arm64-v8a and armeabi-v7a `libmpv.so` assets were regenerated from the locked MPV/FFmpeg source and patched stack.
+- `scripts/verify_mpv_native_assets.sh --require-elf` passed for the stable native asset contract.
+- `bash ./gradlew :app:assembleMobileArm64_v8aDebug --no-daemon` passed (`BUILD SUCCESSFUL`, 103 tasks); APK SHA-256 is `6b1139c49540a52a699616343aa71811fd1eb2cf2ad11380cf0122e69ab3ba07`.
+- Device checks at 14:08-14:15 CST: `adb devices -l`, ADB restart, `adb mdns services`, and `system_profiler SPUSBDataType` found no V2453A endpoint. No install or runtime mutation was attempted after disconnect.
+- Exo ALAC/AV3A source fixes remain covered by the committed E12-1/E12-2/E12-3 implementation and focused tests; no new Exo source change is required in this MPV task.
+- Required per-file phone playback matrix is unverified and must not be reported as pass. The task remains open until the phone is reachable and each file reaches `audio-playable`, `first-frame`, or a terminal error with captured logs.
+- Post-build patch integrity: `scripts/build_mpv_native.sh --abi arm64-v8a --prepare-only --incremental --work-dir build/mpv-native` passed after the hunk-format correction; `git -C build/mpv-native/mpv-android/buildscripts/deps/mpv apply --check --recount` and `git diff --check` both pass. The correction only changes nested patch blank-line encoding and does not alter compiled code or native asset contents.
+
+## Device test library and fixed paths
+
+The canonical device root is `/storage/emulated/0/Download/影音测试库/`. Do not rediscover or rename these fixtures in later device runs.
+
+- MPV AAC: every file under `/storage/emulated/0/Download/影音测试库/A01_AAC/`:
+  `AAC_LC_2.0_48kHz.mp4`, `AAC_HE_V1_2.0_44.1kHz.aac`, `AAC_HE_V2_2.0_44.1kHz.aac`, `AAC_5.1_声道.mp4`, `AAC_7.1_声道.mp4`.
+- MPV/Exo AV3A: every file under `/storage/emulated/0/Download/影音测试库/A09_AVS3A/`. The `.mpd` files are playback entries; `.cmfa`/`.mp4` companions are also exercised directly for decoder/container isolation. The directory contains the 2.0, 5.1 and 7.1.4 CMAF/DASH/TS fixtures plus `AVS3_4K50_CMAF.cmfv` and `AVS3_4K50_DASH.mp4`.
+- MPV MP3: `/storage/emulated/0/Download/影音测试库/A11_MP3/MP3_2.0_44.1kHz_128kbps.mp3`.
+- Exo ALAC: `/storage/emulated/0/Download/影音测试库/A12_ALAC/ALAC_2.0_48kHz.mov` and `/storage/emulated/0/Download/影音测试库/A12_ALAC/ALAC_5.1_48kHz.mov`.
+
+## Checkpoint 2026-09-03 11:14 CST: deadline device matrix
+
+- Device: vivo V2453A, serial `10CF6H1D2L0009S`.
+- Installed candidate: `app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk`, SHA-256 `80a13a3324587407ef3f304c15a1b79bc34b379ba17c217cd83b29b247028f1c`.
+- Raw evidence root: `/private/tmp/webhtv-p3-5-deadline2/`.
+- Exact issued paths are recorded in `/private/tmp/webhtv-p3-5-deadline2/mpv.paths` (23 entries) and `/private/tmp/webhtv-p3-5-deadline2/exo.paths` (19 entries). Raw application logs, logcat and AudioFlinger dumps are the corresponding `mpv.*` and `exo.*` files in that directory.
+- The final matrix used one player-process start per intended kernel and continuous `ACTION_VIEW` source replacement inside that session. Earlier `/private/tmp/webhtv-p3-5-deadline/` evidence used an invalid per-file process restart and must not be used for lifecycle or source-switch acceptance.
+- Confirmed MPV defect: AV3A 7.1.4 reaches AudioTrack creation, then FFmpeg reports `Rematrix is needed between 9 channels and 7 channels (FL+FR+FC+LFE+BL+BR+FLC) but there is not enough information to do it`; mpv follows with `Cannot open Libavresample context` and `libswresample failed to initialize`. This is a channel-layout/output-map bug, not a generic decoder capability failure.
+- MPD entry limitation remains visible: some local DASH manifests report failure to open the first fragment and `unknown_format`; direct companion media results must not be conflated with MPD entry results.
+- Exo result is invalid: the external preference rewrite used for the deadline batch did not switch the running kernel, and the captured `exo.logcat` identifies `kernel=mpv`/`start mpv`. Therefore no Exo AV3A/ALAC pass or fail is claimed from this batch.
+- The 0.35-second dwell was sufficient to expose initialization failures but not sufficient to claim audible playback for every successfully opened file. A later acceptance run must wait for a per-file `audio-playable`/`first-frame` or a terminal error before advancing.
+- Device ADB disconnected after evidence capture. No further device mutation was attempted.
+- Next action: inspect and correct the AV3A 9-channel-to-device-output channel map in the MPV FFmpeg/mpv path before rebuilding; after installation, switch kernels through the App-supported runtime path or verify the loaded kernel before starting the Exo batch.
+
+## Checkpoint 2026-09-03 05:54 CST
+
+- V2453A command-line playback reproduced the AAC failure after compressed AudioTrack initialization was rejected: `ao/audiotrack` reported unsupported offload/direct creation, then OpenSLES treated the encoded frame as float and swresample failed with `unsupported conversion: aac -> float`.
+- Root cause is localized to the OpenSLES fallback boundary: OpenSLES only accepts PCM, but its existing non-integer branch unconditionally rewrites unknown formats to `AF_FORMAT_FLOAT`.
+- Updated `third_party/patches/mpv-audiotrack-compressed-audio.patch` to reject `af_fmt_is_encoded()` at `ao_opensles:init()` and return `-1`; MPV's existing compressed-output recovery can then rebuild the same track as PCM instead of attempting an encoded-to-float conversion.
+- No changes were made to Exo, MPV AV3A MIME mapping, IEC61937 passthrough, or protected pre-existing dirty paths.
+- Next action: validate patch application and rebuild both native ABIs, then build/install the APK and run every file in `A01_AAC`, `A09_AVS3A`, `A11_MP3`, and `A12_ALAC` through the Exo/MPV command-line playback matrix.
 
 ## Checkpoint 2026-09-02 20:14 CST
 
