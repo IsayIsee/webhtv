@@ -4,9 +4,9 @@
 
 - 目标：把 Exo、MPV、IJK 的音频诊断统一为“六级决策 + 独立运行时状态”，先不改变播放器的选轨、解码器或 AudioTrack 回退行为。
 - 范围：`AudioPlaybackDiagnostics`、Exo/MPV/IJK 诊断接线、播放参数展示和聚焦 JVM 测试；本阶段不改 Media3/nextlib AAR、FFmpeg、MPV native、锁文件或用户选轨规则。
-- 状态：**已批准并完成代码实施，待 guard 原子收尾**。
+- 状态：**已完成并提交**。
 - 回滚锚点：`43fba18a8d074268c26a6ddbd30fe348324732a0`（实施前 HEAD）。
-- 下一动作：执行 `task_guard.sh finish`，生成 C4 实施提交与恢复 tag；随后记录其完整 ID。
+- 下一动作：无；后续仅需按既有验收计划做真实设备观察，不扩大 C4 范围。
 
 ## 任务信息
 
@@ -154,8 +154,11 @@
 - 失败修正：首次编译发现嵌套 record 未限定外部静态方法，已直接修正后同一聚焦单测通过。
 - 未执行：真实 V2453A 冒烟；本阶段只统一诊断契约，不新增播放能力，设备验证保留为后续观察项。
 - 当前工作区：`feature/mpv-audio-fallback-policy`；guard 基线 `43fba18a8d074268c26a6ddbd30fe348324732a0`；`.gitignore`、`AGENTS.md`、`app/.cxx/`、`docs/音频DSP整合方案.md` 为保护的既有脏路径。
-- 回滚：对即将生成的 C4 实施提交执行 `git revert <C4-commit>`，不涉及 native/AAR/锁文件。
-- 下一动作：运行 `task_guard.sh finish`，随后记录提交 ID、恢复 tag 和最终状态。
+- 实施提交：`0a31951e3c923154b2ef8218d1a3811a96fa446b`。
+- 恢复 tag：`recovery/C4/20260904155551-0a31951e3c92`。
+- 回滚：对实施提交执行 `git revert 0a31951e3c923154b2ef8218d1a3811a96fa446b`，不涉及 native/AAR/锁文件。
+- 最终状态：代码、测试和文档已由 guard 原子提交；保护的既有脏路径未纳入提交。
+- 下一动作：无；若后续设备观察发现状态映射问题，追加到本任务文档并另开修正 guard。
 
 ## 验收标准
 
@@ -169,7 +172,7 @@
 
 ## 验证计划
 
-批准实施后，按一次性聚焦顺序执行：
+本阶段已按一次性聚焦顺序执行：
 
 ```text
 bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest \
@@ -191,9 +194,9 @@ bash ./gradlew :app:compileMobileArm64_v8aDebugJavaWithJavac --no-daemon
 
 ## 决策记录
 
-- 推荐：**实施 WebHTV 窄适配，但等待用户明确批准。**
+- 推荐：**实施 WebHTV 窄适配，已完成。**
 - 置信度：高（平台/Media3/mpv 的事实边界一致，当前代码已有足够观测点）。
-- 未解决问题：真实设备在 AudioTrack 创建失败与 Exo 自动重启之间的瞬时窗口，需要实施后用一次手机冒烟确认 `PENDING -> FAILED/ACTIVE` 顺序；该不确定性不影响先冻结模型。
+- 未解决问题：真实设备在 AudioTrack 创建失败与 Exo 自动重启之间的瞬时窗口尚未做专项冒烟；这不影响本阶段 JVM/编译验收，后续观察不得改变已提交的播放策略。
 
 ## Checkpoint 1：评估文档闭环（2026-09-04 14:48 CST）
 
