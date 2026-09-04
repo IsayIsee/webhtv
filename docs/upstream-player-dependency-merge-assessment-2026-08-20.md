@@ -54,6 +54,7 @@
 | 29 | `E12` | Exo | ALAC/MP3/AV3A 解码兼容性与 MP4/CMAF 音轨可达性 | **研究完成，实施拆分为 E12-1**：nextlib native AAR 已含 ALAC/MP3/AV3A 与 FFmpeg 7 channel-layout 修复；锁定 Media3 extractor 缺少 MP4 `av3a` sample-entry 分支，另需验证 ALAC/MP3 PCM 输出契约 | [E12-exo-audio-codec-compat.md](E12-exo-audio-codec-compat.md) |
 | 30 | `P3-6` | MPV | MP3/AV3A 音轨 MIME 与主轨诊断兼容性 | **实施中**：MP3 保持 `audio/mpeg` 与封面流过滤；补齐 MPV AV3A 到 `audio/av3a` 的轨道映射，沿用 FFmpeg `libarcdav3a` 软件解码，不伪造不存在的 MediaCodec 硬解 | [P3-6-mpv-audio-codec-compat.md](P3-6-mpv-audio-codec-compat.md) |
 | 31 | `P3-7` | MPV | AV3A 未知 9 声道到 stereo 的安全下混 | **实施中**：只在未知多声道输入到 stereo 时设置显式 `swr_set_matrix()`；保留已知布局、AAC/MP3 和 IEC61937 行为。AVS3 视频 decoder 另行评估，不并入本阶段 | [P3-7-mpv-av3a-channel-layout.md](P3-7-mpv-av3a-channel-layout.md) |
+| 32 | `C4` | 通用 | 六级音频决策与运行时诊断契约 | **决策文档完成，待用户批准**：只统一 `DecisionLevel`/`RuntimeState`/失败原因映射，不改变 Exo/MPV 选轨、解码或 AudioTrack 回退行为 | [C4-common-audio-policy-contract.md](C4-common-audio-policy-contract.md) |
 
 `C1` 是跨播放器真实输入验收维度，不单独形成代码任务或文档；它写入对应的 E/P 任务文档。`E-SP3` 已在 `fongmi-sync` 完成 App/Media3 合并，保留既有 `E4-J1`/`E6-1`/`E7-1`/`E7-2 + C3` 能力；`E9-3` 与已完成的 `P1` 现已共同进入集成树，后续按既定顺序处理 P2 阶段。
 
