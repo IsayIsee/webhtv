@@ -4,15 +4,15 @@
 
 - 目标：把 Exo、MPV、IJK 的音频诊断统一为“六级决策 + 独立运行时状态”，先不改变播放器的选轨、解码器或 AudioTrack 回退行为。
 - 范围：`AudioPlaybackDiagnostics`、Exo/MPV/IJK 诊断接线、播放参数展示和聚焦 JVM 测试；本阶段不改 Media3/nextlib AAR、FFmpeg、MPV native、锁文件或用户选轨规则。
-- 状态：决策文档已完成，等待用户批准后才进入代码阶段。
-- 回滚锚点：`80e313830824f2e86d341079b58c330726de3e99`。
-- 下一动作：用户确认后启动 C4 upstream 实施 guard；若不批准，保留本文和评估结论，不修改运行时。
+- 状态：**已批准并完成代码实施，待 guard 原子收尾**。
+- 回滚锚点：`43fba18a8d074268c26a6ddbd30fe348324732a0`（实施前 HEAD）。
+- 下一动作：执行 `task_guard.sh finish`，生成 C4 实施提交与恢复 tag；随后记录其完整 ID。
 
 ## 任务信息
 
 - 任务 ID：`C4`
 - 分类：通用 App 音频契约
-- 用户决定：**待批准**
+- 用户决定：**实施**（用户于 2026-09-04 明确批准 `开始实施 C4`）
 - 决策问题：如何在不改变现有播放器行为的前提下，让“解码待确认/输出待确认”能够区分尚未初始化、已激活和已失败，并让 Exo、MPV、IJK 使用同一套可解释的六级策略语义？
 - 当前假设：当前实现已经能报告部分实际输出，但 `UNKNOWN` 同时表示缺少轨道、尚未创建 AudioTrack、等待 mpv 运行时属性、以及失败后没有可用输出；这会让诊断面板无法区分等待和失败。
 - 反假设：仅增加日志或继续沿用字符串 `downgradeReason` 就足以解释所有状态；若外部规范证明运行时事件不能稳定映射到统一模型，则本阶段应退回只做文档规范。
@@ -130,6 +130,32 @@
 - Exo/MPV 选轨算法、`ExoCompressedAudioDirectPolicy`、`MpvDirectAudioPolicy` 的行为变更；
 - `third_party/sources/media/**`、`third_party/nextlib`、FFmpeg/MPV native、AAR、锁文件、设置项和网络协议；
 - AVS3 视频解码、AV3A 新 decoder、DSP 效果链和物理功放/扬声器路由控制。
+
+## 实施记录
+
+- `AudioPlaybackDiagnostics.Snapshot` 保留原 9 参数构造器；新增 `DecisionLevel`、`RuntimeState`、`FailureReason` 字段及稳定 code 映射。
+- Exo 只在 `AudioOutputSnapshot` 已初始化时报告 `ACTIVE`；AudioTrack/音频 renderer 最终错误报告 `FAILED`，其余已知音轨但无输出事实报告 `PENDING`。
+- MPV 继续将 `audio-params/*` 视为 decoder 侧事实，只用 `audio-out-params/*` 填充实际输出声道/采样率；最终音频相关错误报告 `FAILED`。
+- IJK 使用已有 `ErrorSnapshot` 的 component/prepared 阶段判定 decoder 初始化/运行时失败，不虚构最终 AudioTrack 声道布局。
+- 未改选轨、解码器选择、AudioTrack 回退、native 依赖、AAR、锁文件或设置行为。
+- 变更文件：
+  - `app/src/main/java/com/fongmi/android/tv/player/AudioPlaybackDiagnostics.java`
+  - `app/src/main/java/com/fongmi/android/tv/player/engine/ExoPlayerEngine.java`
+  - `app/src/main/java/androidx/media3/mpvplayer/MpvPlayer.java`
+  - `app/src/main/java/com/fongmi/android/tv/player/engine/IjkPlayerEngine.java`
+  - `app/src/test/java/com/fongmi/android/tv/player/AudioPlaybackDiagnosticsTest.java`
+
+## Checkpoint 2：代码实施与聚焦验证（2026-09-04 15:12 CST）
+
+- 完成：C4 公共诊断模型、Exo/MPV/IJK 事实映射和 JVM 回归测试。
+- 验证：
+  - `bash ./gradlew :app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.AudioPlaybackDiagnosticsTest --tests com.fongmi.android.tv.player.exo.ExoPlaybackDiagnosticsTest --tests com.fongmi.android.tv.player.mpv.MpvDirectAudioPolicyTest --no-daemon` 通过。
+  - `bash ./gradlew :app:compileMobileArm64_v8aDebugJavaWithJavac --no-daemon` 通过。
+- 失败修正：首次编译发现嵌套 record 未限定外部静态方法，已直接修正后同一聚焦单测通过。
+- 未执行：真实 V2453A 冒烟；本阶段只统一诊断契约，不新增播放能力，设备验证保留为后续观察项。
+- 当前工作区：`feature/mpv-audio-fallback-policy`；guard 基线 `43fba18a8d074268c26a6ddbd30fe348324732a0`；`.gitignore`、`AGENTS.md`、`app/.cxx/`、`docs/音频DSP整合方案.md` 为保护的既有脏路径。
+- 回滚：对即将生成的 C4 实施提交执行 `git revert <C4-commit>`，不涉及 native/AAR/锁文件。
+- 下一动作：运行 `task_guard.sh finish`，随后记录提交 ID、恢复 tag 和最终状态。
 
 ## 验收标准
 

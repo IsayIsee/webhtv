@@ -1,6 +1,7 @@
 package com.fongmi.android.tv.player;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import org.junit.Test;
 
@@ -81,6 +82,72 @@ public class AudioPlaybackDiagnosticsTest {
         assertEquals("2.0", AudioPlaybackDiagnostics.channelLabel(2));
         assertEquals("5.1", AudioPlaybackDiagnostics.channelLabel(6));
         assertEquals("7.1", AudioPlaybackDiagnostics.channelLabel(8));
+    }
+
+    @Test
+    public void separatesRuntimeStatesFromDecisionLevels() {
+        AudioPlaybackDiagnostics.Snapshot empty = AudioPlaybackDiagnostics.Snapshot.empty();
+        assertEquals(AudioPlaybackDiagnostics.RuntimeState.UNKNOWN, empty.runtimeState());
+        assertNull(empty.decisionLevel());
+
+        AudioPlaybackDiagnostics.Track aac = track("AAC", 2, 48_000, 192_000);
+        AudioPlaybackDiagnostics.Snapshot pending = new AudioPlaybackDiagnostics.Snapshot(
+                aac, aac, AudioPlaybackDiagnostics.DecodeMode.UNKNOWN, "",
+                AudioPlaybackDiagnostics.OutputMode.UNKNOWN, 0, 0, false, "");
+        assertEquals(AudioPlaybackDiagnostics.RuntimeState.PENDING, pending.runtimeState());
+        assertNull(pending.decisionLevel());
+        assertEquals("AAC 2.0 · 输出初始化中 · 48kHz · 192kbps",
+                AudioPlaybackDiagnostics.format(pending));
+
+        AudioPlaybackDiagnostics.Snapshot active = new AudioPlaybackDiagnostics.Snapshot(
+                aac, aac, AudioPlaybackDiagnostics.DecodeMode.HARDWARE,
+                "c2.vendor.aac.decoder", AudioPlaybackDiagnostics.OutputMode.PCM,
+                2, 48_000, false, "");
+        assertEquals(AudioPlaybackDiagnostics.RuntimeState.ACTIVE, active.runtimeState());
+        assertEquals(AudioPlaybackDiagnostics.DecisionLevel.HARDWARE_PCM,
+                active.decisionLevel());
+
+        AudioPlaybackDiagnostics.Snapshot failed = new AudioPlaybackDiagnostics.Snapshot(
+                aac, aac, AudioPlaybackDiagnostics.DecodeMode.HARDWARE,
+                "c2.vendor.aac.decoder", AudioPlaybackDiagnostics.OutputMode.UNKNOWN,
+                0, 0, false, "",
+                AudioPlaybackDiagnostics.DecisionLevel.HARDWARE_PCM,
+                AudioPlaybackDiagnostics.RuntimeState.FAILED,
+                AudioPlaybackDiagnostics.FailureReason.DECODER_INIT);
+        assertEquals("AAC 2.0 · 输出失败 · decoder-init · 48kHz · 192kbps",
+                AudioPlaybackDiagnostics.format(failed));
+    }
+
+    @Test
+    public void mapsDecisionAndStableFailureCodes() {
+        assertEquals(AudioPlaybackDiagnostics.DecisionLevel.EXACT_PASSTHROUGH,
+                AudioPlaybackDiagnostics.decisionLevel(
+                        AudioPlaybackDiagnostics.OutputMode.COMPRESSED_DIRECT,
+                        AudioPlaybackDiagnostics.DecodeMode.NONE, ""));
+        assertEquals(AudioPlaybackDiagnostics.DecisionLevel.COMPRESSED_OFFLOAD,
+                AudioPlaybackDiagnostics.decisionLevel(
+                        AudioPlaybackDiagnostics.OutputMode.OFFLOAD,
+                        AudioPlaybackDiagnostics.DecodeMode.NONE, ""));
+        assertEquals(AudioPlaybackDiagnostics.DecisionLevel.SAME_TRACK_COMPATIBLE,
+                AudioPlaybackDiagnostics.decisionLevel(
+                        AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH,
+                        AudioPlaybackDiagnostics.DecodeMode.NONE, "dts-hd-core"));
+        assertEquals(AudioPlaybackDiagnostics.DecisionLevel.LANGUAGE_OR_STEREO_FALLBACK,
+                AudioPlaybackDiagnostics.decisionLevel(
+                        AudioPlaybackDiagnostics.OutputMode.PCM,
+                        AudioPlaybackDiagnostics.DecodeMode.SOFTWARE,
+                        "same-language-stereo"));
+        assertEquals(AudioPlaybackDiagnostics.FailureReason.DIRECT_OUTPUT_INIT,
+                AudioPlaybackDiagnostics.failureReason(
+                        androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED));
+        assertEquals(AudioPlaybackDiagnostics.FailureReason.OFFLOAD_WRITE,
+                AudioPlaybackDiagnostics.failureReason(
+                        androidx.media3.common.PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED));
+        assertEquals(AudioPlaybackDiagnostics.FailureReason.DECODER_RUNTIME,
+                AudioPlaybackDiagnostics.failureReason(
+                        androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED));
+        assertEquals(AudioPlaybackDiagnostics.FailureReason.UNKNOWN,
+                AudioPlaybackDiagnostics.failureReason(123456));
     }
 
     private static AudioPlaybackDiagnostics.Track track(

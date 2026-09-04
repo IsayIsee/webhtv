@@ -230,6 +230,20 @@ public class IjkPlayerEngine implements PlayerEngine {
                 || decoderName.isBlank()
                 ? AudioPlaybackDiagnostics.OutputMode.UNKNOWN
                 : AudioPlaybackDiagnostics.OutputMode.PCM;
+        ErrorSnapshot error = player.getLastErrorSnapshot();
+        boolean decoderFailed = error != null
+                && error.stage() != null
+                && error.stage().ordinal() >= OpenStage.COMPONENT_OPENED.ordinal();
+        if (decoderFailed) {
+            AudioPlaybackDiagnostics.FailureReason failureReason = error.prepared()
+                    ? AudioPlaybackDiagnostics.FailureReason.DECODER_RUNTIME
+                    : AudioPlaybackDiagnostics.FailureReason.DECODER_INIT;
+            return new AudioPlaybackDiagnostics.Snapshot(track, track, decodeMode,
+                    decoderName, outputMode, 0, 0, false, "",
+                    AudioPlaybackDiagnostics.lastAttemptLevel(
+                            failureReason, outputMode, decodeMode),
+                    AudioPlaybackDiagnostics.RuntimeState.FAILED, failureReason);
+        }
         return new AudioPlaybackDiagnostics.Snapshot(track, track, decodeMode,
                 decoderName, outputMode, 0, 0, false, "");
     }

@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.Timeline;
 import androidx.media3.common.Tracks;
+import androidx.media3.exoplayer.ExoPlaybackException;
 import androidx.media3.exoplayer.ExoPlayer;
 
 import com.fongmi.android.tv.App;
@@ -642,10 +643,27 @@ public class ExoPlayerEngine implements PlayerEngine {
                 currentAnalyticsSession
                         ? PlaybackAnalyticsListener.getAudioOutputSnapshot()
                         : PlaybackAnalyticsListener.AudioOutputSnapshot.empty();
+        String decoderName = currentAnalyticsSession
+                ? analytics.audioDecoderName() : "";
+        PlaybackException error = player == null ? null : player.getPlayerError();
+        if (isAudioDiagnosticsFailure(error, selected)) {
+            AudioPlaybackDiagnostics.FailureReason failureReason =
+                    AudioPlaybackDiagnostics.failureReason(error.errorCode);
+            AudioPlaybackDiagnostics.DecodeMode attemptedDecode = audioDecodeMode(
+                    original, decoderName);
+            AudioPlaybackDiagnostics.OutputMode attemptedOutput = output.offload()
+                    ? AudioPlaybackDiagnostics.OutputMode.OFFLOAD
+                    : AudioPlaybackDiagnostics.OutputMode.UNKNOWN;
+            return new AudioPlaybackDiagnostics.Snapshot(original, original,
+                    attemptedDecode, decoderName, attemptedOutput, 0, 0, false,
+                    "", AudioPlaybackDiagnostics.lastAttemptLevel(
+                            failureReason, attemptedOutput, attemptedDecode),
+                    AudioPlaybackDiagnostics.RuntimeState.FAILED, failureReason);
+        }
         if (!output.initialized()) {
             return new AudioPlaybackDiagnostics.Snapshot(original, original,
                     AudioPlaybackDiagnostics.DecodeMode.UNKNOWN,
-                    currentAnalyticsSession ? analytics.audioDecoderName() : "",
+                    decoderName,
                     AudioPlaybackDiagnostics.OutputMode.UNKNOWN,
                     0, 0, false, "");
         }
@@ -660,8 +678,6 @@ public class ExoPlayerEngine implements PlayerEngine {
                 : AudioPlaybackDiagnostics.encodedTrack(original, output.encoding());
         String reason = isDtsCoreDowngrade(original, active)
                 ? "dts-hd-core" : "";
-        String decoderName = currentAnalyticsSession
-                ? analytics.audioDecoderName() : "";
         AudioPlaybackDiagnostics.DecodeMode decodeMode = outputMode
                 == AudioPlaybackDiagnostics.OutputMode.PCM
                 ? audioDecodeMode(active, decoderName)
@@ -669,6 +685,26 @@ public class ExoPlayerEngine implements PlayerEngine {
         return new AudioPlaybackDiagnostics.Snapshot(original, active,
                 decodeMode, decoderName, outputMode, output.channels(),
                 output.sampleRate(), output.tunneling(), reason);
+    }
+
+    private boolean isAudioDiagnosticsFailure(PlaybackException error, Format selectedAudio) {
+        if (error == null) return false;
+        if (isAudioOutputFailure(error)) return true;
+        AudioPlaybackDiagnostics.FailureReason reason =
+                AudioPlaybackDiagnostics.failureReason(error.errorCode);
+        if (reason != AudioPlaybackDiagnostics.FailureReason.DECODER_INIT
+                && reason != AudioPlaybackDiagnostics.FailureReason.DECODER_RUNTIME) {
+            return false;
+        }
+        if (error instanceof ExoPlaybackException exoError
+                && exoError.type == ExoPlaybackException.TYPE_RENDERER) {
+            if (exoError.rendererFormat != null) {
+                return MimeTypes.isAudio(exoError.rendererFormat.sampleMimeType);
+            }
+            return TrackUtil.explicitlySelectedFormat(
+                    getCurrentTracks(), C.TRACK_TYPE_VIDEO) == null;
+        }
+        return selectedAudio != null && MimeTypes.isAudio(selectedAudio.sampleMimeType);
     }
 
     @Override

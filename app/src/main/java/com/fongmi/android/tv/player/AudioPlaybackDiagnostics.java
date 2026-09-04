@@ -2,6 +2,7 @@ package com.fongmi.android.tv.player;
 
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
+import androidx.media3.common.PlaybackException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +26,49 @@ public final class AudioPlaybackDiagnostics {
         COMPRESSED_DIRECT,
         OFFLOAD,
         UNKNOWN
+    }
+
+    /** The strategy actually selected for the current audio path. */
+    public enum DecisionLevel {
+        EXACT_PASSTHROUGH,
+        COMPRESSED_OFFLOAD,
+        HARDWARE_PCM,
+        SAME_TRACK_COMPATIBLE,
+        SOFTWARE_PCM,
+        LANGUAGE_OR_STEREO_FALLBACK
+    }
+
+    public enum RuntimeState {
+        UNKNOWN,
+        PENDING,
+        ACTIVE,
+        FAILED
+    }
+
+    /** Stable diagnostic codes. Do not expose exception class names as protocol values. */
+    public enum FailureReason {
+        NONE(""),
+        UNKNOWN("unknown"),
+        DIRECT_OUTPUT_INIT("direct-output-init"),
+        DIRECT_OUTPUT_WRITE("direct-output-write"),
+        OFFLOAD_INIT("offload-init"),
+        OFFLOAD_WRITE("offload-write"),
+        DECODER_INIT("decoder-init"),
+        DECODER_RUNTIME("decoder-runtime"),
+        CHANNEL_LAYOUT_UNSUPPORTED("channel-layout-unsupported"),
+        SAME_TRACK_COMPATIBLE("same-track-compatible"),
+        SAME_LANGUAGE_STEREO("same-language-stereo"),
+        MANUAL_TRACK_SELECTION("manual-track-selection");
+
+        private final String code;
+
+        FailureReason(String code) {
+            this.code = code;
+        }
+
+        public String code() {
+            return code;
+        }
     }
 
     public record Track(String codec, int channels, int sampleRate,
@@ -55,7 +99,22 @@ public final class AudioPlaybackDiagnostics {
                            DecodeMode decodeMode, String decoderName,
                            OutputMode outputMode, int outputChannels,
                            int outputSampleRate, boolean tunneling,
-                           String downgradeReason) {
+                           String downgradeReason, DecisionLevel decisionLevel,
+                           RuntimeState runtimeState, FailureReason failureReason) {
+
+        public Snapshot(Track originalTrack, Track activeTrack,
+                        DecodeMode decodeMode, String decoderName,
+                        OutputMode outputMode, int outputChannels,
+                        int outputSampleRate, boolean tunneling,
+                        String downgradeReason) {
+            this(originalTrack, activeTrack, decodeMode, decoderName, outputMode,
+                    outputChannels, outputSampleRate, tunneling, downgradeReason,
+                    AudioPlaybackDiagnostics.decisionLevel(
+                            outputMode, decodeMode, downgradeReason),
+                    AudioPlaybackDiagnostics.runtimeState(
+                            originalTrack, activeTrack, outputMode, false),
+                    AudioPlaybackDiagnostics.failureReason(downgradeReason));
+        }
 
         public Snapshot {
             originalTrack = originalTrack == null ? Track.empty() : originalTrack;
@@ -66,11 +125,23 @@ public final class AudioPlaybackDiagnostics {
             outputChannels = Math.max(0, outputChannels);
             outputSampleRate = Math.max(0, outputSampleRate);
             downgradeReason = clean(downgradeReason);
+            decisionLevel = decisionLevel == null
+                    ? AudioPlaybackDiagnostics.decisionLevel(
+                            outputMode, decodeMode, downgradeReason)
+                    : decisionLevel;
+            runtimeState = runtimeState == null
+                    ? AudioPlaybackDiagnostics.runtimeState(
+                            originalTrack, activeTrack, outputMode, false)
+                    : runtimeState;
+            failureReason = failureReason == null
+                    ? AudioPlaybackDiagnostics.failureReason(downgradeReason)
+                    : failureReason;
         }
 
         public boolean available() {
             return originalTrack.available() || activeTrack.available()
-                    || outputMode != OutputMode.UNKNOWN;
+                    || outputMode != OutputMode.UNKNOWN
+                    || runtimeState != RuntimeState.UNKNOWN;
         }
 
         public boolean downgraded() {
@@ -80,8 +151,95 @@ public final class AudioPlaybackDiagnostics {
 
         public static Snapshot empty() {
             return new Snapshot(Track.empty(), Track.empty(), DecodeMode.UNKNOWN,
-                    "", OutputMode.UNKNOWN, 0, 0, false, "");
+                    "", OutputMode.UNKNOWN, 0, 0, false, "", null,
+                    RuntimeState.UNKNOWN, FailureReason.NONE);
         }
+    }
+
+    public static RuntimeState runtimeState(Track originalTrack, Track activeTrack,
+                                            OutputMode outputMode, boolean failed) {
+        if (failed) return RuntimeState.FAILED;
+        boolean trackKnown = (originalTrack != null && originalTrack.available())
+                || (activeTrack != null && activeTrack.available());
+        if (!trackKnown) return RuntimeState.UNKNOWN;
+        return outputMode == null || outputMode == OutputMode.UNKNOWN
+                ? RuntimeState.PENDING : RuntimeState.ACTIVE;
+    }
+
+    public static DecisionLevel decisionLevel(OutputMode outputMode,
+                                              DecodeMode decodeMode,
+                                              String downgradeReason) {
+        FailureReason reason = failureReason(downgradeReason);
+        if (reason == FailureReason.SAME_TRACK_COMPATIBLE) {
+            return DecisionLevel.SAME_TRACK_COMPATIBLE;
+        }
+        if (reason == FailureReason.SAME_LANGUAGE_STEREO) {
+            return DecisionLevel.LANGUAGE_OR_STEREO_FALLBACK;
+        }
+        OutputMode mode = outputMode == null ? OutputMode.UNKNOWN : outputMode;
+        return switch (mode) {
+            case PASSTHROUGH, COMPRESSED_DIRECT -> DecisionLevel.EXACT_PASSTHROUGH;
+            case OFFLOAD -> DecisionLevel.COMPRESSED_OFFLOAD;
+            case PCM -> decodeMode == DecodeMode.HARDWARE
+                    ? DecisionLevel.HARDWARE_PCM : DecisionLevel.SOFTWARE_PCM;
+            case UNKNOWN -> null;
+        };
+    }
+
+    public static DecisionLevel lastAttemptLevel(FailureReason failureReason,
+                                                 OutputMode outputMode,
+                                                 DecodeMode decodeMode) {
+        FailureReason reason = failureReason == null ? FailureReason.UNKNOWN
+                : failureReason;
+        return switch (reason) {
+            case OFFLOAD_INIT, OFFLOAD_WRITE -> DecisionLevel.COMPRESSED_OFFLOAD;
+            case DIRECT_OUTPUT_INIT, DIRECT_OUTPUT_WRITE -> DecisionLevel.EXACT_PASSTHROUGH;
+            case DECODER_INIT, DECODER_RUNTIME, CHANNEL_LAYOUT_UNSUPPORTED ->
+                    decodeMode == DecodeMode.HARDWARE
+                            ? DecisionLevel.HARDWARE_PCM : DecisionLevel.SOFTWARE_PCM;
+            case SAME_TRACK_COMPATIBLE -> DecisionLevel.SAME_TRACK_COMPATIBLE;
+            case SAME_LANGUAGE_STEREO -> DecisionLevel.LANGUAGE_OR_STEREO_FALLBACK;
+            case MANUAL_TRACK_SELECTION, NONE, UNKNOWN ->
+                    decisionLevel(outputMode, decodeMode, "");
+        };
+    }
+
+    public static FailureReason failureReason(String value) {
+        String reason = lower(value);
+        if (reason.isEmpty()) return FailureReason.NONE;
+        if (reason.contains("dts-hd-core") || reason.contains("same-track-compatible")) {
+            return FailureReason.SAME_TRACK_COMPATIBLE;
+        }
+        if (reason.contains("same-language-stereo")
+                || reason.contains("same-language-efficient")) {
+            return FailureReason.SAME_LANGUAGE_STEREO;
+        }
+        for (FailureReason candidate : FailureReason.values()) {
+            if (!candidate.code.isEmpty() && candidate.code.equals(reason)) return candidate;
+        }
+        return FailureReason.UNKNOWN;
+    }
+
+    public static FailureReason failureReason(int errorCode) {
+        return switch (errorCode) {
+            case PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ->
+                    FailureReason.DIRECT_OUTPUT_INIT;
+            case PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED ->
+                    FailureReason.DIRECT_OUTPUT_WRITE;
+            case PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_INIT_FAILED ->
+                    FailureReason.OFFLOAD_INIT;
+            case PlaybackException.ERROR_CODE_AUDIO_TRACK_OFFLOAD_WRITE_FAILED ->
+                    FailureReason.OFFLOAD_WRITE;
+            case PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+                    PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED ->
+                    FailureReason.DECODER_INIT;
+            case PlaybackException.ERROR_CODE_DECODING_FAILED,
+                    PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+                    PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED,
+                    PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
+                    FailureReason.DECODER_RUNTIME;
+            default -> FailureReason.UNKNOWN;
+        };
     }
 
     public static Track track(Format format, String profile) {
@@ -158,7 +316,12 @@ public final class AudioPlaybackDiagnostics {
         }
         List<String> parts = new ArrayList<>();
         add(parts, track);
-        switch (snapshot.outputMode()) {
+        if (snapshot.runtimeState() == RuntimeState.FAILED) {
+            add(parts, "输出失败");
+            add(parts, snapshot.failureReason().code());
+        } else if (snapshot.runtimeState() == RuntimeState.PENDING) {
+            add(parts, "输出初始化中");
+        } else switch (snapshot.outputMode()) {
             case PASSTHROUGH -> add(parts, "直通");
             case COMPRESSED_DIRECT -> {
                 add(parts, "硬解");

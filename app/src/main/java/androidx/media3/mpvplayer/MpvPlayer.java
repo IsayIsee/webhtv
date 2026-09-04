@@ -1907,6 +1907,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 active = passthrough;
             }
         }
+        int outputChannels = cachedAudioOutChannels;
+        int outputSampleRate = cachedAudioOutSampleRate;
         AudioPlaybackDiagnostics.DecodeMode decodeMode =
                 outputMode == AudioPlaybackDiagnostics.OutputMode.PASSTHROUGH
                         ? AudioPlaybackDiagnostics.DecodeMode.NONE
@@ -1915,13 +1917,38 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                         : outputMode == AudioPlaybackDiagnostics.OutputMode.PCM
                         ? mpvAudioDecodeMode(cachedAudioDecoder)
                         : AudioPlaybackDiagnostics.DecodeMode.UNKNOWN;
-        int outputChannels = cachedAudioOutChannels > 0
-                ? cachedAudioOutChannels : cachedAudioChannels;
-        int outputSampleRate = cachedAudioOutSampleRate > 0
-                ? cachedAudioOutSampleRate : cachedAudioSampleRate;
+        if (isAudioDiagnosticsFailure(current)) {
+            AudioPlaybackDiagnostics.FailureReason failureReason =
+                    AudioPlaybackDiagnostics.failureReason(playerError.errorCode);
+            AudioPlaybackDiagnostics.DecodeMode attemptedDecode =
+                    cachedAudioDecoder == null || cachedAudioDecoder.isBlank()
+                            ? decodeMode : mpvAudioDecodeMode(cachedAudioDecoder);
+            return new AudioPlaybackDiagnostics.Snapshot(original, active,
+                    attemptedDecode, cachedAudioDecoder, outputMode, outputChannels,
+                    outputSampleRate, false, reason,
+                    AudioPlaybackDiagnostics.lastAttemptLevel(
+                            failureReason, outputMode, attemptedDecode),
+                    AudioPlaybackDiagnostics.RuntimeState.FAILED, failureReason);
+        }
         return new AudioPlaybackDiagnostics.Snapshot(original, active,
                 decodeMode, cachedAudioDecoder, outputMode, outputChannels,
                 outputSampleRate, false, reason);
+    }
+
+    private boolean isAudioDiagnosticsFailure(AudioPlaybackDiagnostics.Track current) {
+        if (playerError == null || current == null || !current.available()) return false;
+        String message = playerError.getMessage();
+        if (message != null && (message.startsWith(ERROR_NETWORK_FAILED)
+                || message.startsWith(ERROR_NO_AV_DATA)
+                || message.startsWith(ERROR_INVALID_MEDIA_DATA)
+                || message.startsWith(ERROR_VIDEO_OUTPUT_FAILED)
+                || message.startsWith(ERROR_DRM_UNSUPPORTED))) {
+            return false;
+        }
+        return AudioPlaybackDiagnostics.failureReason(playerError.errorCode)
+                != AudioPlaybackDiagnostics.FailureReason.UNKNOWN
+                || !TextUtils.isEmpty(cachedAudioDecoder)
+                || !TextUtils.isEmpty(cachedAudioFormat);
     }
 
     /** Metadata for the first video track, including when mpv temporarily reports vid=no. */
