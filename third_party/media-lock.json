@@ -64,6 +64,10 @@
       {
         "path": "third_party/patches/media3-exo-av3a-dash-channel-config.patch",
         "sha256": "76a1a876c8d8493a54826ad54a789ed487e9d11fe324c701af58821b4539b987"
+      },
+      {
+        "path": "third_party/patches/media3-exo-alac-wave.patch",
+        "sha256": "2b6de52af60d16f705c03963c3e40b872f899f1c1b17b21c48851f7ecfe571f3"
       }
     ],
     "artifact_overrides": [
@@ -81,9 +85,9 @@
       },
       {
         "coordinate": "androidx.media3:media3-extractor:1.11.0-alpha01-fongmi",
-        "aar_sha256": "60af715f4912126a48e93b9109c286457b30b657ae4b99cf87e600bcb88339b5",
-        "sources_sha256": "13501c9fec245aaf95d7f4c7f2032ae2aba1c548d56726466a8e5fad5502959b",
-        "reason": "E-SP2/E2-1/E3-1b/E4-1/E7-2 extractor behavior plus E12-1 av3a MP4/CMAF parsing"
+        "aar_sha256": "a7d798095700568c2f48cd7bc0bed67cb81ba13413f70fd359e530a07ad54b0c",
+        "sources_sha256": "ec22c28c9fef1f4fdb54b495da919a706d4a28b781ac6701790a259beee6dedd",
+        "reason": "E-SP2/E2-1/E3-1b/E4-1/E7-2/E12-1 extractor behavior plus AV3A MP4/CMAF and QuickTime wave/alac parsing"
       },
       {
         "coordinate": "androidx.media3:media3-exoplayer:1.11.0-alpha01-fongmi",

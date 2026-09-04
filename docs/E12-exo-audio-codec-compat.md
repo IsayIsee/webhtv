@@ -136,3 +136,12 @@
 4. Rollback is task base `56b802ef585e83099953979b802172512c2fb447`; the selector and test changes are one atomic unit.
 
 - Next action: run the focused selector/renderer tests and compile the mobile debug APK, install it on `10CF6H1D2L0009S`, then replay the two ALAC files separately and capture `ffmpeg-alac`, `audioTrackInitialized`, `rendererReady` and playback progress.
+
+## Checkpoint 8: 2026-09-04 13:40 CST - QuickTime wave/alac initialization data
+
+- Device logs `/private/tmp/exo-alac20-initdiag2.log` and the current replay show both ALAC tracks routed to bundled FFmpeg but with `ExoAlac init count=0`; FFmpeg then fails `avcodec_open2: Invalid data found when processing input`.
+- Upstream reference: Media3/ExoPlayer commits `23ace1936984238e8dbf616ad5a1751687fcb0c2` and `cb8983afd10af000443119fc3f4b0dcc7637749` standardize ALAC initialization data as the magic cookie and wrap it only at the FFmpeg boundary. The locked `BoxParser` already handled direct `alac` children but not the observed QuickTime `wave/frma/alac/zero` nesting.
+- Implementation: `third_party/patches/media3-exo-alac-wave.patch` scans only a QuickTime `wave` child when no `esds` exists, extracts the nested ALAC atom payload, parses channel count/sample rate/bit depth through the existing `CodecSpecificDataUtil`, and publishes canonical cookie initialization data. Bounds checks reject truncated or out-of-container child atoms.
+- Reproducibility: the complete locked Media3 patch chain plus the new patch passes `git apply --check --unidiff-zero`; extractor publication succeeds. New artifact hashes: AAR `a7d798095700568c2f48cd7bc0bed67cb81ba13413f70fd359e530a07ad54b0c`, sources `ec22c28c9fef1f4fdb54b495da919a706d4a28b781ac6701790a259beee6dedd`, module `a17caa9dc8d42f9eaae457629dc9cc243a659b1d657205151df60f91fcce0e74`, POM `32fb358a5f4ecee7bb58ac8f97b975e8af89cdd19533e35b520533bf76c5979b`.
+- Test: `BoxParserTest.parseAlacInitializationDataFromWave_returnsMagicCookie` compiles with the extractor test suite; Robolectric cannot start on this host because `DefaultSdkProvider` cannot provide an Android SDK, before assertions run.
+- Next action: rebuild the App against the refreshed extractor artifact, install it on serial `10CF6H1D2L0009S`, and test `ALAC_2.0_48kHz.mov` and `ALAC_5.1_48kHz.mov` separately.
