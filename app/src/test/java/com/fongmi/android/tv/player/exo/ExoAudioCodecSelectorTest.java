@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ExoAudioCodecSelectorTest {
 
     private static final String AUDIO_MIME = "audio/mp4a-latm";
+    private static final String ALAC_MIME = "audio/alac";
 
     @Test
     public void audioDecoders_areStableAndHardwareFirst() throws Exception {
@@ -74,6 +75,20 @@ public class ExoAudioCodecSelectorTest {
         assertSame(infos, first);
         assertSame(infos, second);
         assertEquals(2, queryCount.get());
+    }
+
+    @Test
+    public void alacDecoders_areRoutedToFfmpeg() throws Exception {
+        AtomicInteger queryCount = new AtomicInteger();
+        MediaCodecSelector delegate = (mimeType, secure, tunneling) -> {
+            queryCount.incrementAndGet();
+            return List.of(codec("c2.vivo.alac.decoder", true, false));
+        };
+        ExoAudioCodecSelector selector = new ExoAudioCodecSelector(delegate);
+
+        assertEquals(List.of(), selector.getDecoderInfos(ALAC_MIME, false, false));
+        assertEquals(List.of(), selector.getDecoderInfos(ALAC_MIME, false, false));
+        assertEquals(0, queryCount.get());
     }
 
     private static MediaCodecSelector fixed(List<MediaCodecInfo> infos) {

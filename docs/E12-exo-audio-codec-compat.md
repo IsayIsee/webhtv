@@ -113,3 +113,26 @@
 - SHA-256: AAR `d22cb1885ef998f203b8b7811f6e8df4e42c3d3b3736825279bb1eb05d76a52f`; sources `043fe28b6c6faeecf58e9168ac92c61b2ed9c0c3010da5a5430af3c59d7741a4`; module `1acb6d7d45d8e5b89a0411c0040250a12da8c310df5c958802d02da94d136b1f`; POM `e38e8be43423ac133ee1e5a7cfbe6746ae4cc00a7b24e3e0b8c68c69760c8375`.
 - Correction evidence: the earlier r2 attempt reused FFmpeg 6 headers with FFmpeg 9 libraries and was rejected after device logs showed `channels=118/112 sampleRate=0`; that artifact was replaced before this checkpoint. The current AAR's FFmpeg headers report `LIBAVCODEC_VERSION_MAJOR 63` and `AV_CODEC_ID_AV3A`.
 - Verification caveat: host Kotlin daemon could not write `/Users/macbookpro/Library/Application Support/kotlin`, so Gradle used its fallback compiler; CMake/Java/AAR tasks all succeeded. Device playback is still pending and is the single next action.
+
+## Checkpoint 7: 2026-09-04 10:45 CST - ALAC hardware decoder stall
+
+- Device: `10CF6H1D2L0009S`, vivo V2453A, API 35, app `5.6.0` (versionCode `560`), branch `feature/mpv-audio-fallback-policy`, task base `56b802ef585e83099953979b802172512c2fb447`.
+- 2.0 evidence: `/private/tmp/exo-alac20-new.log` shows `audio/alac`, `channels=2`, `c2.vivo.alac.decoder`, `audioDecoderInitialized`, `supported=YES`, but no `audioTrackInitialized` or renderer-ready event; after about 15 seconds the player returns to `IDLE`.
+- 5.1 evidence: `/private/tmp/exo-alac51-new.log` shows `audio/alac`, `channels=6`, `c2.vivo.alac.decoder`, `audioDecoderInitialized`, `rendererReady=true`, `READY`, then immediate `ENDED`; it also has no `audioTrackInitialized`. The second sample was remembered-seeked to its 16-second end, but the missing output callback is independent of that position.
+- Root cause: the vendor system ALAC decoder claims support and initializes, yet does not deliver PCM to Media3's `AudioSink` on this device. This is a decoder-path stall, not an ALAC container or channel-mask parse failure.
+
+### ALAC decision
+
+- No change: reject; both supplied ALAC fixtures remain silent or time out.
+- Keep hardware first and rely on renderer fallback: reject; no decoder or AudioTrack failure is surfaced, so Exo has no recovery trigger.
+- Prefer a system software ALAC codec when available: insufficient; device codec discovery is vendor-specific and still leaves a non-progressing candidate ahead of the known-good bundled decoder.
+- WebHTV-adapted choice: for the exact `audio/alac` MIME, return no MediaCodec candidates from `ExoAudioCodecSelector` and route the track to `CompatFfmpegAudioRenderer`. FFmpeg already packages the ALAC magic-cookie adapter; the existing PCM sink/channel probe remains responsible for 2.0 versus 5.1 output.
+
+### ALAC acceptance and rollback
+
+1. Both ALAC fixtures initialize the FFmpeg decoder, create an AudioTrack, and advance beyond the initial position without `c2.vivo.alac.decoder`.
+2. 2.0 remains stereo PCM; 5.1 remains six-channel PCM when the route accepts it, otherwise it uses the existing explicit stereo fallback.
+3. AAC, MP3, AV3A, DTS and other formats retain the existing hardware-first selector behavior.
+4. Rollback is task base `56b802ef585e83099953979b802172512c2fb447`; the selector and test changes are one atomic unit.
+
+- Next action: run the focused selector/renderer tests and compile the mobile debug APK, install it on `10CF6H1D2L0009S`, then replay the two ALAC files separately and capture `ffmpeg-alac`, `audioTrackInitialized`, `rendererReady` and playback progress.
