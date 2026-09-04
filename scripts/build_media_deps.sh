@@ -263,6 +263,7 @@ apply_nextlib_patches() {
   local patches=(
     "$THIRD_PARTY_DIR/patches/nextlib-ffmpeg-soft-load-shedding.patch"
     "$THIRD_PARTY_DIR/patches/nextlib-av3a.patch"
+    "$THIRD_PARTY_DIR/patches/nextlib-ape-support.patch"
   )
   for patch_file in "${patches[@]}"; do
     if [[ ! -f "$patch_file" ]]; then
@@ -270,8 +271,8 @@ apply_nextlib_patches() {
       exit 1
     fi
     echo "Applying nextlib patch $(basename "$patch_file")"
-    git -C "$NEXTLIB_DIR" apply --check "$patch_file"
-    git -C "$NEXTLIB_DIR" apply "$patch_file"
+    git -C "$NEXTLIB_DIR" apply --recount --check "$patch_file"
+    git -C "$NEXTLIB_DIR" apply --recount "$patch_file"
   done
 }
 
