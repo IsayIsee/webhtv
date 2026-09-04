@@ -168,3 +168,14 @@ bash ./gradlew :app:compileMobileArm64_v8aDebugJavaWithJavac --no-daemon
 - 推荐：**实施 WebHTV 窄适配，但等待用户明确批准。**
 - 置信度：高（平台/Media3/mpv 的事实边界一致，当前代码已有足够观测点）。
 - 未解决问题：真实设备在 AudioTrack 创建失败与 Exo 自动重启之间的瞬时窗口，需要实施后用一次手机冒烟确认 `PENDING -> FAILED/ACTIVE` 顺序；该不确定性不影响先冻结模型。
+
+## Checkpoint 1：评估文档闭环（2026-09-04 14:48 CST）
+
+- 完成：C4 决策包、证据审查、方案比较、实施边界、验收与回滚路径。
+- 变更：新增本文件；更新主评估索引和《音频解码与多声道策略评估》；未修改运行时源码、AAR、native 资产或锁文件。
+- 验证：`git diff --check`、`bash .codex/scripts/task_guard.sh check`、文档文件/任务索引引用检查通过。
+- 评估提交：`ebb5285238aa19eeab11ec4595985d496550ced2`。
+- 恢复 tag：`recovery/C4/20260904144859-ebb5285238aa`。
+- 回滚：对评估提交执行 `git revert ebb5285238aa19eeab11ec4595985d496550ced2`；运行时无耦合变更。
+- 当前状态：等待用户明确批准 C4 代码阶段。
+- 下一动作：收到批准后，仅按“实施边界（需批准）”修改 `AudioPlaybackDiagnostics` 及三条播放器诊断接线，并先跑聚焦 JVM 测试。
