@@ -1076,6 +1076,9 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         mCustomLeftButtonRow = createCustomButtonRow(mCustomLeftButtons);
         mCustomRightButtonRow = createCustomButtonRow(mCustomRightButtons);
         mCustomPortraitButtonRow = createCustomButtonRow(mCustomPortraitButtons);
+        mCustomRightButtons.setFillViewport(true);
+        mCustomRightButtonRow.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        mCustomRightButtonRow.getLayoutParams().width = ViewGroup.LayoutParams.MATCH_PARENT;
 
         FrameLayout.LayoutParams leftParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP);
         FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.TOP);
