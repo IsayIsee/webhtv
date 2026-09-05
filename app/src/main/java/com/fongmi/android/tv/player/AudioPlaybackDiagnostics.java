@@ -433,7 +433,7 @@ public final class AudioPlaybackDiagnostics {
         for (String value : values) {
             String clean = clean(value);
             if (clean.isEmpty()) continue;
-            if (!builder.isEmpty()) builder.append(' ');
+            if (builder.length() > 0) builder.append(' ');
             builder.append(clean);
         }
         return builder.toString();
