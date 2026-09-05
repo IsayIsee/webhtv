@@ -55,6 +55,8 @@ public class MpvPlayerEngine implements PlayerEngine {
     static final String DV7_HDR10 = "hdr10";
     static final String DV8_PRESERVE = "preserve";
     static final String DV8_HDR10 = "hdr10";
+    static final String HWDEC_SOFTWARE_FALLBACK_OPTION = "hwdec-software-fallback";
+    static final String HWDEC_SOFTWARE_FALLBACK_DISABLED = "no";
 
     private MpvPlayer player;
     private PlaySpec spec;
@@ -145,6 +147,10 @@ public class MpvPlayerEngine implements PlayerEngine {
     @Override
     public boolean isHard() {
         return decode == HARD;
+    }
+
+    static String hardwareDecodeSoftwareFallbackOption() {
+        return HWDEC_SOFTWARE_FALLBACK_DISABLED;
     }
 
     @Override
@@ -922,6 +928,8 @@ public class MpvPlayerEngine implements PlayerEngine {
         MpvPlayerConfig.Builder builder = MpvPlayerConfig.builder(App.get())
                 .configDir(MpvConfigStore.configDir())
                 .hwdec(surfaceDirect ? "mediacodec" : decode == HARD ? MpvPerformanceSetting.getHwdecOption() : "no")
+                .option(HWDEC_SOFTWARE_FALLBACK_OPTION,
+                        hardwareDecodeSoftwareFallbackOption())
                 .audioSpdif(resolveAudioSpdifCodecs())
                 .multichannelPcm(MpvPerformanceSetting.isMultichannelPcm())
                 .logLevel(MpvPerformanceSetting.isVerboseLog() ? "all=v" : "all=warn")
