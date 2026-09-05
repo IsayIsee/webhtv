@@ -58,6 +58,7 @@
 | 33 | `E13` | Exo | APE demux 与 FFmpeg 解码接入 | **实施中（已复现并获批）**：新增边界安全的 APE extractor，接通 `audio/ape` 到 nextlib FFmpeg，并重建双 ARM ABI AAR | [E13-exo-ape-demux-ffmpeg.md](E13-exo-ape-demux-ffmpeg.md) |
 | 34 | `P6-1` | MPV | 原生 P8.1 不支持时剥离 RPU 并回退 HDR10 基础层硬解 | **实施中（用户已批准）**：独立能力判断、`demuxer-dovi-profile8=preserve|hdr10` 和 native `dovi_split=mode=bl` | [P6-1-mpv-p81-hdr10-fallback.md](P6-1-mpv-p81-hdr10-fallback.md) |
 | 35 | `P3-8` | MPV | 硬解失败禁止自动切换软件视频解码 | **实施中**：设置 MPV `hwdec-software-fallback=no`；硬解不可用或运行失败时报告失败，只有用户手动切换到软件模式才使用 `hwdec=no` | [P3-8-mpv-hardware-only-video-decode.md](P3-8-mpv-hardware-only-video-decode.md) |
+| 36 | `P7-MPV-SCRIPT-BUTTONS` | MPV App | 在现有 scripts 管理中提供最多 8 个 Lua 自定义播放按钮，支持短按/长按/启动代码 | **已批准，待实施**：采用 `custombuttons.json` + `webhtv-custom-buttons.lua` 桥接；普通脚本保持兼容，Anime4K 不并入本阶段 | [P7-mpv-script-buttons.md](P7-mpv-script-buttons.md) |
 
 `C1` 是跨播放器真实输入验收维度，不单独形成代码任务或文档；它写入对应的 E/P 任务文档。`E-SP3` 已在 `fongmi-sync` 完成 App/Media3 合并，保留既有 `E4-J1`/`E6-1`/`E7-1`/`E7-2 + C3` 能力；`E9-3` 与已完成的 `P1` 现已共同进入集成树，后续按既定顺序处理 P2 阶段。
 
