@@ -250,8 +250,8 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     private final Map<String, String> mAudioQueueLyrics = new HashMap<>();
     private Map<String, View> mActionButtons;
     private final List<View> mCustomActionViews = new ArrayList<>();
-    private LinearLayout mCustomLeftButtons;
-    private LinearLayout mCustomRightButtons;
+    private HorizontalScrollView mCustomPortraitButtons;
+    private LinearLayout mCustomPortraitButtonRow;
     private QuickSearchDialog mQuickSearchDialog;
     private PlayerOsdController mOsd;
     private CustomKeyDownVod mKeyDown;
@@ -881,6 +881,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
             if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
         }
         mCustomActionViews.clear();
+        mCustomPortraitButtonRow.removeAllViews();
         List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.customButtons();
         for (int index = 0; index < buttons.size(); index++) {
             MpvConfigStore.CustomButton button = buttons.get(index);
@@ -911,33 +912,32 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
             view.setFocusableInTouchMode(true);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ResUtil.dp2px(40));
             params.setMargins(ResUtil.dp2px(4), ResUtil.dp2px(2), ResUtil.dp2px(4), ResUtil.dp2px(2));
-            (index < 4 ? mCustomLeftButtons : mCustomRightButtons).addView(view, params);
+            mCustomPortraitButtonRow.addView(view, params);
             mCustomActionViews.add(view);
         }
         updateCustomButtonVisibility();
     }
 
     private void ensureCustomButtonContainers() {
-        if (mCustomLeftButtons != null) return;
-        mCustomLeftButtons = new LinearLayout(this);
-        mCustomRightButtons = new LinearLayout(this);
-        mCustomLeftButtons.setGravity(Gravity.CENTER_VERTICAL);
-        mCustomRightButtons.setGravity(Gravity.CENTER_VERTICAL);
-        mCustomLeftButtons.setOrientation(LinearLayout.HORIZONTAL);
-        mCustomRightButtons.setOrientation(LinearLayout.HORIZONTAL);
-        FrameLayout.LayoutParams leftParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL);
-        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL);
-        int margin = ResUtil.dp2px(8);
-        leftParams.setMargins(margin, 0, margin, 0);
-        rightParams.setMargins(margin, 0, margin, 0);
-        mBinding.video.addView(mCustomLeftButtons, leftParams);
-        mBinding.video.addView(mCustomRightButtons, rightParams);
+        if (mCustomPortraitButtons != null) return;
+        mCustomPortraitButtons = new HorizontalScrollView(this);
+        mCustomPortraitButtons.setHorizontalScrollBarEnabled(false);
+        mCustomPortraitButtons.setFillViewport(false);
+        mCustomPortraitButtons.setClipToPadding(false);
+        mCustomPortraitButtons.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        mCustomPortraitButtonRow = new LinearLayout(this);
+        mCustomPortraitButtonRow.setGravity(Gravity.CENTER_VERTICAL);
+        mCustomPortraitButtonRow.setOrientation(LinearLayout.HORIZONTAL);
+        mCustomPortraitButtonRow.setClipChildren(false);
+        mCustomPortraitButtons.addView(mCustomPortraitButtonRow, new HorizontalScrollView.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(0, 0, 0, ResUtil.dp2px(8));
+        ((ViewGroup) mBinding.control.getRoot()).addView(mCustomPortraitButtons, 0, params);
     }
 
     private void updateCustomButtonVisibility() {
         boolean visible = service() != null && player().isMpv() && isVisible(mBinding.control.getRoot());
-        if (mCustomLeftButtons != null) mCustomLeftButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
-        if (mCustomRightButtons != null) mCustomRightButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (mCustomPortraitButtons != null) mCustomPortraitButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     private void applyActionButtonVisibility() {

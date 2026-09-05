@@ -274,8 +274,12 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private final Map<String, String> mAudioQueueLyrics = new HashMap<>();
     private Map<String, View> mActionButtons;
     private final List<View> mCustomActionViews = new ArrayList<>();
-    private LinearLayout mCustomLeftButtons;
-    private LinearLayout mCustomRightButtons;
+    private HorizontalScrollView mCustomLeftButtons;
+    private HorizontalScrollView mCustomRightButtons;
+    private HorizontalScrollView mCustomPortraitButtons;
+    private LinearLayout mCustomLeftButtonRow;
+    private LinearLayout mCustomRightButtonRow;
+    private LinearLayout mCustomPortraitButtonRow;
     private SiteViewModel mViewModel;
     private FlagAdapter mFlagAdapter;
     private PlayerOsdController mOsd;
@@ -973,6 +977,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         setupActionButtons();
         mBinding.video.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             mPiP.update(this, view);
+            updateCustomButtonLayout();
             Log.d(SIZE_TAG, "video layout new=" + (right - left) + "x" + (bottom - top)
                     + " old=" + (oldRight - oldLeft) + "x" + (oldBottom - oldTop)
                     + " fullscreen=" + isFullscreen()
@@ -1017,7 +1022,11 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
         }
         mCustomActionViews.clear();
+        mCustomLeftButtonRow.removeAllViews();
+        mCustomRightButtonRow.removeAllViews();
+        mCustomPortraitButtonRow.removeAllViews();
         List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.customButtons();
+        boolean landscape = isLand();
         for (int index = 0; index < buttons.size(); index++) {
             MpvConfigStore.CustomButton button = buttons.get(index);
             if (!button.enabled) continue;
@@ -1049,33 +1058,82 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             }
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ResUtil.dp2px(40));
             params.setMargins(ResUtil.dp2px(4), ResUtil.dp2px(2), ResUtil.dp2px(4), ResUtil.dp2px(2));
-            (index < 4 ? mCustomLeftButtons : mCustomRightButtons).addView(view, params);
+            LinearLayout target = landscape
+                    ? (index < 4 ? mCustomLeftButtonRow : mCustomRightButtonRow)
+                    : mCustomPortraitButtonRow;
+            target.addView(view, params);
             mCustomActionViews.add(view);
         }
+        updateCustomButtonLayout();
         updateCustomButtonVisibility();
     }
 
     private void ensureCustomButtonContainers() {
         if (mCustomLeftButtons != null) return;
-        mCustomLeftButtons = new LinearLayout(this);
-        mCustomRightButtons = new LinearLayout(this);
-        mCustomLeftButtons.setGravity(Gravity.CENTER_VERTICAL);
-        mCustomRightButtons.setGravity(Gravity.CENTER_VERTICAL);
-        mCustomLeftButtons.setOrientation(LinearLayout.HORIZONTAL);
-        mCustomRightButtons.setOrientation(LinearLayout.HORIZONTAL);
-        FrameLayout.LayoutParams leftParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL);
-        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        mCustomLeftButtons = createCustomButtonScroll();
+        mCustomRightButtons = createCustomButtonScroll();
+        mCustomPortraitButtons = createCustomButtonScroll();
+        mCustomLeftButtonRow = createCustomButtonRow(mCustomLeftButtons);
+        mCustomRightButtonRow = createCustomButtonRow(mCustomRightButtons);
+        mCustomPortraitButtonRow = createCustomButtonRow(mCustomPortraitButtons);
+
+        FrameLayout.LayoutParams leftParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.TOP);
+        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.TOP);
         int margin = ResUtil.dp2px(8);
         leftParams.setMargins(margin, 0, margin, 0);
         rightParams.setMargins(margin, 0, margin, 0);
         mBinding.video.addView(mCustomLeftButtons, leftParams);
         mBinding.video.addView(mCustomRightButtons, rightParams);
+
+        RelativeLayout.LayoutParams portraitParams = new RelativeLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        portraitParams.addRule(RelativeLayout.ABOVE, R.id.bottom);
+        portraitParams.setMargins(margin, 0, margin, ResUtil.dp2px(2));
+        ((ViewGroup) mBinding.control.getRoot()).addView(mCustomPortraitButtons, portraitParams);
+    }
+
+    private HorizontalScrollView createCustomButtonScroll() {
+        HorizontalScrollView scroll = new HorizontalScrollView(this);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.setFillViewport(false);
+        scroll.setClipToPadding(false);
+        scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        return scroll;
+    }
+
+    private LinearLayout createCustomButtonRow(HorizontalScrollView scroll) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setClipChildren(false);
+        scroll.addView(row, new HorizontalScrollView.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return row;
+    }
+
+    private void updateCustomButtonLayout() {
+        if (mCustomLeftButtons == null || mBinding.video.getWidth() <= 0) return;
+        boolean landscape = isLand();
+        if (!landscape) return;
+
+        int margin = ResUtil.dp2px(8);
+        int width = Math.max(ResUtil.dp2px(96), mBinding.video.getWidth() / 2 - margin * 2);
+        int height = Math.max(mCustomLeftButtons.getMeasuredHeight(), ResUtil.dp2px(40));
+        int top = Math.max(margin, Math.round(mBinding.video.getHeight() * 0.65f - height / 2f));
+        FrameLayout.LayoutParams leftParams = (FrameLayout.LayoutParams) mCustomLeftButtons.getLayoutParams();
+        FrameLayout.LayoutParams rightParams = (FrameLayout.LayoutParams) mCustomRightButtons.getLayoutParams();
+        leftParams.width = width;
+        rightParams.width = width;
+        leftParams.topMargin = top;
+        rightParams.topMargin = top;
+        mCustomLeftButtons.setLayoutParams(leftParams);
+        mCustomRightButtons.setLayoutParams(rightParams);
     }
 
     private void updateCustomButtonVisibility() {
         boolean visible = service() != null && player().isMpv() && isVisible(mBinding.control.getRoot());
-        if (mCustomLeftButtons != null) mCustomLeftButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
-        if (mCustomRightButtons != null) mCustomRightButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (mCustomLeftButtons != null) mCustomLeftButtons.setVisibility(visible && isLand() ? View.VISIBLE : View.GONE);
+        if (mCustomRightButtons != null) mCustomRightButtons.setVisibility(visible && isLand() ? View.VISIBLE : View.GONE);
+        if (mCustomPortraitButtons != null) mCustomPortraitButtons.setVisibility(visible && !isLand() ? View.VISIBLE : View.GONE);
+        updateCustomButtonLayout();
     }
 
     private void applyActionButtonVisibility() {
@@ -6356,6 +6414,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             return;
         }
         syncFullscreenForOrientation(newConfig.orientation);
+        setupCustomActionButtons();
         if (isFullscreen()) Util.hideSystemUI(this);
     }
 
