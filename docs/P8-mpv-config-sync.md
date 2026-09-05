@@ -5,7 +5,7 @@
 - Objective: 在现有一键同步中可选同步 MPV 配置管理的 `mpv.conf`、`input.conf`、`scripts/` 和维持配置列表所需的私有 profile 元数据/快照。
 - Acceptance: 不同步整个 `files/mpv`；接收端路径不可穿越；普通同步选项保持兼容；开启 MPV 选项后直连、管理页和远程托管三条链路均能导出/恢复；恢复后 MPV 配置管理列表、选中项、脚本及自定义按钮数据一致。
 - Current stage: implementation complete; local compile and focused sync tests passed.
-- Next action: task guard finish, atomic commit and recovery tag.
+- Next action: none; ready for device-side cross-device sync smoke test.
 
 ## 任务与范围
 
@@ -58,7 +58,9 @@
 - `SyncOptions` 增加默认关闭的 `mpvConfig`，一键同步 UI 增加“MPV 配置管理”复选项并纳入全选/取消全选。
 - `Backup` 仅在该选项开启时携带 `mpv_config_*` 偏好，并在恢复前清除接收端旧的 MPV 状态键；`Action`、`Manage`、`RemoteSyncTransfer` 统一发送/恢复 `mpvConfigFiles`。
 - `MpvConfigSync` 使用临时目录和固定 allowlist 归档/恢复 `mpv.conf`、`input.conf`、`scripts/`、两个 profile snapshot 目录；限制条目数/单文件/总大小，拒绝绝对路径、`..` 和 canonical-path 逃逸；恢复后重建自定义按钮桥接脚本。
-- 状态：implementation complete，待 task guard 原子提交和恢复 tag。
+- 首次实现提交：`61b352f8086554364d0ce402eb20c27105e01c6e`；恢复 tag：`recovery/P8-MPV-CONFIG-SYNC/20260906074257-61b352f80865`。
+- 一致性修复提交：`123db7e7553eb0066e3c815f437b8cf266fe1aa7`；恢复 tag：`recovery/P8-MPV-CONFIG-SYNC/20260906074646-123db7e7553e`。
+- 状态：implementation complete；回滚到 `123db7e7553eb0066e3c815f437b8cf266fe1aa7` 可完整撤销本阶段。
 
 ## 验证记录
 
