@@ -805,6 +805,11 @@ public class PlayerManager implements ParseCallback {
         return playerType == PlayerSetting.MPV;
     }
 
+    public boolean sendMpvCustomButton(String id, boolean longPress) {
+        if (!isMpv() || TextUtils.isEmpty(id) || !(engine instanceof MpvPlayerEngine mpv)) return false;
+        return mpv.sendScriptMessage(MpvConfigStore.CUSTOM_BUTTON_MESSAGE, id, longPress ? "long" : "short");
+    }
+
     public boolean isMpvSurfaceDirect() {
         return engine instanceof MpvPlayerEngine mpv && mpv.isSurfaceDirect();
     }

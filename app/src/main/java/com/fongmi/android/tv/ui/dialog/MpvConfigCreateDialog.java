@@ -32,6 +32,8 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         void onText(String name);
 
         void onImport(String name, String path);
+
+        void onCustomButton();
     }
 
     private DialogMpvConfigCreateBinding binding;
@@ -64,6 +66,8 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     protected void initEvent() {
         binding.close.setOnClickListener(view -> dismiss());
         binding.textOption.setOnClickListener(view -> createText());
+        binding.customOption.setVisibility(MpvConfigStore.TARGET_SCRIPTS.equals(target) ? View.VISIBLE : View.GONE);
+        binding.customOption.setOnClickListener(view -> createCustomButton());
         binding.urlOption.setOnClickListener(view -> showUrlInput());
         binding.importOption.setOnClickListener(view -> chooseFile());
         binding.urlBack.setOnClickListener(view -> showOptions());
@@ -84,6 +88,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         tvFocusable(binding.close);
         tvFocusable(binding.name);
         tvFocusable(binding.textOption);
+        tvFocusable(binding.customOption);
         tvFocusable(binding.urlOption);
         tvFocusable(binding.importOption);
         tvFocusable(binding.url);
@@ -93,8 +98,15 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.name.setNextFocusUpId(R.id.close);
         binding.name.setNextFocusDownId(R.id.textOption);
         binding.textOption.setNextFocusUpId(R.id.name);
-        binding.textOption.setNextFocusDownId(R.id.urlOption);
-        binding.urlOption.setNextFocusUpId(R.id.textOption);
+        if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) {
+            binding.textOption.setNextFocusDownId(R.id.customOption);
+            binding.customOption.setNextFocusUpId(R.id.textOption);
+            binding.customOption.setNextFocusDownId(R.id.urlOption);
+            binding.urlOption.setNextFocusUpId(R.id.customOption);
+        } else {
+            binding.textOption.setNextFocusDownId(R.id.urlOption);
+            binding.urlOption.setNextFocusUpId(R.id.textOption);
+        }
         binding.urlOption.setNextFocusDownId(R.id.importOption);
         binding.importOption.setNextFocusUpId(R.id.urlOption);
         binding.url.setNextFocusUpId(R.id.close);
@@ -119,6 +131,13 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         dismissAllowingStateLoss();
         App.post(() -> {
             if (listener != null) listener.onText(name);
+        });
+    }
+
+    private void createCustomButton() {
+        dismissAllowingStateLoss();
+        App.post(() -> {
+            if (listener != null) listener.onCustomButton();
         });
     }
 

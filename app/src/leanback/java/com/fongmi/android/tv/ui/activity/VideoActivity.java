@@ -102,6 +102,7 @@ import com.fongmi.android.tv.player.lyrics.LyricsResult;
 import com.fongmi.android.tv.player.lut.LutPreset;
 import com.fongmi.android.tv.player.lut.LutSetting;
 import com.fongmi.android.tv.player.lut.LutStore;
+import com.fongmi.android.tv.player.mpv.MpvConfigStore;
 import com.fongmi.android.tv.service.PlaybackService;
 import com.fongmi.android.tv.setting.DanmakuSetting;
 import com.fongmi.android.tv.setting.LyricsSetting;
@@ -247,6 +248,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     private final Map<String, String> mAudioQueuePics = new HashMap<>();
     private final Map<String, String> mAudioQueueLyrics = new HashMap<>();
     private Map<String, View> mActionButtons;
+    private final List<View> mCustomActionViews = new ArrayList<>();
     private QuickSearchDialog mQuickSearchDialog;
     private PlayerOsdController mOsd;
     private CustomKeyDownVod mKeyDown;
@@ -860,6 +862,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
         addActionButton(PlayerButtonSetting.TITLE, mBinding.control.action.title);
         addActionButton(PlayerButtonSetting.REPEAT, mBinding.control.action.repeat);
         PlayerButtonSetting.applyOrder(mBinding.control.action.container, mActionButtons);
+        setupCustomActionButtons();
         placePanDiagnosticAction();
         updatePanDiagnosticAction();
     }
@@ -868,8 +871,34 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
         mActionButtons.put(id, view);
     }
 
+    private void setupCustomActionButtons() {
+        ViewGroup container = mBinding.control.action.container;
+        for (View view : mCustomActionViews) container.removeView(view);
+        mCustomActionViews.clear();
+        for (MpvConfigStore.CustomButton button : MpvConfigStore.customButtons()) {
+            if (!button.enabled) continue;
+            TextView view = new TextView(this);
+            view.setTextAppearance(this, R.style.Control);
+            view.setText(button.title);
+            view.setSingleLine(true);
+            view.setEllipsize(TextUtils.TruncateAt.END);
+            view.setContentDescription(button.title);
+            view.setOnClickListener(item -> player().sendMpvCustomButton(button.id, false));
+            view.setOnLongClickListener(item -> {
+                player().sendMpvCustomButton(button.id, true);
+                return true;
+            });
+            view.setFocusable(true);
+            view.setFocusableInTouchMode(true);
+            container.addView(view);
+            mCustomActionViews.add(view);
+        }
+    }
+
     private void applyActionButtonVisibility() {
         if (mActionButtons != null) PlayerButtonSetting.applyVisibility(mActionButtons);
+        boolean visible = service() != null && player().isMpv();
+        for (View view : mCustomActionViews) view.setVisibility(visible ? View.VISIBLE : View.GONE);
         mBinding.control.action.cast.setVisibility(isFullscreen() ? View.GONE : View.VISIBLE);
         updateImmersiveAudioAction();
         updatePanDiagnosticAction();

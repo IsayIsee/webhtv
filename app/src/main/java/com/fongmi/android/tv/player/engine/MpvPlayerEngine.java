@@ -373,6 +373,10 @@ public class MpvPlayerEngine implements PlayerEngine {
         player.clearAutoHlsBitrate();
     }
 
+    public boolean sendScriptMessage(String message, String... args) {
+        return player.sendScriptMessage(message, args);
+    }
+
     /** Cached track/proxy HLS state; this method never performs a native query. */
     public MpvPlayer.AutoHlsRuntimeSnapshot getAutoHlsRuntimeSnapshot() {
         return player.getAutoHlsRuntimeSnapshot();
@@ -898,6 +902,7 @@ public class MpvPlayerEngine implements PlayerEngine {
 
     private MpvPlayerConfig buildConfig() {
         MpvConfigStore.ensureReady();
+        MpvConfigStore.ensureCustomButtonScript();
         boolean autoDirectEligible = MpvAutoOutputPolicy.canStartSurfaceDirect(
                 decode == HARD,
                 Util.isLeanback(),

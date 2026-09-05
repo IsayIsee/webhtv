@@ -4,8 +4,8 @@
 
 - Objective: 将 MPV 配置管理的 `scripts` 改造成可维护的自定义播放按钮入口，并接入移动端/电视端 MPV 控制条。
 - Acceptance: 普通 `.lua/.js` 管理语义不变；自定义按钮支持标题、短按 Lua、长按 Lua、启动 Lua、启用状态和固定最多 8 个按钮；按钮通过 `script-message` 调用；非 MPV 播放不显示；桥接脚本不触发 GPU 视频处理判定；Java 编译和核心 JSON 解析验证通过。
-- Current stage: implementation approved by user; production implementation pending.
-- Next action: 开启 `implementation/upstream` guard，修改 `MpvConfigStore`、MPV 命令桥、配置 UI、两端 `VideoActivity` 和必要资源。
+- Current stage: implementation complete; local Java compilation passed.
+- Next action: 完成 task guard 原子提交并创建恢复 tag。
 
 ## 任务与范围
 
@@ -83,4 +83,23 @@ MPV 官方 Anime4K 资料在本阶段未作为实现依据：网络获取官方 
 - 回滚锚点：`ea9587dcb7feb187cc91f5f958f35696fea2996a`。
 - 回滚方式：恢复本任务提交中的 Java/UI/资源/文档改动；用户已有的 `files/mpv/scripts` 数据文件可保留，旧版本会忽略 `custombuttons.json` 和桥接 Lua。
 - 用户决策：已授权实施（2026-09-05）。
-- 状态：implementation pending。
+
+## 实施记录
+
+- `MpvConfigStore` 增加最多 8 项按钮的 JSON 读写、ID/文本校验、生成式 `webhtv-custom-buttons.lua`、启动/短按/长按代码和受管 scripts 条目。
+- `MpvPlayer.sendScriptMessage()`、`MpvPlayerEngine.sendScriptMessage()`、`PlayerManager.sendMpvCustomButton()` 建立窄范围调用链，UI 不直接依赖 `MPVLib`。
+- `MpvCustomButtonDialog` 提供列表、新建、编辑、启用/禁用、删除；`MpvConfigCreateDialog` 在 scripts 目标增加入口。
+- 移动端/电视端 `VideoActivity` 将启用按钮追加到既有 action container，支持短按/长按和 MPV-only 可见性；TV 按钮可聚焦。
+- `hasGpuVideoProcessing()`、普通脚本列表和脚本清理排除受管桥接 Lua；普通 Lua/JS 语义保持不变。
+
+## 验证记录
+
+- `bash ./gradlew compileMobileArm64_v8aDebugJavaWithJavac compileLeanbackArm64_v8aDebugJavaWithJavac --no-daemon`：通过（BUILD SUCCESSFUL，1m43s）。
+- `git diff --check`：通过。
+- `bash .codex/skills/upstream-integration-governor/scripts/verify_upstream_checkpoint.sh docs/upstream-player-dependency-merge-assessment-2026-08-20.md`：通过（文档阶段验证）。
+- 设备行为验证尚未执行；需要安装 APK 后在移动端和电视端分别验证按钮显示、短按/长按 Lua、普通脚本兼容和 TV 焦点。
+
+## 当前状态
+
+- 状态：implementation complete, device validation pending。
+- 已知限制：配置修改在下次 MPV 实例创建时生效；当前播放会话不热重载桥接脚本。Lua 代码按用户权限执行，不提供沙箱。

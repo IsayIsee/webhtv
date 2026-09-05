@@ -710,6 +710,16 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         return playbackTraceId;
     }
 
+    /** Sends an application-owned script message without exposing MPVLib to UI code. */
+    public boolean sendScriptMessage(String message, String... args) {
+        if (!initialized || TextUtils.isEmpty(message)) return false;
+        String[] command = new String[2 + (args == null ? 0 : args.length)];
+        command[0] = "script-message";
+        command[1] = message;
+        if (args != null) System.arraycopy(args, 0, command, 2, args.length);
+        return enqueueMpvCommand(command);
+    }
+
     public PlaybackRoute.Resolution getPlaybackRouteResolution() {
         return PlaybackRoute.resolve(currentPlayableUri);
     }
