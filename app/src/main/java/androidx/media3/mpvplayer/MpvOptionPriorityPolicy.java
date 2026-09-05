@@ -31,6 +31,7 @@ final class MpvOptionPriorityPolicy {
             "demuxer-readahead-secs",
             "demuxer-hysteresis-secs",
             "demuxer-dovi-profile7",
+            "demuxer-dovi-profile8",
             "framedrop",
             "video-sync",
             "interpolation",

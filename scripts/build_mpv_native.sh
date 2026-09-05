@@ -8,6 +8,7 @@ MPV_DISC_PATCH="$ROOT/third_party/patches/mpv-stream-cb-disc-controls.patch"
 MPV_DOVI_SURFACE_PATCH="$ROOT/third_party/patches/mpv-android-dovi-el-surface.patch"
 MPV_DOVI_HDR10_BL_PATCH="$ROOT/third_party/patches/mpv-dovi-profile7-hdr10-base-layer.patch"
 MPV_DOVI_P81_PATCH="$ROOT/third_party/patches/mpv-dovi-profile7-p81.patch"
+MPV_DOVI_P8_HDR10_PATCH="$ROOT/third_party/patches/mpv-dovi-profile8-hdr10-base-layer.patch"
 MPV_AUDIO_TRUEHD_PATCH="$ROOT/third_party/patches/mpv-audiotrack-truehd-channel-mask.patch"
 MPV_AUDIO_COMPRESSED_PATCH="$ROOT/third_party/patches/mpv-audiotrack-compressed-audio.patch"
 MPV_OPTIONAL_OSD_PATCH="$ROOT/third_party/patches/mpv-mediacodec-embed-optional-osd.patch"
@@ -528,6 +529,9 @@ prepare_sources() {
   [ -f "$MPV_DOVI_P81_PATCH" ] || die "missing MPV Dolby Vision Profile 7 P8.1 patch: $MPV_DOVI_P81_PATCH"
   git -C "$deps/mpv" apply --check --recount "$MPV_DOVI_P81_PATCH"
   git -C "$deps/mpv" apply --recount "$MPV_DOVI_P81_PATCH"
+  [ -f "$MPV_DOVI_P8_HDR10_PATCH" ] || die "missing MPV Dolby Vision Profile 8.1 HDR10 base-layer patch: $MPV_DOVI_P8_HDR10_PATCH"
+  git -C "$deps/mpv" apply --check --recount "$MPV_DOVI_P8_HDR10_PATCH"
+  git -C "$deps/mpv" apply --recount "$MPV_DOVI_P8_HDR10_PATCH"
   grep -Fq 'av_bsf_get_by_name(filter_name)' "$deps/mpv/demux/dovi_split.c" || \
     die "MPV Dolby Vision Profile 7 P8.1 BSF selection is absent"
   grep -Fq 'DV7 P8.1 conversion: using FFmpeg dovi_rpu BSF.' "$deps/mpv/demux/dovi_split.c" || \
@@ -544,6 +548,14 @@ prepare_sources() {
     die "MPV Dolby Vision Profile 7 enhancement-layer metadata is not cleared"
   grep -Fq 'bl_dp->len > INT_MAX' "$deps/mpv/demux/dovi_split.c" || \
     die "MPV Dolby Vision Profile 7 packet-size guard is absent"
+  grep -Fq 'demuxer-dovi-profile8' "$deps/mpv/demux/demux.c" || \
+    die "MPV Dolby Vision Profile 8.1 HDR10 option is absent"
+  grep -Fq 'P8.1 HDR10 fallback: stripping RPU before decoder.' "$deps/mpv/demux/dovi_split.c" || \
+    die "MPV Dolby Vision Profile 8.1 RPU stripping marker is absent"
+  grep -Fq 's->bsf->par_out->profile = AV_PROFILE_HEVC_MAIN_10' "$deps/mpv/demux/dovi_split.c" || \
+    die "MPV Dolby Vision Profile 8.1 decoder profile reset is absent"
+  grep -Fq 'P8.1 HDR10 fallback: using MediaCodec base-layer decoder' "$deps/mpv/video/decode/vd_lavc.c" || \
+    die "MPV Dolby Vision Profile 8.1 decoder fallback guard is absent"
   [ -f "$MPV_AUDIO_TRUEHD_PATCH" ] || die "missing MPV AudioTrack codec-aware channel-mask patch: $MPV_AUDIO_TRUEHD_PATCH"
   git -C "$deps/mpv" apply --check "$MPV_AUDIO_TRUEHD_PATCH"
   git -C "$deps/mpv" apply "$MPV_AUDIO_TRUEHD_PATCH"
@@ -689,6 +701,9 @@ verify_directory() {
   grep -Fq "DV7 HDR10 fallback: failed to produce base-layer packet." <<<"$version_strings" || die "MPV Dolby Vision Profile 7 filter failure guard missing from $directory/libmpv.so"
   grep -Fq "DV7 P8.1 conversion: using FFmpeg dovi_rpu BSF." <<<"$version_strings" || die "MPV Dolby Vision Profile 7 P8.1 conversion missing from $directory/libmpv.so"
   grep -Fq "DV7 P8.1 conversion: removed stale enhancement-layer configuration." <<<"$version_strings" || die "MPV Dolby Vision Profile 7 P8.1 stale enhancement-layer configuration guard missing from $directory/libmpv.so"
+  grep -Fq "P8.1 HDR10 fallback: stripping RPU before decoder." <<<"$version_strings" || die "MPV Dolby Vision Profile 8.1 RPU stripping marker missing from $directory/libmpv.so"
+  grep -Fq "P8.1 HDR10 fallback: synchronized decoder parameters to the HDR10 base layer." <<<"$version_strings" || die "MPV Dolby Vision Profile 8.1 codec-parameter sync missing from $directory/libmpv.so"
+  grep -Fq "P8.1 HDR10 fallback: using MediaCodec base-layer decoder" <<<"$version_strings" || die "MPV Dolby Vision Profile 8.1 direct decoder fallback missing from $directory/libmpv.so"
   if grep -Fq "Using device native output sample rate for passthrough compatibility" <<<"$version_strings"; then
     die "obsolete MPV AudioTrack passthrough native-rate patch present in $directory/libmpv.so"
   fi

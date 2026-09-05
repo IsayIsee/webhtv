@@ -166,6 +166,43 @@ public final class CodecCapabilityInspector {
         }
     }
 
+    /**
+     * Checks a regular HEVC Main10 decoder for the dimensions/rate of a
+     * Dolby Vision Profile 8.1 base layer. This query is intentionally
+     * separate from the Dolby Vision MIME query: a vendor may advertise
+     * HEVC Main10 while rejecting the Dolby Vision profile or its RPU.
+     */
+    public static MpvAutoOutputPolicy.DolbyVisionSupport hevcHdr10Support(
+            Context context, Format current, int width, int height) {
+        if (context == null) return MpvAutoOutputPolicy.DolbyVisionSupport.UNKNOWN;
+        String codecs = width >= 3840 || height >= 2160
+                ? "hvc1.2.4.L153.B0" : "hvc1.2.4.L120.B0";
+        Format.Builder builder = new Format.Builder()
+                .setSampleMimeType(MimeTypes.VIDEO_H265)
+                .setCodecs(codecs);
+        if (current != null) {
+            if (current.frameRate > 0) builder.setFrameRate(current.frameRate);
+            if (current.averageBitrate > 0) builder.setAverageBitrate(current.averageBitrate);
+            if (current.peakBitrate > 0) builder.setPeakBitrate(current.peakBitrate);
+        }
+        if (width > 0) builder.setWidth(width);
+        if (height > 0) builder.setHeight(height);
+        Format format = builder.build();
+        try {
+            for (androidx.media3.exoplayer.mediacodec.MediaCodecInfo info
+                    : MediaCodecSelector.DEFAULT.getDecoderInfos(
+                    MimeTypes.VIDEO_H265, false, false)) {
+                if (!info.hardwareAccelerated) continue;
+                if (info.isFormatSupported(context, format)) {
+                    return MpvAutoOutputPolicy.DolbyVisionSupport.SUPPORTED;
+                }
+            }
+            return MpvAutoOutputPolicy.DolbyVisionSupport.UNSUPPORTED;
+        } catch (Throwable ignored) {
+            return MpvAutoOutputPolicy.DolbyVisionSupport.UNKNOWN;
+        }
+    }
+
     private static boolean codecMatchesProfile(String codecs, int profile) {
         if (TextUtils.isEmpty(codecs)) return false;
         String expected = String.format(Locale.US, ".%02d.", profile);
