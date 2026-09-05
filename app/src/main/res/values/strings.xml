@@ -942,6 +942,8 @@
     <string name="mpv_config_custom_button_long">Long press Lua</string>
     <string name="mpv_config_custom_button_startup">Run on MPV startup</string>
     <string name="mpv_config_custom_button_enabled">Enabled in playback controls</string>
+    <string name="mpv_config_custom_button_enabled_short">ON</string>
+    <string name="mpv_config_custom_button_disabled_short">OFF</string>
     <string name="mpv_config_custom_button_delete">Delete button</string>
     <string name="mpv_config_custom_button_delete_message">Delete “%1$s”?</string>
     <string name="mpv_config_custom_button_saved">Custom button saved</string>

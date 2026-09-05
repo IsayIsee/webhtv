@@ -19,10 +19,10 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.AppCompatImageButton;
 import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
 
-import com.fongmi.android.tv.App;
 import com.fongmi.android.tv.R;
 import com.fongmi.android.tv.player.mpv.MpvConfigStore;
 import com.fongmi.android.tv.utils.Notify;
@@ -48,23 +48,31 @@ public class MpvCustomButtonDialog extends DialogFragment {
     @NonNull
     @Override
     public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
-        LinearLayout root = column(requireContext(), 18);
+        LinearLayout root = column(requireContext(), 16);
+        root.setBackgroundResource(R.drawable.shape_shell_proxy_dialog);
         LinearLayout header = row(requireContext());
         TextView title = text(requireContext(), getString(R.string.mpv_config_custom_button_title), 18, true);
         header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        MaterialButton close = button(getString(R.string.mpv_config_close));
+        AppCompatImageButton close = new AppCompatImageButton(requireContext());
+        close.setBackgroundResource(R.drawable.selector_mpv_icon_button);
+        close.setContentDescription(getString(R.string.mpv_config_close));
+        close.setPadding(ResUtil.dp2px(10), ResUtil.dp2px(10), ResUtil.dp2px(10), ResUtil.dp2px(10));
+        close.setImageResource(R.drawable.ic_dialog_close);
+        close.setColorFilter(Color.rgb(95, 99, 104));
         close.setOnClickListener(view -> dismissAllowingStateLoss());
-        header.addView(close, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ResUtil.dp2px(42)));
-        root.addView(header, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(48)));
+        header.addView(close, new LinearLayout.LayoutParams(ResUtil.dp2px(44), ResUtil.dp2px(40)));
+        root.addView(header, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(44)));
 
         ScrollView scroll = new ScrollView(requireContext());
         list = column(requireContext(), 8);
         scroll.addView(list, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
-        MaterialButton add = button(getString(R.string.mpv_config_custom_button_add));
+        MaterialButton add = button(requireContext(), getString(R.string.mpv_config_custom_button_add));
+        add.setMinHeight(0);
+        add.setMinWidth(0);
         add.setOnClickListener(view -> openEditor(null));
-        root.addView(add, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(48)));
+        root.addView(add, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(40)));
         refresh();
         return new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_WebHTV_LightDialog).setView(root).create();
     }
@@ -90,14 +98,14 @@ public class MpvCustomButtonDialog extends DialogFragment {
         LinearLayout top = row(requireContext());
         TextView title = text(requireContext(), item.title, 15, true);
         top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-        TextView state = text(requireContext(), item.enabled ? "ON" : "OFF", 11, false);
+        TextView state = text(requireContext(), item.enabled ? getString(R.string.mpv_config_custom_button_enabled_short) : getString(R.string.mpv_config_custom_button_disabled_short), 11, false);
         state.setTextColor(item.enabled ? Color.rgb(11, 87, 208) : Color.rgb(128, 134, 139));
         top.addView(state, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         row.addView(top, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         LinearLayout actions = row(requireContext());
-        MaterialButton edit = button(getString(R.string.mpv_config_edit));
+        MaterialButton edit = button(requireContext(), getString(R.string.mpv_config_edit));
         edit.setOnClickListener(view -> openEditor(item));
-        MaterialButton delete = button(getString(R.string.mpv_config_delete));
+        MaterialButton delete = button(requireContext(), getString(R.string.mpv_config_delete));
         delete.setOnClickListener(view -> confirmDelete(item));
         actions.addView(edit, new LinearLayout.LayoutParams(0, ResUtil.dp2px(40), 1));
         actions.addView(delete, new LinearLayout.LayoutParams(0, ResUtil.dp2px(40), 1));
@@ -165,8 +173,8 @@ public class MpvCustomButtonDialog extends DialogFragment {
         return view;
     }
 
-    private static MaterialButton button(String value) {
-        MaterialButton view = new MaterialButton(App.get());
+    private static MaterialButton button(android.content.Context context, String value) {
+        MaterialButton view = new MaterialButton(context);
         view.setText(value);
         view.setMinHeight(0);
         view.setMinWidth(0);
@@ -198,24 +206,25 @@ public class MpvCustomButtonDialog extends DialogFragment {
         @Override
         public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
             LinearLayout root = column(requireContext(), 18);
+            root.setBackgroundResource(R.drawable.shape_shell_proxy_dialog);
             TextView heading = text(requireContext(), getString(source == null ? R.string.mpv_config_custom_button_new : R.string.mpv_config_custom_button_edit), 18, true);
             root.addView(heading, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ResUtil.dp2px(42)));
-            title = input(getString(R.string.mpv_config_custom_button_name), source == null ? "" : source.title, false);
+            title = input(requireContext(), getString(R.string.mpv_config_custom_button_name), source == null ? "" : source.title, false);
             root.addView(title, inputParams());
             enabled = new CheckBox(requireContext());
             enabled.setText(R.string.mpv_config_custom_button_enabled);
             enabled.setChecked(source == null || source.enabled);
             root.addView(enabled, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            shortCode = input(getString(R.string.mpv_config_custom_button_short), source == null ? "" : source.content, true);
-            longCode = input(getString(R.string.mpv_config_custom_button_long), source == null ? "" : source.longPressContent, true);
-            startupCode = input(getString(R.string.mpv_config_custom_button_startup), source == null ? "" : source.onStartup, true);
+            shortCode = input(requireContext(), getString(R.string.mpv_config_custom_button_short), source == null ? "" : source.content, true);
+            longCode = input(requireContext(), getString(R.string.mpv_config_custom_button_long), source == null ? "" : source.longPressContent, true);
+            startupCode = input(requireContext(), getString(R.string.mpv_config_custom_button_startup), source == null ? "" : source.onStartup, true);
             root.addView(shortCode, inputParams());
             root.addView(longCode, inputParams());
             root.addView(startupCode, inputParams());
             LinearLayout actions = row(requireContext());
-            MaterialButton cancel = button(getString(R.string.mpv_config_close));
+            MaterialButton cancel = button(requireContext(), getString(R.string.mpv_config_close));
             cancel.setOnClickListener(view -> dismissAllowingStateLoss());
-            MaterialButton save = button(getString(R.string.mpv_config_save));
+            MaterialButton save = button(requireContext(), getString(R.string.mpv_config_save));
             save.setOnClickListener(view -> save());
             actions.addView(cancel, new LinearLayout.LayoutParams(0, ResUtil.dp2px(46), 1));
             actions.addView(save, new LinearLayout.LayoutParams(0, ResUtil.dp2px(46), 1));
@@ -237,8 +246,8 @@ public class MpvCustomButtonDialog extends DialogFragment {
             }
         }
 
-        private static TextInputEditText input(String hint, String value, boolean multiline) {
-            TextInputEditText edit = new TextInputEditText(App.get());
+        private static TextInputEditText input(android.content.Context context, String hint, String value, boolean multiline) {
+            TextInputEditText edit = new TextInputEditText(context);
             edit.setHint(hint);
             edit.setText(value);
             edit.setTextSize(14);

@@ -48,10 +48,8 @@ public final class MpvConfigStore {
     private static final String PROFILE_DIR = "profiles";
     private static final int MAX_PROFILE_BYTES = 1024 * 1024;
     public static final String CUSTOM_BUTTON_MESSAGE = "webhtv-custom-button";
-    private static final String TYPE_CUSTOM_BUTTONS = "custom_buttons";
     private static final String CUSTOM_BUTTONS_FILE = "custombuttons.json";
     private static final String CUSTOM_BUTTON_SCRIPT = "webhtv-custom-buttons.lua";
-    private static final String CUSTOM_BUTTON_PROFILE_ID = "__webhtv_custom_buttons__";
     private static final int MAX_CUSTOM_BUTTONS = 8;
     private MpvConfigStore() {
     }
@@ -555,13 +553,6 @@ public final class MpvConfigStore {
 
     private static List<ConfigProfile> scriptProfiles() {
         List<ConfigProfile> result = new ArrayList<>();
-        ConfigProfile custom = new ConfigProfile();
-        custom.id = CUSTOM_BUTTON_PROFILE_ID;
-        custom.name = ResUtil.getString(R.string.mpv_config_custom_buttons);
-        custom.type = TYPE_CUSTOM_BUTTONS;
-        custom.source = customButtonsFile().getAbsolutePath();
-        custom.time = customButtonsFile().isFile() ? customButtonsFile().lastModified() : 0;
-        result.add(custom);
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         if (files == null) return result;
         for (File file : files) {
@@ -1130,10 +1121,6 @@ public final class MpvConfigStore {
             return TYPE_DEFAULT.equals(type);
         }
 
-        public boolean isCustomButtons() {
-            return TYPE_CUSTOM_BUTTONS.equals(type);
-        }
-
         public boolean isImported() {
             return TYPE_FILE.equals(type) || TYPE_URL.equals(type);
         }
@@ -1142,7 +1129,6 @@ public final class MpvConfigStore {
             if (isDefault()) return ResUtil.getString(R.string.mpv_config_default);
             if (TYPE_URL.equals(type)) return ResUtil.getString(R.string.mpv_config_url);
             if (TYPE_FILE.equals(type)) return ResUtil.getString(R.string.mpv_config_local);
-            if (TYPE_CUSTOM_BUTTONS.equals(type)) return ResUtil.getString(R.string.mpv_config_custom_buttons);
             return ResUtil.getString(R.string.mpv_config_text);
         }
     }

@@ -4,7 +4,7 @@
 
 - Objective: 将 MPV 配置管理的 `scripts` 改造成可维护的自定义播放按钮入口，并接入移动端/电视端 MPV 控制条。
 - Acceptance: 普通 `.lua/.js` 管理语义不变；自定义按钮支持标题、短按 Lua、长按 Lua、启动 Lua、启用状态和固定最多 8 个按钮；按钮通过 `script-message` 调用；非 MPV 播放不显示；桥接脚本不触发 GPU 视频处理判定；Java 编译和核心 JSON 解析验证通过。
-- Current stage: implementation complete; local Java compilation passed.
+- Current stage: implementation complete; local Java compilation and device UI smoke test passed.
 - Next action: 完成 task guard 原子提交并创建恢复 tag。
 
 ## 任务与范围
@@ -48,7 +48,7 @@ MPV 官方 Anime4K 资料在本阶段未作为实现依据：网络获取官方 
 
 - 数据文件：`files/mpv/scripts/custombuttons.json`，每项含 `id`、`title`、`content`、`longPressContent`、`onStartup`、`enabled`、`order`；ID 使用 UUID/安全字符，最多保留 8 项。
 - 生成文件：`files/mpv/scripts/webhtv-custom-buttons.lua`。只注册 `webhtv-custom-button` 消息并执行对应 Lua；错误使用 `pcall` 记录，不影响播放器主流程。
-- 配置 UI：scripts 页增加“自定义按钮”受管入口；编辑器提供标题、启用、短按、长按、启动代码；普通脚本仍走原有编辑器。
+- 配置 UI：scripts 页复用 MPV 配置管理顶部已有的“新建”按钮；切换到 scripts 后点击“新建”进入自定义按钮管理界面，编辑器提供标题、启用、短按、长按、启动代码；列表只显示普通 Lua/JS 脚本。
 - 播放桥：`MpvPlayer` 暴露窄范围 `sendScriptMessage`；`MpvPlayerEngine` 和 `PlayerManager` 提供 MPV 专用调用，UI 不直接依赖全局 `MPVLib`。
 - 播放控制：两端复用既有 action container，最多插入 8 个启用按钮；Android 长按触发 `long`，短按触发 `short`；非 MPV 播放隐藏。
 - 生效时机：按钮文件在下次 MPV 实例创建时自动加载；配置变更不强制重建当前会话，避免打断播放。后续如需热重载，使用独立任务扩展。
@@ -68,7 +68,7 @@ MPV 官方 Anime4K 资料在本阶段未作为实现依据：网络获取官方 
 1. `MpvConfigStore` JSON round-trip、非法 JSON、重复/非法 ID、最多 8 项和桥接脚本生成测试通过。
 2. `:app:compileDebugJavaWithJavac` 通过；`git diff --check` 通过。
 3. 移动端和电视端 MPV 播放时启用按钮可见，短按/长按分别发送消息；Exo/IJK 播放时按钮隐藏。
-4. 新建、编辑、删除、禁用、重新进入配置页后数据保持；普通 Lua/JS 脚本仍可导入和运行。
+4. scripts tab 顶部“新建”可打开自定义按钮管理；新建、编辑、删除、禁用、重新进入配置页后数据保持；普通 Lua/JS 脚本仍可导入和运行。
 5. MPV 日志能看到桥接脚本加载/用户脚本错误，且不影响播放；surface-direct 判定不因桥接脚本改变。
 6. TV 遥控器可聚焦、确认、长按按钮，横向操作条不发生布局跳变。
 
@@ -88,7 +88,7 @@ MPV 官方 Anime4K 资料在本阶段未作为实现依据：网络获取官方 
 
 - `MpvConfigStore` 增加最多 8 项按钮的 JSON 读写、ID/文本校验、生成式 `webhtv-custom-buttons.lua`、启动/短按/长按代码和受管 scripts 条目。
 - `MpvPlayer.sendScriptMessage()`、`MpvPlayerEngine.sendScriptMessage()`、`PlayerManager.sendMpvCustomButton()` 建立窄范围调用链，UI 不直接依赖 `MPVLib`。
-- `MpvCustomButtonDialog` 提供列表、新建、编辑、启用/禁用、删除；`MpvConfigCreateDialog` 在 scripts 目标增加入口。
+- `MpvCustomButtonDialog` 提供列表、新建、编辑、启用/禁用、删除；`MpvConfigDialog` 在 scripts 目标复用顶部“新建”按钮打开管理界面，`MpvConfigCreateDialog` 保持普通配置创建流程。
 - 移动端/电视端 `VideoActivity` 将启用按钮追加到既有 action container，支持短按/长按和 MPV-only 可见性；TV 按钮可聚焦。
 - `hasGpuVideoProcessing()`、普通脚本列表和脚本清理排除受管桥接 Lua；普通 Lua/JS 语义保持不变。
 
@@ -97,9 +97,16 @@ MPV 官方 Anime4K 资料在本阶段未作为实现依据：网络获取官方 
 - `bash ./gradlew compileMobileArm64_v8aDebugJavaWithJavac compileLeanbackArm64_v8aDebugJavaWithJavac --no-daemon`：通过（BUILD SUCCESSFUL，1m43s）。
 - `git diff --check`：通过。
 - `bash .codex/skills/upstream-integration-governor/scripts/verify_upstream_checkpoint.sh docs/upstream-player-dependency-merge-assessment-2026-08-20.md`：通过（文档阶段验证）。
-- 设备行为验证尚未执行；需要安装 APK 后在移动端和电视端分别验证按钮显示、短按/长按 Lua、普通脚本兼容和 TV 焦点。
+- `app-mobile-arm64_v8a-debug.apk` 已安装至 `V2453A`（serial `10CF6H1D2L0009S`）；切换 scripts tab 后确认列表不含独立自定义按钮条目，顶部“新建”存在并能打开中文自定义按钮管理界面；继续打开“添加按钮”进入中文编辑页；该流程无 `FATAL EXCEPTION`。
 
 ## 当前状态
 
-- 状态：implementation complete, device validation pending。
+- 状态：implementation complete, local compilation and mobile UI smoke test passed。
 - 已知限制：配置修改在下次 MPV 实例创建时生效；当前播放会话不热重载桥接脚本。Lua 代码按用户权限执行，不提供沙箱。
+
+## 修复记录：2026-09-05
+
+- 首版设备崩溃原因：`MpvCustomButtonDialog.button()` 使用 `App.get()` 创建 `MaterialButton`，Material 主题校验失败；已改为使用当前 Dialog 的 themed `Context`，编辑器输入框同样修正。
+- 交互调整：移除 `MpvConfigCreateDialog` 中额外的自定义按钮卡片和 scripts 列表中的伪造 profile；自定义按钮改为 scripts tab 顶部“新建”按钮的专用行为，列表只保留真实脚本，管理界面沿用配置管理/新建配置的标题栏、关闭按钮和对话框外壳。
+- 文案调整：新增按钮相关 strings 已补齐简体中文和繁体中文，状态文案不再硬编码英文 `ON/OFF`。
+- 修复后验证：打开 MPV 配置管理、进入 scripts、确认无独立自定义按钮条目、点击顶部“新建”打开中文自定义按钮管理，再进入按钮编辑页；未复现崩溃。

@@ -78,7 +78,13 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
     @Override
     protected void initEvent() {
         binding.close.setOnClickListener(view -> dismiss());
-        binding.create.setOnClickListener(view -> MpvConfigCreateDialog.show(getChildFragmentManager(), target, this));
+        binding.create.setOnClickListener(view -> {
+            if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) {
+                openCustomButtons();
+            } else {
+                MpvConfigCreateDialog.show(getChildFragmentManager(), target, this);
+            }
+        });
     }
 
     private void setupTabs() {
@@ -175,10 +181,6 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
     @Override
     public void onSelect(MpvConfigStore.ConfigProfile profile) {
         if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) {
-            if (profile.isCustomButtons()) {
-                openCustomButtons();
-                return;
-            }
             openEditor(profile);
             return;
         }
@@ -196,10 +198,6 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
 
     @Override
     public void onMore(View anchor, MpvConfigStore.ConfigProfile profile) {
-        if (profile.isCustomButtons()) {
-            openCustomButtons();
-            return;
-        }
         LinearLayout content = new LinearLayout(requireContext());
         content.setOrientation(LinearLayout.VERTICAL);
         content.setBackgroundResource(R.drawable.shape_mpv_action_menu);
@@ -292,11 +290,6 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
         else template = "# WebHTV mpv.conf\n\n";
         String displayName = TextUtils.isEmpty(name) ? getString(R.string.mpv_config_untitled) : name;
         showEditor(null, displayName, template, true);
-    }
-
-    @Override
-    public void onCustomButton() {
-        openCustomButtons();
     }
 
     private void openCustomButtons() {
