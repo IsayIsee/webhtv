@@ -40,14 +40,23 @@ final class MpvAudioCapabilities {
         for (String codec : advertised) {
             if (supportsMpvCarrier(codec)) carrierCodecs.add(codec);
         }
-        carrierCodecs.addAll(getAudioCompressedCodecs(appContext));
+        boolean passthroughRoute = hasPassthroughOutputDevice(manager);
+        addCompressedCodecsIfRouted(
+                carrierCodecs, getAudioCompressedCodecs(appContext), passthroughRoute);
         String value = String.join(",", carrierCodecs);
         if (SpiderDebug.isEnabled()) {
             SpiderDebug.log("mpv-audio", "spdif codecs=%s media3=%s devices=%s carrier=%s route=%s",
                     value, media3Codecs, describeDevices(manager), carrierCodecs,
-                    hasPassthroughOutputDevice(manager));
+                    passthroughRoute);
         }
         return value;
+    }
+
+    static void addCompressedCodecsIfRouted(Set<String> target, Set<String> compressed,
+                                            boolean passthroughRoute) {
+        if (passthroughRoute && target != null && compressed != null) {
+            target.addAll(compressed);
+        }
     }
 
     static Set<String> getAudioCompressedCodecs(Context context) {

@@ -63,6 +63,14 @@ Current status: the deterministic `硬解`/`软解` wording unit, App-side compr
 
 Next action: reconnect V2453A, install the APK, then run one continuous MPV session and one continuous Exo session with per-file completion evidence for every requested fixture.
 
+## Checkpoint 2026-09-05 14:30 CST: TV internal-speaker route correction
+
+-现场日志 `/private/tmp/webhtv-tv-online-log-current-20260905.txt` confirmed `devices=speaker:* route=false`, while `audio-spdif` still contained `aac,mp3` and the selected decoder was `spdif_raw_aac`.
+- This is an App capability-gating bug: `getAudioCompressedCodecs()` reports platform direct support, but that support is not a usable passthrough route on a TV with only its built-in speaker. The failed compressed path stalls the audio clock; the resulting video timestamps are then about 960 ms late and are dropped by `vo_mediacodec_embed`.
+- `MpvAudioCapabilities` now adds AAC/MP3 compressed codecs only when an HDMI/ARC/eARC/USB sink is present. With `route=false`, `audio-spdif` is empty and MPV uses its existing same-track PCM fallback. Existing IEC61937 codec probing is unchanged.
+- Native `mpv-mediacodec-embed-timed-release.patch` is intentionally unchanged in this checkpoint. Revisit it only if the same sample still shows late drops after the audio output is confirmed PCM and advancing.
+- Added focused route-gating tests for both no-route and routed cases. Next action: run the tests/compile once, install the APK, then re-capture TV logs to confirm `audio-spdif` is empty, `audio-out-params` is PCM, and `displayFps` is non-zero with drops no longer increasing rapidly.
+
 ## Checkpoint 2026-09-03 14:15 CST: build complete, device unavailable
 
 - `scripts/build_mpv_native.sh --abi all --install` completed successfully; arm64-v8a and armeabi-v7a `libmpv.so` assets were regenerated from the locked MPV/FFmpeg source and patched stack.
