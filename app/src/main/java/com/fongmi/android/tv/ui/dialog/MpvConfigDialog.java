@@ -78,13 +78,7 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
     @Override
     protected void initEvent() {
         binding.close.setOnClickListener(view -> dismiss());
-        binding.create.setOnClickListener(view -> {
-            if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) {
-                openCustomButtons();
-            } else {
-                MpvConfigCreateDialog.show(getChildFragmentManager(), target, this);
-            }
-        });
+        binding.create.setOnClickListener(view -> MpvConfigCreateDialog.show(getChildFragmentManager(), target, this));
     }
 
     private void setupTabs() {
@@ -292,11 +286,9 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
         showEditor(null, displayName, template, true);
     }
 
-    private void openCustomButtons() {
-        MpvCustomButtonDialog.show(getChildFragmentManager(), () -> {
-            reload();
-            notifyChanged();
-        });
+    private void onScriptButtonSaved() {
+        reload();
+        notifyChanged();
     }
 
     @Override

@@ -14,6 +14,7 @@
         android:orientation="horizontal">
 
         <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/createTitle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -46,6 +47,7 @@
         android:textSize="13sp" />
 
     <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/nameLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
@@ -73,7 +75,135 @@
 
     </com.google.android.material.textfield.TextInputLayout>
 
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/scriptButtonPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/mpv_config_custom_button_enabled"
+                android:textColor="#3C4043"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/buttonEnabled"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true" />
+
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <com.google.android.material.textview.MaterialTextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="@string/mpv_config_custom_button_trigger"
+            android:textColor="#3C4043"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/triggerGroup"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            app:checkedButton="@id/triggerClick"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/triggerClick"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:minHeight="0dp"
+                android:text="@string/mpv_config_custom_button_trigger_click" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/triggerLong"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:minHeight="0dp"
+                android:text="@string/mpv_config_custom_button_trigger_long" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/triggerStartup"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:minHeight="0dp"
+                android:text="@string/mpv_config_custom_button_trigger_startup" />
+
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <com.google.android.material.textfield.TextInputLayout
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            app:hintEnabled="false">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/scriptCode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="top|start"
+                android:hint="@string/mpv_config_custom_button_code_hint"
+                android:inputType="textMultiLine|textNoSuggestions"
+                android:minLines="7"
+                android:padding="12dp" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="end|center_vertical"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/buttonCancel"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:minHeight="40dp"
+                android:text="@string/mpv_config_close" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/buttonSave"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="8dp"
+                android:minHeight="40dp"
+                android:text="@string/mpv_config_save"
+                android:textColor="@color/dialog_primary_button_text"
+                app:backgroundTint="@color/dialog_primary_button_bg" />
+
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
     <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/methodLabel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"
@@ -109,6 +239,7 @@
             android:orientation="vertical">
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/textOptionTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_text_edit"
@@ -117,6 +248,7 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/textOptionDesc"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_text_edit_desc"
@@ -160,6 +292,7 @@
             android:orientation="vertical">
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/urlOptionTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_import_url"
@@ -168,6 +301,7 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/urlOptionDesc"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_import_url_desc"
@@ -212,6 +346,7 @@
             android:orientation="vertical">
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/importOptionTitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_import_file"
@@ -220,6 +355,7 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/importOptionDesc"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/mpv_config_import_file_desc"

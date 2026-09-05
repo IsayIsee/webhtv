@@ -25,6 +25,9 @@ import com.fongmi.android.tv.utils.Notify;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Util;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.button.MaterialButtonToggleGroup;
+import com.google.android.material.textfield.TextInputEditText;
+import com.google.android.material.switchmaterial.SwitchMaterial;
 
 public class MpvConfigCreateDialog extends BaseAlertDialog {
 
@@ -32,18 +35,33 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         void onText(String name);
 
         void onImport(String name, String path);
-
     }
 
     private DialogMpvConfigCreateBinding binding;
     private Listener listener;
     private String target;
+    private boolean scriptButtonMode;
+    private MpvConfigStore.CustomButton sourceButton;
+    private Runnable buttonCallback;
+    private String shortCode;
+    private String longCode;
+    private String startupCode;
+    private int triggerId;
 
     public static void show(FragmentManager manager, String target, Listener listener) {
         MpvConfigCreateDialog dialog = new MpvConfigCreateDialog();
         dialog.target = target;
         dialog.listener = listener;
         dialog.show(manager, "mpv-config-create");
+    }
+
+    public static void showScriptButton(FragmentManager manager, @Nullable MpvConfigStore.CustomButton source, Runnable callback) {
+        MpvConfigCreateDialog dialog = new MpvConfigCreateDialog();
+        dialog.target = MpvConfigStore.TARGET_SCRIPTS;
+        dialog.scriptButtonMode = true;
+        dialog.sourceButton = source;
+        dialog.buttonCallback = callback;
+        dialog.show(manager, "mpv-script-button");
     }
 
     @Override
@@ -58,13 +76,27 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
 
     @Override
     protected void initView() {
-        setupTvFocus();
+        if (scriptButtonMode) setupScriptButton();
+        else if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) setupScriptCreation();
+        else setupTvFocus();
     }
 
     @Override
     protected void initEvent() {
         binding.close.setOnClickListener(view -> dismiss());
-        binding.textOption.setOnClickListener(view -> createText());
+        binding.triggerGroup.addOnButtonCheckedListener(this::onTriggerChecked);
+        binding.buttonCancel.setOnClickListener(view -> {
+            if (scriptButtonMode && sourceButton == null) showScriptCreation();
+            else dismissAllowingStateLoss();
+        });
+        binding.buttonSave.setOnClickListener(view -> saveScriptButton());
+        binding.textOption.setOnClickListener(view -> {
+            if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) enterScriptButtonEditor();
+            else createText();
+        });
+        if (scriptButtonMode) {
+            return;
+        }
         binding.urlOption.setOnClickListener(view -> showUrlInput());
         binding.importOption.setOnClickListener(view -> chooseFile());
         binding.urlBack.setOnClickListener(view -> showOptions());
@@ -106,6 +138,122 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.urlImport.setNextFocusLeftId(R.id.urlBack);
     }
 
+    private void setupScriptButton() {
+        binding.createTitle.setText(getString(sourceButton == null ? R.string.mpv_config_custom_button_new : R.string.mpv_config_custom_button_edit));
+        binding.chooseAction.setText(R.string.mpv_config_custom_button_new_desc);
+        binding.chooseAction.setVisibility(View.VISIBLE);
+        binding.nameLabel.setText(R.string.mpv_config_custom_button_name);
+        binding.name.setHint(R.string.mpv_config_custom_button_name_hint);
+        binding.name.setText(sourceButton == null ? "" : sourceButton.title);
+        binding.methodLabel.setVisibility(View.GONE);
+        binding.textOption.setVisibility(View.GONE);
+        binding.urlOption.setVisibility(View.GONE);
+        binding.importOption.setVisibility(View.GONE);
+        binding.urlPanel.setVisibility(View.GONE);
+        binding.scriptButtonPanel.setVisibility(View.VISIBLE);
+        binding.buttonEnabled.setChecked(sourceButton == null || sourceButton.enabled);
+        shortCode = sourceButton == null ? "" : value(sourceButton.content);
+        longCode = sourceButton == null ? "" : value(sourceButton.longPressContent);
+        startupCode = sourceButton == null ? "" : value(sourceButton.onStartup);
+        triggerId = R.id.triggerClick;
+        binding.triggerGroup.check(triggerId);
+        binding.scriptCode.setText(shortCode);
+        binding.scriptCode.setSelection(binding.scriptCode.length());
+        if (Util.isLeanback()) {
+            tvFocusable(binding.close);
+            tvFocusable(binding.name);
+            tvFocusable(binding.buttonEnabled);
+            tvFocusable(binding.triggerClick);
+            tvFocusable(binding.triggerLong);
+            tvFocusable(binding.triggerStartup);
+            tvFocusable(binding.scriptCode);
+            tvFocusable(binding.buttonCancel);
+            tvFocusable(binding.buttonSave);
+            binding.close.setNextFocusDownId(R.id.name);
+            binding.name.setNextFocusUpId(R.id.close);
+            binding.name.setNextFocusDownId(R.id.buttonEnabled);
+            binding.buttonEnabled.setNextFocusUpId(R.id.name);
+            binding.buttonEnabled.setNextFocusDownId(R.id.triggerClick);
+            binding.triggerClick.setNextFocusUpId(R.id.buttonEnabled);
+            binding.triggerClick.setNextFocusDownId(R.id.scriptCode);
+            binding.triggerLong.setNextFocusDownId(R.id.scriptCode);
+            binding.triggerStartup.setNextFocusDownId(R.id.scriptCode);
+            binding.scriptCode.setNextFocusUpId(R.id.triggerClick);
+            binding.scriptCode.setNextFocusDownId(R.id.buttonCancel);
+            binding.buttonCancel.setNextFocusUpId(R.id.scriptCode);
+            binding.buttonCancel.setNextFocusRightId(R.id.buttonSave);
+            binding.buttonSave.setNextFocusLeftId(R.id.buttonCancel);
+        }
+    }
+
+    private void setupScriptCreation() {
+        binding.createTitle.setText(R.string.mpv_config_custom_button_new);
+        binding.chooseAction.setText(R.string.mpv_config_script_create_desc);
+        binding.nameLabel.setText(R.string.mpv_config_name_optional);
+        binding.name.setHint(R.string.mpv_config_custom_button_name_hint);
+        binding.textOptionTitle.setText(R.string.mpv_config_script_text_edit);
+        binding.textOptionDesc.setText(R.string.mpv_config_script_text_edit_desc);
+        binding.urlOptionTitle.setText(R.string.mpv_config_script_import_url);
+        binding.urlOptionDesc.setText(R.string.mpv_config_script_import_url_desc);
+        binding.importOptionTitle.setText(R.string.mpv_config_script_import_file);
+        binding.importOptionDesc.setText(R.string.mpv_config_script_import_file_desc);
+        showScriptCreation();
+    }
+
+    private void showScriptCreation() {
+        scriptButtonMode = false;
+        binding.createTitle.setText(R.string.mpv_config_custom_button_new);
+        binding.chooseAction.setVisibility(View.VISIBLE);
+        binding.nameLabel.setVisibility(View.VISIBLE);
+        binding.nameLayout.setVisibility(View.VISIBLE);
+        binding.methodLabel.setVisibility(View.VISIBLE);
+        binding.textOption.setVisibility(View.VISIBLE);
+        binding.urlOption.setVisibility(View.VISIBLE);
+        binding.importOption.setVisibility(View.VISIBLE);
+        binding.urlPanel.setVisibility(View.GONE);
+        binding.scriptButtonPanel.setVisibility(View.GONE);
+    }
+
+    private void enterScriptButtonEditor() {
+        scriptButtonMode = true;
+        setupScriptButton();
+        binding.name.requestFocus();
+    }
+
+    private void onTriggerChecked(MaterialButtonToggleGroup group, int checkedId, boolean isChecked) {
+        if (!scriptButtonMode || !isChecked || checkedId == triggerId) return;
+        saveCurrentCode();
+        triggerId = checkedId;
+        binding.scriptCode.setText(codeForTrigger(checkedId));
+        binding.scriptCode.setSelection(binding.scriptCode.length());
+    }
+
+    private void saveCurrentCode() {
+        if (binding == null || binding.scriptCode == null) return;
+        String code = value(binding.scriptCode);
+        if (triggerId == R.id.triggerLong) longCode = code;
+        else if (triggerId == R.id.triggerStartup) startupCode = code;
+        else shortCode = code;
+    }
+
+    private String codeForTrigger(int id) {
+        if (id == R.id.triggerLong) return longCode;
+        if (id == R.id.triggerStartup) return startupCode;
+        return shortCode;
+    }
+
+    private void saveScriptButton() {
+        saveCurrentCode();
+        try {
+            MpvConfigStore.saveCustomButton(sourceButton == null ? "" : sourceButton.id, name(), shortCode, longCode, startupCode, binding.buttonEnabled.isChecked());
+            Notify.show(R.string.mpv_config_custom_button_saved);
+            if (buttonCallback != null) buttonCallback.run();
+            dismissAllowingStateLoss();
+        } catch (Throwable error) {
+            Notify.show(message(error));
+        }
+    }
+
     private static void tvFocusable(View view) {
         view.setFocusable(true);
         view.setFocusableInTouchMode(true);
@@ -122,7 +270,6 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
             if (listener != null) listener.onText(name);
         });
     }
-
 
     private void chooseFile() {
         String mime = MpvConfigStore.TARGET_SCRIPTS.equals(target) ? "application/octet-stream" : "text/*";
@@ -199,6 +346,21 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         window.setAttributes(params);
         window.setLayout(params.width, WindowManager.LayoutParams.WRAP_CONTENT);
-        if (Util.isLeanback()) binding.textOption.post(() -> binding.textOption.requestFocus());
+        if (Util.isLeanback()) {
+            if (scriptButtonMode) binding.name.post(() -> binding.name.requestFocus());
+            else binding.textOption.post(() -> binding.textOption.requestFocus());
+        }
+    }
+
+    private static String value(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String value(TextInputEditText edit) {
+        return edit.getText() == null ? "" : edit.getText().toString();
+    }
+
+    private static String message(Throwable error) {
+        return TextUtils.isEmpty(error.getMessage()) ? error.getClass().getSimpleName() : error.getMessage();
     }
 }
