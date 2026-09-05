@@ -726,6 +726,7 @@
     <string name="sync_select_none">取消全选</string>
     <string name="sync_item_config">接口与站源列表</string>
     <string name="sync_item_spider">Jar/脚本保存数据</string>
+    <string name="sync_item_mpv_config">MPV 配置管理</string>
     <string name="sync_item_login_state">登录态</string>
     <string name="sync_item_webhome">WebHome 主页数据</string>
     <string name="sync_item_search">搜索记录</string>

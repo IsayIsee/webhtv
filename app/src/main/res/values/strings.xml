@@ -728,6 +728,7 @@
     <string name="sync_select_none">Deselect all</string>
     <string name="sync_item_config">Interfaces and source lists</string>
     <string name="sync_item_spider">Jar/script saved data</string>
+    <string name="sync_item_mpv_config">MPV configuration management</string>
     <string name="sync_item_login_state">Login state</string>
     <string name="sync_item_webhome">WebHome saved data</string>
     <string name="sync_item_search">Search records</string>

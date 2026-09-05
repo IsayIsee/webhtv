@@ -710,6 +710,7 @@
     <string name="sync_select_none">取消全選</string>
     <string name="sync_item_config">接口與站源列表</string>
     <string name="sync_item_spider">Jar/腳本保存資料</string>
+    <string name="sync_item_mpv_config">MPV 配置管理</string>
     <string name="sync_item_login_state">登入狀態</string>
     <string name="sync_item_webhome">WebHome 主頁資料</string>
     <string name="sync_item_search">搜尋記錄</string>
