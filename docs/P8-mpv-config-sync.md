@@ -56,7 +56,7 @@
 
 - 用户已授权实施（2026-09-06）。
 - `SyncOptions` 增加默认关闭的 `mpvConfig`，一键同步 UI 增加“MPV 配置管理”复选项并纳入全选/取消全选。
-- `Backup` 仅在该选项开启时携带 `mpv_config_*` 偏好；`Action`、`Manage`、`RemoteSyncTransfer` 统一发送/恢复 `mpvConfigFiles`。
+- `Backup` 仅在该选项开启时携带 `mpv_config_*` 偏好，并在恢复前清除接收端旧的 MPV 状态键；`Action`、`Manage`、`RemoteSyncTransfer` 统一发送/恢复 `mpvConfigFiles`。
 - `MpvConfigSync` 使用临时目录和固定 allowlist 归档/恢复 `mpv.conf`、`input.conf`、`scripts/`、两个 profile snapshot 目录；限制条目数/单文件/总大小，拒绝绝对路径、`..` 和 canonical-path 逃逸；恢复后重建自定义按钮桥接脚本。
 - 状态：implementation complete，待 task guard 原子提交和恢复 tag。
 

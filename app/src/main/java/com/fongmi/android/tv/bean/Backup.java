@@ -126,7 +126,9 @@ public class Backup {
             for (History item : getHistory()) if (cids.containsKey(item.getCid())) item.setCid(cids.get(item.getCid()));
             AppDatabase.get().getHistoryDao().insertOrUpdate(getHistory());
         }
-        restorePrefers(filter(getPrefers(), options), false, false);
+        Map<String, ?> prefers = filter(getPrefers(), options);
+        if (options.isMpvConfig()) clearMpvConfigPreferences();
+        restorePrefers(prefers, false, false);
         if (options.isConfig() || options.isSpider() || options.isWebHome() || options.isLoginState()) BaseLoader.get().clear();
         if (options.isConfig() || options.isSpider() || options.isWebHome() || options.isLoginState()) reloadConfig();
         if (options.isWebHome()) refreshWebHomeExtensions();
@@ -210,6 +212,19 @@ public class Backup {
         putPrefers(editor, preserved);
         putPrefers(editor, values);
         editor.commit();
+    }
+
+    private static void clearMpvConfigPreferences() {
+        SharedPreferences preferences = Prefers.getPrefers();
+        SharedPreferences.Editor editor = preferences.edit();
+        boolean changed = false;
+        for (String key : preferences.getAll().keySet()) {
+            if (key.startsWith("mpv_config_")) {
+                editor.remove(key);
+                changed = true;
+            }
+        }
+        if (changed) editor.commit();
     }
 
     private static boolean containsPlaybackPerformanceProfile(
