@@ -76,7 +76,7 @@
     </com.google.android.material.textfield.TextInputLayout>
 
     <androidx.appcompat.widget.LinearLayoutCompat
-        android:id="@+id/scriptButtonPanel"
+        android:id="@+id/scriptSettingsPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
@@ -153,24 +153,47 @@
 
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
-        <com.google.android.material.textfield.TextInputLayout
-            style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+    </androidx.appcompat.widget.LinearLayoutCompat>
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:id="@+id/scriptButtonPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <com.fongmi.android.tv.ui.custom.MpvConfigEditText
+            android:id="@+id/scriptCode"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            app:hintEnabled="false">
+            android:background="@drawable/shape_mpv_editor"
+            android:gravity="top|start"
+            android:hint="@string/mpv_config_custom_button_code_hint"
+            android:inputType="textMultiLine|textNoSuggestions"
+            android:minHeight="260dp"
+            android:overScrollMode="ifContentScrolls"
+            android:padding="12dp"
+            android:scrollbars="vertical|horizontal"
+            android:textColor="#303134"
+            android:textSize="13sp" />
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/scriptCode"
-                android:layout_width="match_parent"
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="30dp"
+            android:gravity="center_vertical"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp">
+
+            <com.google.android.material.textview.MaterialTextView
+                android:id="@+id/scriptStats"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:gravity="top|start"
-                android:hint="@string/mpv_config_custom_button_code_hint"
-                android:inputType="textMultiLine|textNoSuggestions"
-                android:minLines="7"
-                android:padding="12dp" />
+                android:textColor="#80868B"
+                android:textSize="11sp" />
 
-        </com.google.android.material.textfield.TextInputLayout>
+        </androidx.appcompat.widget.LinearLayoutCompat>
 
         <androidx.appcompat.widget.LinearLayoutCompat
             android:layout_width="match_parent"

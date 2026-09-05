@@ -23,6 +23,7 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.animation.LinearInterpolator;
@@ -249,6 +250,8 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     private final Map<String, String> mAudioQueueLyrics = new HashMap<>();
     private Map<String, View> mActionButtons;
     private final List<View> mCustomActionViews = new ArrayList<>();
+    private LinearLayout mCustomLeftButtons;
+    private LinearLayout mCustomRightButtons;
     private QuickSearchDialog mQuickSearchDialog;
     private PlayerOsdController mOsd;
     private CustomKeyDownVod mKeyDown;
@@ -872,33 +875,74 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
     }
 
     private void setupCustomActionButtons() {
-        ViewGroup container = mBinding.control.action.container;
-        for (View view : mCustomActionViews) container.removeView(view);
+        ensureCustomButtonContainers();
+        for (View view : mCustomActionViews) {
+            ViewParent parent = view.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(view);
+        }
         mCustomActionViews.clear();
-        for (MpvConfigStore.CustomButton button : MpvConfigStore.customButtons()) {
+        List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.customButtons();
+        for (int index = 0; index < buttons.size(); index++) {
+            MpvConfigStore.CustomButton button = buttons.get(index);
             if (!button.enabled) continue;
             TextView view = new TextView(this);
-            view.setTextAppearance(this, R.style.Control);
+            view.setTextSize(13);
+            view.setTextColor(Color.WHITE);
+            view.setGravity(Gravity.CENTER);
+            view.setMinHeight(ResUtil.dp2px(40));
+            view.setMinWidth(ResUtil.dp2px(56));
+            view.setPadding(ResUtil.dp2px(10), ResUtil.dp2px(4), ResUtil.dp2px(10), ResUtil.dp2px(4));
+            view.setBackgroundResource(R.drawable.selector_control_sheet_button);
             view.setText(button.title);
             view.setSingleLine(true);
+            view.setMaxWidth(ResUtil.dp2px(144));
             view.setEllipsize(TextUtils.TruncateAt.END);
             view.setContentDescription(button.title);
-            view.setOnClickListener(item -> player().sendMpvCustomButton(button.id, false));
+            view.setOnClickListener(item -> {
+                player().sendMpvCustomButton(button.id, false);
+                setR1Callback();
+            });
             view.setOnLongClickListener(item -> {
                 player().sendMpvCustomButton(button.id, true);
+                setR1Callback();
                 return true;
             });
             view.setFocusable(true);
             view.setFocusableInTouchMode(true);
-            container.addView(view);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ResUtil.dp2px(40));
+            params.setMargins(ResUtil.dp2px(4), ResUtil.dp2px(2), ResUtil.dp2px(4), ResUtil.dp2px(2));
+            (index < 4 ? mCustomLeftButtons : mCustomRightButtons).addView(view, params);
             mCustomActionViews.add(view);
         }
+        updateCustomButtonVisibility();
+    }
+
+    private void ensureCustomButtonContainers() {
+        if (mCustomLeftButtons != null) return;
+        mCustomLeftButtons = new LinearLayout(this);
+        mCustomRightButtons = new LinearLayout(this);
+        mCustomLeftButtons.setGravity(Gravity.CENTER_VERTICAL);
+        mCustomRightButtons.setGravity(Gravity.CENTER_VERTICAL);
+        mCustomLeftButtons.setOrientation(LinearLayout.HORIZONTAL);
+        mCustomRightButtons.setOrientation(LinearLayout.HORIZONTAL);
+        FrameLayout.LayoutParams leftParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START | Gravity.CENTER_VERTICAL);
+        FrameLayout.LayoutParams rightParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END | Gravity.CENTER_VERTICAL);
+        int margin = ResUtil.dp2px(8);
+        leftParams.setMargins(margin, 0, margin, 0);
+        rightParams.setMargins(margin, 0, margin, 0);
+        mBinding.video.addView(mCustomLeftButtons, leftParams);
+        mBinding.video.addView(mCustomRightButtons, rightParams);
+    }
+
+    private void updateCustomButtonVisibility() {
+        boolean visible = service() != null && player().isMpv() && isVisible(mBinding.control.getRoot());
+        if (mCustomLeftButtons != null) mCustomLeftButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (mCustomRightButtons != null) mCustomRightButtons.setVisibility(visible ? View.VISIBLE : View.GONE);
     }
 
     private void applyActionButtonVisibility() {
         if (mActionButtons != null) PlayerButtonSetting.applyVisibility(mActionButtons);
-        boolean visible = service() != null && player().isMpv();
-        for (View view : mCustomActionViews) view.setVisibility(visible ? View.VISIBLE : View.GONE);
+        updateCustomButtonVisibility();
         mBinding.control.action.cast.setVisibility(isFullscreen() ? View.GONE : View.VISIBLE);
         updateImmersiveAudioAction();
         updatePanDiagnosticAction();
@@ -3408,6 +3452,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
         showTopInfo();
         setPlayParamsState();
         mBinding.control.getRoot().setVisibility(View.VISIBLE);
+        updateCustomButtonVisibility();
         if (mOsd != null) mOsd.setControlsVisible(true);
         view.requestFocus();
         setR1Callback();
@@ -3415,6 +3460,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
 
     private void hideControl() {
         mBinding.control.getRoot().setVisibility(View.GONE);
+        updateCustomButtonVisibility();
         if (mOsd != null) mOsd.setControlsVisible(false);
         if (player().isPlaying()) mBinding.widget.top.setVisibility(View.GONE);
         App.removeCallbacks(mR1);

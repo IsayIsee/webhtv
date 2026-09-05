@@ -965,7 +965,7 @@
     <string name="mpv_config_close">關閉</string>
     <string name="mpv_config_custom_buttons">腳本按鈕</string>
     <string name="mpv_config_custom_button_new">新增腳本按鈕</string>
-    <string name="mpv_config_custom_button_new_desc">新增至 MPV 播放控制列</string>
+    <string name="mpv_config_custom_button_new_desc">新增至播放器控制層</string>
     <string name="mpv_config_custom_button_title">腳本按鈕</string>
     <string name="mpv_config_custom_button_subtitle">在腳本清單中管理播放控制按鈕</string>
     <string name="mpv_config_custom_button_empty">尚無自訂按鈕</string>
@@ -1001,7 +1001,7 @@
     <string name="mpv_config_custom_button_code_hint">輸入 Lua 指令碼</string>
     <string name="mpv_config_script_create_desc">選擇一種方式新增指令碼；文字方式可建立指令碼按鈕，名稱可以留空。</string>
     <string name="mpv_config_script_text_edit">新增指令碼按鈕</string>
-    <string name="mpv_config_script_text_edit_desc">編輯 Lua 指令碼，並設定啟用狀態與執行時機</string>
+    <string name="mpv_config_script_text_edit_desc">開啟文字編輯器，輸入並儲存 Lua 指令碼</string>
     <string name="mpv_config_script_import_url">透過 URL 匯入指令碼</string>
     <string name="mpv_config_script_import_url_desc">下載遠端 Lua/JS 指令碼並儲存</string>
     <string name="mpv_config_script_import_file">匯入指令碼檔案</string>

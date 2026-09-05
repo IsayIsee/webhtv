@@ -981,7 +981,7 @@
     <string name="mpv_config_close">关闭</string>
     <string name="mpv_config_custom_buttons">脚本按钮</string>
     <string name="mpv_config_custom_button_new">新建脚本按钮</string>
-    <string name="mpv_config_custom_button_new_desc">添加到 MPV 播放控制栏</string>
+    <string name="mpv_config_custom_button_new_desc">添加到播放器控制层</string>
     <string name="mpv_config_custom_button_title">脚本按钮</string>
     <string name="mpv_config_custom_button_subtitle">在脚本列表中管理播放控制按钮</string>
     <string name="mpv_config_custom_button_empty">暂无自定义按钮</string>
@@ -1017,7 +1017,7 @@
     <string name="mpv_config_custom_button_code_hint">输入 Lua 脚本</string>
     <string name="mpv_config_script_create_desc">选择一种方式添加脚本；文本方式可创建脚本按钮，名称可以留空。</string>
     <string name="mpv_config_script_text_edit">新建脚本按钮</string>
-    <string name="mpv_config_script_text_edit_desc">编辑 Lua 脚本，并设置启用状态与执行时机</string>
+    <string name="mpv_config_script_text_edit_desc">打开文本编辑器，输入并保存 Lua 脚本</string>
     <string name="mpv_config_script_import_url">通过 URL 导入脚本</string>
     <string name="mpv_config_script_import_url_desc">下载远程 Lua/JS 脚本并保存</string>
     <string name="mpv_config_script_import_file">导入脚本文件</string>

@@ -43,6 +43,7 @@ public final class MpvConfigStore {
     private static final String TYPE_FILE = "file";
     private static final String TYPE_URL = "url";
     private static final String TYPE_TEXT = "text";
+    private static final String TYPE_CUSTOM_BUTTON = "custom_button";
     private static final String CONFIG_DIR = "mpv";
     private static final String CONFIG_FILE = "mpv.conf";
     private static final String PROFILE_DIR = "profiles";
@@ -381,6 +382,7 @@ public final class MpvConfigStore {
 
     public static synchronized boolean deleteProfile(String target, String id) throws IOException {
         if (TARGET_SCRIPTS.equals(target)) {
+            if (isCustomButtonProfileId(id)) return deleteCustomButton(id.substring("custom:".length()));
             File file = safeScriptFile(id);
             if (!file.exists()) return true;
             if (!file.delete()) throw writeFailed();
@@ -403,6 +405,16 @@ public final class MpvConfigStore {
         String displayName = name == null ? "" : name.trim();
         if (TextUtils.isEmpty(displayName)) throw new IOException(App.get().getString(R.string.mpv_config_name_required));
         if (TARGET_SCRIPTS.equals(target)) {
+            if (isCustomButtonProfileId(id)) {
+                String buttonId = id.substring("custom:".length());
+                for (CustomButton button : customButtons()) {
+                    if (TextUtils.equals(button.id, buttonId)) {
+                        saveCustomButton(button.id, displayName, button.content, button.longPressContent, button.onStartup, button.enabled);
+                        return id;
+                    }
+                }
+                throw missingProfile();
+            }
             File source = safeScriptFile(id);
             if (!source.isFile()) throw missingProfile();
             String fileName = safeScriptName(displayName);
@@ -554,18 +566,31 @@ public final class MpvConfigStore {
     private static List<ConfigProfile> scriptProfiles() {
         List<ConfigProfile> result = new ArrayList<>();
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
-        if (files == null) return result;
-        for (File file : files) {
+        if (files != null) {
+            for (File file : files) {
+                ConfigProfile profile = new ConfigProfile();
+                profile.id = file.getName();
+                profile.name = file.getName();
+                profile.type = TYPE_TEXT;
+                profile.source = file.getAbsolutePath();
+                profile.time = file.lastModified();
+                result.add(profile);
+            }
+        }
+        for (CustomButton button : customButtons()) {
             ConfigProfile profile = new ConfigProfile();
-            profile.id = file.getName();
-            profile.name = file.getName();
-            profile.type = TYPE_TEXT;
-            profile.source = file.getAbsolutePath();
-            profile.time = file.lastModified();
+            profile.id = customButtonProfileId(button.id);
+            profile.name = button.title;
+            profile.type = TYPE_CUSTOM_BUTTON;
+            profile.source = button.id;
             result.add(profile);
         }
         Collections.sort(result, Comparator.comparing(item -> item.name.toLowerCase()));
         return result;
+    }
+
+    private static String customButtonProfileId(String id) {
+        return "custom:" + id;
     }
 
     private static File profileSnapshot(String target, String id) {
@@ -929,6 +954,7 @@ public final class MpvConfigStore {
     private static String scriptsSummary() {
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         int count = files == null ? 0 : files.length;
+        count += customButtons().size();
         if (count <= 0) return ResUtil.getString(R.string.mpv_config_default);
         return ResUtil.getString(R.string.mpv_config_scripts_count, count);
     }
@@ -1065,6 +1091,10 @@ public final class MpvConfigStore {
         return !TextUtils.isEmpty(id) && id.matches("[A-Za-z0-9_-]{1,64}");
     }
 
+    private static boolean isCustomButtonProfileId(String id) {
+        return id != null && id.startsWith("custom:") && isSafeCustomButtonId(id.substring("custom:".length()));
+    }
+
     private static String luaString(String value) {
         return "\"" + String.valueOf(value).replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n") + "\"";
     }
@@ -1121,12 +1151,17 @@ public final class MpvConfigStore {
             return TYPE_DEFAULT.equals(type);
         }
 
+        public boolean isCustomButton() {
+            return TYPE_CUSTOM_BUTTON.equals(type);
+        }
+
         public boolean isImported() {
             return TYPE_FILE.equals(type) || TYPE_URL.equals(type);
         }
 
         public String typeLabel() {
             if (isDefault()) return ResUtil.getString(R.string.mpv_config_default);
+            if (isCustomButton()) return ResUtil.getString(R.string.mpv_config_custom_buttons);
             if (TYPE_URL.equals(type)) return ResUtil.getString(R.string.mpv_config_url);
             if (TYPE_FILE.equals(type)) return ResUtil.getString(R.string.mpv_config_local);
             return ResUtil.getString(R.string.mpv_config_text);

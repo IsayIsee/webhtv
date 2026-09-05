@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.text.TextUtils;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -85,6 +87,13 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     protected void initEvent() {
         binding.close.setOnClickListener(view -> dismiss());
         binding.triggerGroup.addOnButtonCheckedListener(this::onTriggerChecked);
+        binding.scriptCode.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                updateScriptStats(s == null ? "" : s.toString());
+            }
+            @Override public void afterTextChanged(Editable s) { }
+        });
         binding.buttonCancel.setOnClickListener(view -> {
             if (scriptButtonMode && sourceButton == null) showScriptCreation();
             else dismissAllowingStateLoss();
@@ -124,8 +133,22 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         tvFocusable(binding.urlImport);
         binding.close.setNextFocusDownId(R.id.name);
         binding.name.setNextFocusUpId(R.id.close);
-        binding.name.setNextFocusDownId(R.id.textOption);
-        binding.textOption.setNextFocusUpId(R.id.name);
+        if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) {
+            tvFocusable(binding.buttonEnabled);
+            tvFocusable(binding.triggerClick);
+            tvFocusable(binding.triggerLong);
+            tvFocusable(binding.triggerStartup);
+            binding.name.setNextFocusDownId(R.id.buttonEnabled);
+            binding.buttonEnabled.setNextFocusUpId(R.id.name);
+            binding.buttonEnabled.setNextFocusDownId(R.id.triggerClick);
+            binding.triggerClick.setNextFocusUpId(R.id.buttonEnabled);
+            binding.triggerClick.setNextFocusDownId(R.id.textOption);
+            binding.triggerLong.setNextFocusDownId(R.id.textOption);
+            binding.triggerStartup.setNextFocusDownId(R.id.textOption);
+        } else {
+            binding.name.setNextFocusDownId(R.id.textOption);
+        }
+        binding.textOption.setNextFocusUpId(MpvConfigStore.TARGET_SCRIPTS.equals(target) ? R.id.triggerClick : R.id.name);
         binding.textOption.setNextFocusDownId(R.id.urlOption);
         binding.urlOption.setNextFocusUpId(R.id.textOption);
         binding.urlOption.setNextFocusDownId(R.id.importOption);
@@ -150,15 +173,17 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.urlOption.setVisibility(View.GONE);
         binding.importOption.setVisibility(View.GONE);
         binding.urlPanel.setVisibility(View.GONE);
+        binding.scriptSettingsPanel.setVisibility(View.VISIBLE);
         binding.scriptButtonPanel.setVisibility(View.VISIBLE);
         binding.buttonEnabled.setChecked(sourceButton == null || sourceButton.enabled);
         shortCode = sourceButton == null ? "" : value(sourceButton.content);
         longCode = sourceButton == null ? "" : value(sourceButton.longPressContent);
         startupCode = sourceButton == null ? "" : value(sourceButton.onStartup);
-        triggerId = R.id.triggerClick;
+        if (triggerId == 0) triggerId = R.id.triggerClick;
         binding.triggerGroup.check(triggerId);
         binding.scriptCode.setText(shortCode);
         binding.scriptCode.setSelection(binding.scriptCode.length());
+        updateScriptStats(shortCode);
         if (Util.isLeanback()) {
             tvFocusable(binding.close);
             tvFocusable(binding.name);
@@ -197,7 +222,14 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.urlOptionDesc.setText(R.string.mpv_config_script_import_url_desc);
         binding.importOptionTitle.setText(R.string.mpv_config_script_import_file);
         binding.importOptionDesc.setText(R.string.mpv_config_script_import_file_desc);
+        shortCode = "";
+        longCode = "";
+        startupCode = "";
+        triggerId = R.id.triggerClick;
+        binding.buttonEnabled.setChecked(true);
+        binding.triggerGroup.check(triggerId);
         showScriptCreation();
+        setupTvFocus();
     }
 
     private void showScriptCreation() {
@@ -206,6 +238,8 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.chooseAction.setVisibility(View.VISIBLE);
         binding.nameLabel.setVisibility(View.VISIBLE);
         binding.nameLayout.setVisibility(View.VISIBLE);
+        binding.scriptSettingsPanel.setVisibility(View.VISIBLE);
+        binding.buttonEnabled.setVisibility(View.VISIBLE);
         binding.methodLabel.setVisibility(View.VISIBLE);
         binding.textOption.setVisibility(View.VISIBLE);
         binding.urlOption.setVisibility(View.VISIBLE);
@@ -221,11 +255,13 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     }
 
     private void onTriggerChecked(MaterialButtonToggleGroup group, int checkedId, boolean isChecked) {
-        if (!scriptButtonMode || !isChecked || checkedId == triggerId) return;
-        saveCurrentCode();
+        if (!MpvConfigStore.TARGET_SCRIPTS.equals(target) || !isChecked || checkedId == triggerId) return;
+        if (scriptButtonMode) saveCurrentCode();
         triggerId = checkedId;
-        binding.scriptCode.setText(codeForTrigger(checkedId));
-        binding.scriptCode.setSelection(binding.scriptCode.length());
+        if (scriptButtonMode) {
+            binding.scriptCode.setText(codeForTrigger(checkedId));
+            binding.scriptCode.setSelection(binding.scriptCode.length());
+        }
     }
 
     private void saveCurrentCode() {
@@ -234,6 +270,12 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         if (triggerId == R.id.triggerLong) longCode = code;
         else if (triggerId == R.id.triggerStartup) startupCode = code;
         else shortCode = code;
+    }
+
+    private void updateScriptStats(String text) {
+        if (binding == null || binding.scriptStats == null) return;
+        int lines = text.isEmpty() ? 1 : text.split("\\r?\\n", -1).length;
+        binding.scriptStats.setText(getString(R.string.mpv_config_stats, lines, text.length()));
     }
 
     private String codeForTrigger(int id) {
@@ -277,6 +319,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     }
 
     private void showUrlInput() {
+        binding.scriptSettingsPanel.setVisibility(View.GONE);
         binding.chooseAction.setVisibility(View.GONE);
         binding.textOption.setVisibility(View.GONE);
         binding.urlOption.setVisibility(View.GONE);
@@ -289,6 +332,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.urlLayout.setError(null);
         binding.urlPanel.setVisibility(View.GONE);
         binding.chooseAction.setVisibility(View.VISIBLE);
+        if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) binding.scriptSettingsPanel.setVisibility(View.VISIBLE);
         binding.textOption.setVisibility(View.VISIBLE);
         binding.urlOption.setVisibility(View.VISIBLE);
         binding.importOption.setVisibility(View.VISIBLE);

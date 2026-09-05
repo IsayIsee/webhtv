@@ -200,7 +200,7 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
             popup.dismiss();
             openEditor(profile);
         }));
-        if (!profile.isDefault()) content.addView(actionItem(R.string.mpv_config_rename, R.drawable.ic_mpv_rename, false, () -> {
+        if (!profile.isDefault() && !profile.isCustomButton()) content.addView(actionItem(R.string.mpv_config_rename, R.drawable.ic_mpv_rename, false, () -> {
             popup.dismiss();
             showRename(profile);
         }));
@@ -306,6 +306,15 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
     }
 
     private void openEditor(MpvConfigStore.ConfigProfile profile) {
+        if (profile.isCustomButton()) {
+            MpvConfigStore.CustomButton button = findCustomButton(profile.source);
+            if (button == null) {
+                reload();
+                return;
+            }
+            MpvConfigCreateDialog.showScriptButton(getChildFragmentManager(), button, this::onScriptButtonSaved);
+            return;
+        }
         Notify.progress(requireContext());
         Task.execute(() -> {
             try {
@@ -322,6 +331,13 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
                 });
             }
         });
+    }
+
+    private MpvConfigStore.CustomButton findCustomButton(String id) {
+        for (MpvConfigStore.CustomButton button : MpvConfigStore.customButtons()) {
+            if (TextUtils.equals(button.id, id)) return button;
+        }
+        return null;
     }
 
     private void showEditor(String id, String name, String content, boolean creating) {

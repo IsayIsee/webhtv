@@ -932,7 +932,7 @@
     <string name="mpv_config_scripts_count">%1$d scripts</string>
     <string name="mpv_config_custom_buttons">Script buttons</string>
     <string name="mpv_config_custom_button_new">New script button</string>
-    <string name="mpv_config_custom_button_new_desc">Add a button to the MPV playback controls</string>
+    <string name="mpv_config_custom_button_new_desc">Add a button to the player controls</string>
     <string name="mpv_config_custom_button_title">Script buttons</string>
     <string name="mpv_config_custom_button_subtitle">Manage playback buttons in the script list</string>
     <string name="mpv_config_custom_button_empty">No custom buttons yet</string>
@@ -968,7 +968,7 @@
     <string name="mpv_config_custom_button_code_hint">Enter Lua script</string>
     <string name="mpv_config_script_create_desc">Choose how to add a script. Text mode can create a script button; name is optional.</string>
     <string name="mpv_config_script_text_edit">New script button</string>
-    <string name="mpv_config_script_text_edit_desc">Edit Lua and set its enabled state and trigger</string>
+    <string name="mpv_config_script_text_edit_desc">Open the text editor to enter and save the Lua script</string>
     <string name="mpv_config_script_import_url">Import script from URL</string>
     <string name="mpv_config_script_import_url_desc">Download and save a remote Lua/JS script</string>
     <string name="mpv_config_script_import_file">Import script file</string>
