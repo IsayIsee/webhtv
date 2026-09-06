@@ -235,7 +235,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.chooseAction.setVisibility(View.VISIBLE);
         binding.nameLabel.setText(R.string.mpv_config_custom_button_name);
         binding.name.setHint(R.string.mpv_config_custom_button_name_hint);
-        binding.name.setText(sourceButton == null ? scriptId : sourceButton.title);
+        binding.name.setText(sourceButton == null ? scriptButtonDefaultName(scriptId) : sourceButton.title);
         binding.methodLabel.setVisibility(View.GONE);
         binding.textOption.setVisibility(View.GONE);
         binding.urlOption.setVisibility(View.GONE);
@@ -295,6 +295,15 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.triggerGroup.check(triggerId);
         showScriptCreation();
         setupTvFocus();
+    }
+
+    private static String scriptButtonDefaultName(String scriptId) {
+        if (TextUtils.isEmpty(scriptId)) return "";
+        if (scriptId.regionMatches(true, scriptId.length() - 4, ".lua", 0, 4)
+                || scriptId.regionMatches(true, scriptId.length() - 3, ".js", 0, 3)) {
+            return scriptId.substring(0, scriptId.lastIndexOf('.'));
+        }
+        return scriptId;
     }
 
     private void showScriptCreation() {
