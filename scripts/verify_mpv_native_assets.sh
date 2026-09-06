@@ -186,6 +186,8 @@ verify_abi() {
   contains_string "$directory/libmpv.so" "mpv v$MPV_VERSION"
   contains_string "$directory/libmpv.so" "v$LIBPLACEBO_VERSION"
   contains_string "$directory/libmpv.so" "WebHTV stream_cb controls enabled"
+  contains_string "$directory/libmpv.so" "disc-menu-active"
+  contains_string "$directory/libmpv.so" "discnav"
   contains_string "$directory/libmpv.so" "Vulkan AImageReader backend:"
   contains_string "$directory/libmpv.so" "Using Vulkan YCbCr AHardwareBuffer sampling"
   contains_string "$directory/libmpv.so" "Vulkan AImageReader sync-fd:"

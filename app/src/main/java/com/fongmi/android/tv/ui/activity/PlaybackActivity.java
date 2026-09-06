@@ -13,6 +13,7 @@ import android.view.TextureView;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
+import android.view.KeyEvent;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
@@ -21,6 +22,7 @@ import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.Format;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
+import androidx.media3.mpvplayer.MpvPlayer;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
@@ -165,6 +167,30 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
 
     protected boolean isPaused() {
         return !isBuffering() && !isIdle();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (dispatchDiscMenuKey(event)) return true;
+        return super.dispatchKeyEvent(event);
+    }
+
+    private boolean dispatchDiscMenuKey(KeyEvent event) {
+        if (mService == null || !isOwner() || event == null) return false;
+        Player active = player().getPlayer();
+        if (!(active instanceof MpvPlayer mpv) || !mpv.isDiscMenuActive()) return false;
+        if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() > 0) return true;
+        String action = switch (event.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_UP -> "up";
+            case KeyEvent.KEYCODE_DPAD_DOWN -> "down";
+            case KeyEvent.KEYCODE_DPAD_LEFT -> "left";
+            case KeyEvent.KEYCODE_DPAD_RIGHT -> "right";
+            case KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "select";
+            case KeyEvent.KEYCODE_BACK -> "prev";
+            case KeyEvent.KEYCODE_MENU -> "popup";
+            default -> null;
+        };
+        return action != null && mpv.sendDiscNav(action);
     }
 
     protected void onServiceConnected() {

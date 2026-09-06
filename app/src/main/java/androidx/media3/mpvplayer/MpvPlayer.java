@@ -200,6 +200,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private String playbackTraceId = PlaybackTrace.NONE;
     private volatile PlaybackResourceClassifier.Classification resourceClassification;
     private String currentIsoUri;
+    private boolean discMenuActive;
     private boolean isoTrackListDumped;
     private long isoMetadataListenerSessionId = -1;
     private String appliedLutShaderPath;
@@ -1287,6 +1288,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                         return;
                     }
                     currentIsoUri = isoUri;
+                    requestIsoOsdSurface();
                     attachIsoTrackMetadataListener();
                     if (currentIsoUri != null) currentPlayableUri = currentIsoUri;
                     continueOpenCurrent(headers, generation);
@@ -1295,6 +1297,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             }
             if (declaredIso) {
                 currentIsoUri = IsoSessionManager.create(currentPlayableUri, headers);
+                requestIsoOsdSurface();
                 attachIsoTrackMetadataListener();
             }
             if (currentIsoUri != null) currentPlayableUri = currentIsoUri;
@@ -1457,6 +1460,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         setOption("tls-verify", config.tlsVerify() ? "yes" : "no");
         if (config.caFile().isFile()) setOption("tls-ca-file", config.caFile().getAbsolutePath());
         setOption("input-default-bindings", "yes");
+        // libbluray owns HDMV menu VM state; ordinary media ignores this.
+        setOption("disc-menu", "yes");
         setOption("cache", config.cache() ? "yes" : "no");
         setOption("cache-on-disk", "no");
         if (preloadCacheCapacityBytes > 0) {
@@ -1633,6 +1638,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         observe("current-tracks/sub2/id", MPVLib.MpvFormat.MPV_FORMAT_STRING);
         observe("chapter", MPVLib.MpvFormat.MPV_FORMAT_INT64);
         observe("chapter-list", MPVLib.MpvFormat.MPV_FORMAT_STRING);
+        observe("disc-menu-active", MPVLib.MpvFormat.MPV_FORMAT_FLAG);
     }
 
     private void dispatchProperty(String property, @Nullable Object value) {
@@ -1868,6 +1874,10 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             }
             case "chapter-list" -> {
                 if (!shouldDeferStartupMetadataRefresh()) handleChapterListProperty(value);
+            }
+            case "disc-menu-active" -> {
+                discMenuActive = Boolean.TRUE.equals(value);
+                if (discMenuActive) requestIsoOsdSurface();
             }
             default -> {
             }
@@ -2557,7 +2567,24 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     private boolean requiresOsdSurface() {
-        return "mediacodec_embed".equals(videoOutputVo());
+        return "mediacodec_embed".equals(videoOutputVo()) || !TextUtils.isEmpty(currentIsoUri);
+    }
+
+    private void requestIsoOsdSurface() {
+        if (!TextUtils.isEmpty(currentIsoUri)) setOsdSurfaceRequested(true);
+    }
+
+    public boolean isDiscMenuActive() {
+        return discMenuActive;
+    }
+
+    public boolean sendDiscNav(String action) {
+        if (!initialized || TextUtils.isEmpty(action)) return false;
+        try {
+            return mpvCommand(new String[]{"discnav", action}) >= MPVLib.MpvError.MPV_ERROR_SUCCESS;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private String videoOutputVo() {
@@ -5404,6 +5431,7 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         }
         IsoSessionManager.closeUri(currentIsoUri);
         currentIsoUri = null;
+        discMenuActive = false;
         isoTrackListDumped = false;
     }
 
