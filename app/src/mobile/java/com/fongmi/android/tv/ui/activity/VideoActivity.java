@@ -1044,11 +1044,15 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             view.setEllipsize(TextUtils.TruncateAt.END);
             view.setContentDescription(button.title);
             view.setOnClickListener(item -> {
-                player().sendMpvCustomButton(button.id, false);
+                if (player().sendMpvCustomButton(button.id, false)) {
+                    markCustomButtonClicked(item);
+                }
                 setR1Callback();
             });
             view.setOnLongClickListener(item -> {
-                player().sendMpvCustomButton(button.id, true);
+                if (player().sendMpvCustomButton(button.id, true)) {
+                    markCustomButtonClicked(item);
+                }
                 setR1Callback();
                 return true;
             });
@@ -1066,6 +1070,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         }
         updateCustomButtonLayout();
         updateCustomButtonVisibility();
+    }
+
+    private void markCustomButtonClicked(View view) {
+        view.setSelected(true);
     }
 
     private void ensureCustomButtonContainers() {
