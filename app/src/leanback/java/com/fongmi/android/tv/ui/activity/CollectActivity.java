@@ -266,6 +266,12 @@ public class CollectActivity extends BaseActivity implements CollectAdapter.OnCl
         scheduleCollect(position, 0);
     }
 
+    @Override
+    public boolean onCollectKey(int position, int keyCode, KeyEvent event) {
+        if (event.getAction() != KeyEvent.ACTION_DOWN || keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return false;
+        return focusFirstSearchResult();
+    }
+
     private void scheduleCollect(int position, long delayMillis) {
         if (position < 0 || position >= mCollectAdapter.getItemCount()) return;
         Collect item = mCollectAdapter.get(position);
