@@ -1016,9 +1016,13 @@
     <string name="mpv_config_custom_button_trigger_long">长按</string>
     <string name="mpv_config_custom_button_trigger_startup">启动时</string>
     <string name="mpv_config_custom_button_code_hint">输入 Lua 脚本</string>
-    <string name="mpv_config_script_create_desc">选择一种方式添加脚本；文本方式可创建脚本按钮，名称可以留空。</string>
+    <string name="mpv_config_script_new">新建脚本</string>
+    <string name="mpv_config_script_create_desc">选择一种方式添加脚本；保存后可在脚本设置中启用按钮。</string>
     <string name="mpv_config_script_text_edit">通过文本创建</string>
     <string name="mpv_config_script_text_edit_desc">打开文本编辑器，输入并保存 Lua 脚本</string>
+    <string name="mpv_config_script_settings_title">脚本设置</string>
+    <string name="mpv_config_script_settings_desc">设置名称、启用状态和执行时机</string>
+    <string name="mpv_config_script_open_editor">打开编辑窗口</string>
     <string name="mpv_config_script_import_url">通过 URL 导入脚本</string>
     <string name="mpv_config_script_import_url_desc">下载远程 Lua/JS 脚本并保存</string>
     <string name="mpv_config_script_import_file">导入脚本文件</string>

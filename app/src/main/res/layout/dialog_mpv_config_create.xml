@@ -163,6 +163,15 @@
         android:orientation="vertical"
         android:visibility="gone">
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/scriptEdit"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:minHeight="44dp"
+            android:text="@string/mpv_config_script_open_editor"
+            android:visibility="gone" />
+
         <com.fongmi.android.tv.ui.custom.MpvConfigEditText
             android:id="@+id/scriptCode"
             android:layout_width="match_parent"

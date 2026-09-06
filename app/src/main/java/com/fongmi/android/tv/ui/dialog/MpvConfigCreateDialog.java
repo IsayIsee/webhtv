@@ -43,6 +43,9 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     private Listener listener;
     private String target;
     private boolean scriptButtonMode;
+    private boolean scriptSettingsMode;
+    private String scriptId;
+    private String scriptContent;
     private MpvConfigStore.CustomButton sourceButton;
     private Runnable buttonCallback;
     private String shortCode;
@@ -66,6 +69,19 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         dialog.show(manager, "mpv-script-button");
     }
 
+    public static void showScriptSettings(FragmentManager manager, String scriptId, String title,
+                                          String content, @Nullable MpvConfigStore.CustomButton source,
+                                          Runnable callback) {
+        MpvConfigCreateDialog dialog = new MpvConfigCreateDialog();
+        dialog.target = MpvConfigStore.TARGET_SCRIPTS;
+        dialog.scriptSettingsMode = true;
+        dialog.scriptId = scriptId;
+        dialog.scriptContent = content == null ? "" : content;
+        dialog.sourceButton = source;
+        dialog.buttonCallback = callback;
+        dialog.show(manager, "mpv-script-settings");
+    }
+
     @Override
     protected ViewBinding getBinding() {
         return binding = DialogMpvConfigCreateBinding.inflate(getLayoutInflater());
@@ -78,7 +94,8 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
 
     @Override
     protected void initView() {
-        if (scriptButtonMode) setupScriptButton();
+        if (scriptSettingsMode) setupScriptSettings();
+        else if (scriptButtonMode) setupScriptButton();
         else if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) setupScriptCreation();
         else setupTvFocus();
     }
@@ -98,7 +115,11 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
             if (scriptButtonMode && sourceButton == null) showScriptCreation();
             else dismissAllowingStateLoss();
         });
-        binding.buttonSave.setOnClickListener(view -> saveScriptButton());
+        binding.buttonSave.setOnClickListener(view -> {
+            if (scriptSettingsMode) saveScriptSettings();
+            else saveScriptButton();
+        });
+        binding.scriptEdit.setOnClickListener(view -> openScriptEditor());
         binding.textOption.setOnClickListener(view -> createText());
         if (scriptButtonMode) {
             return;
@@ -208,8 +229,55 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         }
     }
 
+    private void setupScriptSettings() {
+        binding.createTitle.setText(R.string.mpv_config_script_settings_title);
+        binding.chooseAction.setText(R.string.mpv_config_script_settings_desc);
+        binding.chooseAction.setVisibility(View.VISIBLE);
+        binding.nameLabel.setText(R.string.mpv_config_custom_button_name);
+        binding.name.setHint(R.string.mpv_config_custom_button_name_hint);
+        binding.name.setText(sourceButton == null ? scriptId : sourceButton.title);
+        binding.methodLabel.setVisibility(View.GONE);
+        binding.textOption.setVisibility(View.GONE);
+        binding.urlOption.setVisibility(View.GONE);
+        binding.importOption.setVisibility(View.GONE);
+        binding.urlPanel.setVisibility(View.GONE);
+        binding.scriptSettingsPanel.setVisibility(View.VISIBLE);
+        binding.scriptButtonPanel.setVisibility(View.VISIBLE);
+        binding.scriptCode.setVisibility(View.GONE);
+        binding.scriptStats.setVisibility(View.GONE);
+        binding.scriptEdit.setVisibility(View.VISIBLE);
+        binding.buttonEnabled.setChecked(sourceButton != null && sourceButton.enabled);
+        triggerId = triggerIdFor(sourceButton == null ? "click" : sourceButton.trigger);
+        binding.triggerGroup.check(triggerId);
+        if (Util.isLeanback()) {
+            tvFocusable(binding.close);
+            tvFocusable(binding.name);
+            tvFocusable(binding.buttonEnabled);
+            tvFocusable(binding.triggerClick);
+            tvFocusable(binding.triggerLong);
+            tvFocusable(binding.triggerStartup);
+            tvFocusable(binding.scriptEdit);
+            tvFocusable(binding.buttonCancel);
+            tvFocusable(binding.buttonSave);
+            binding.close.setNextFocusDownId(R.id.name);
+            binding.name.setNextFocusUpId(R.id.close);
+            binding.name.setNextFocusDownId(R.id.buttonEnabled);
+            binding.buttonEnabled.setNextFocusUpId(R.id.name);
+            binding.buttonEnabled.setNextFocusDownId(R.id.triggerClick);
+            binding.triggerClick.setNextFocusUpId(R.id.buttonEnabled);
+            binding.triggerClick.setNextFocusDownId(R.id.scriptEdit);
+            binding.triggerLong.setNextFocusDownId(R.id.scriptEdit);
+            binding.triggerStartup.setNextFocusDownId(R.id.scriptEdit);
+            binding.scriptEdit.setNextFocusUpId(R.id.triggerClick);
+            binding.scriptEdit.setNextFocusDownId(R.id.buttonCancel);
+            binding.buttonCancel.setNextFocusUpId(R.id.scriptEdit);
+            binding.buttonCancel.setNextFocusRightId(R.id.buttonSave);
+            binding.buttonSave.setNextFocusLeftId(R.id.buttonCancel);
+        }
+    }
+
     private void setupScriptCreation() {
-        binding.createTitle.setText(R.string.mpv_config_custom_button_new);
+        binding.createTitle.setText(R.string.mpv_config_script_new);
         binding.chooseAction.setText(R.string.mpv_config_script_create_desc);
         binding.nameLabel.setText(R.string.mpv_config_name_optional);
         binding.name.setHint(R.string.mpv_config_custom_button_name_hint);
@@ -231,7 +299,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
 
     private void showScriptCreation() {
         scriptButtonMode = false;
-        binding.createTitle.setText(R.string.mpv_config_custom_button_new);
+        binding.createTitle.setText(R.string.mpv_config_script_new);
         binding.chooseAction.setVisibility(View.VISIBLE);
         binding.nameLabel.setVisibility(View.VISIBLE);
         binding.nameLayout.setVisibility(View.VISIBLE);
@@ -291,6 +359,37 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         } catch (Throwable error) {
             Notify.show(message(error));
         }
+    }
+
+    private void openScriptEditor() {
+        MpvConfigEditorDialog.show(getChildFragmentManager(), name(), scriptContent, false, text -> {
+            scriptContent = text == null ? "" : text;
+            return true;
+        });
+    }
+
+    private void saveScriptSettings() {
+        try {
+            String savedId = MpvConfigStore.saveScriptSettings(scriptId, name(), scriptContent,
+                    binding.buttonEnabled.isChecked(), triggerName(triggerId));
+            if (buttonCallback != null) buttonCallback.run();
+            Notify.show(R.string.mpv_config_profile_saved);
+            dismissAllowingStateLoss();
+        } catch (Throwable error) {
+            Notify.show(message(error));
+        }
+    }
+
+    private static int triggerIdFor(String trigger) {
+        if ("long".equals(trigger)) return R.id.triggerLong;
+        if ("startup".equals(trigger)) return R.id.triggerStartup;
+        return R.id.triggerClick;
+    }
+
+    private static String triggerName(int id) {
+        if (id == R.id.triggerLong) return "long";
+        if (id == R.id.triggerStartup) return "startup";
+        return "click";
     }
 
     private static void tvFocusable(View view) {
@@ -388,7 +487,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         window.setAttributes(params);
         window.setLayout(params.width, WindowManager.LayoutParams.WRAP_CONTENT);
         if (Util.isLeanback()) {
-            if (scriptButtonMode) binding.name.post(() -> binding.name.requestFocus());
+            if (scriptButtonMode || scriptSettingsMode) binding.name.post(() -> binding.name.requestFocus());
             else binding.textOption.post(() -> binding.textOption.requestFocus());
         }
     }

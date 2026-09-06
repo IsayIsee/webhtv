@@ -1000,9 +1000,13 @@
     <string name="mpv_config_custom_button_trigger_long">長按</string>
     <string name="mpv_config_custom_button_trigger_startup">啟動時</string>
     <string name="mpv_config_custom_button_code_hint">輸入 Lua 指令碼</string>
-    <string name="mpv_config_script_create_desc">選擇一種方式新增指令碼；文字方式可建立指令碼按鈕，名稱可以留空。</string>
+    <string name="mpv_config_script_new">新增指令碼</string>
+    <string name="mpv_config_script_create_desc">選擇一種方式新增指令碼；儲存後可在指令碼設定中啟用按鈕。</string>
     <string name="mpv_config_script_text_edit">透過文字建立</string>
     <string name="mpv_config_script_text_edit_desc">開啟文字編輯器，輸入並儲存 Lua 指令碼</string>
+    <string name="mpv_config_script_settings_title">指令碼設定</string>
+    <string name="mpv_config_script_settings_desc">設定名稱、啟用狀態和執行時機</string>
+    <string name="mpv_config_script_open_editor">開啟編輯視窗</string>
     <string name="mpv_config_script_import_url">透過 URL 匯入指令碼</string>
     <string name="mpv_config_script_import_url_desc">下載遠端 Lua/JS 指令碼並儲存</string>
     <string name="mpv_config_script_import_file">匯入指令碼檔案</string>

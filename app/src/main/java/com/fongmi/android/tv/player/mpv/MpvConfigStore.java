@@ -382,10 +382,9 @@ public final class MpvConfigStore {
 
     public static synchronized boolean deleteProfile(String target, String id) throws IOException {
         if (TARGET_SCRIPTS.equals(target)) {
-            if (isCustomButtonProfileId(id)) return deleteCustomButton(id.substring("custom:".length()));
             File file = safeScriptFile(id);
-            if (!file.exists()) return true;
-            if (!file.delete()) throw writeFailed();
+            if (file.exists() && !file.delete()) throw writeFailed();
+            removeScriptButton(id);
             return true;
         }
         if (TextUtils.isEmpty(id) || "default".equals(id)) return false;
@@ -405,16 +404,6 @@ public final class MpvConfigStore {
         String displayName = name == null ? "" : name.trim();
         if (TextUtils.isEmpty(displayName)) throw new IOException(App.get().getString(R.string.mpv_config_name_required));
         if (TARGET_SCRIPTS.equals(target)) {
-            if (isCustomButtonProfileId(id)) {
-                String buttonId = id.substring("custom:".length());
-                for (CustomButton button : customButtons()) {
-                    if (TextUtils.equals(button.id, buttonId)) {
-                        saveCustomButton(button.id, displayName, button.content, button.longPressContent, button.onStartup, button.enabled);
-                        return id;
-                    }
-                }
-                throw missingProfile();
-            }
             File source = safeScriptFile(id);
             if (!source.isFile()) throw missingProfile();
             String fileName = safeScriptName(displayName);
@@ -426,6 +415,7 @@ public final class MpvConfigStore {
                 output.delete();
                 throw writeFailed();
             }
+            renameScriptButton(id, output.getName(), displayName);
             return output.getName();
         }
         if (TextUtils.isEmpty(id) || "default".equals(id)) throw missingProfile();
@@ -564,6 +554,7 @@ public final class MpvConfigStore {
     }
 
     private static List<ConfigProfile> scriptProfiles() {
+        migrateLegacyButtons();
         List<ConfigProfile> result = new ArrayList<>();
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         if (files != null) {
@@ -577,20 +568,45 @@ public final class MpvConfigStore {
                 result.add(profile);
             }
         }
-        for (CustomButton button : customButtons()) {
-            ConfigProfile profile = new ConfigProfile();
-            profile.id = customButtonProfileId(button.id);
-            profile.name = button.title;
-            profile.type = TYPE_CUSTOM_BUTTON;
-            profile.source = button.id;
-            result.add(profile);
-        }
         Collections.sort(result, Comparator.comparing(item -> item.name.toLowerCase()));
         return result;
     }
 
-    private static String customButtonProfileId(String id) {
-        return "custom:" + id;
+    private static void migrateLegacyButtons() {
+        List<CustomButton> buttons = customButtons();
+        boolean changed = false;
+        for (CustomButton button : buttons) {
+            if (button == null || !TextUtils.isEmpty(button.script)) continue;
+            String fileName = uniqueScriptFile(button.title).getName();
+            String content;
+            String trigger;
+            if (!TextUtils.isEmpty(button.content)) {
+                content = button.content;
+                trigger = "click";
+            } else if (!TextUtils.isEmpty(button.longPressContent)) {
+                content = button.longPressContent;
+                trigger = "long";
+            } else {
+                content = value(button.onStartup);
+                trigger = "startup";
+            }
+            try {
+                writeTextChecked(new File(scriptsDir(), fileName), content);
+                button.script = fileName;
+                button.trigger = trigger;
+                button.content = "";
+                button.longPressContent = "";
+                button.onStartup = "";
+                changed = true;
+            } catch (IOException ignored) {
+            }
+        }
+        if (changed) {
+            try {
+                writeCustomButtons(buttons);
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     private static File profileSnapshot(String target, String id) {
@@ -954,7 +970,6 @@ public final class MpvConfigStore {
     private static String scriptsSummary() {
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         int count = files == null ? 0 : files.length;
-        count += customButtons().size();
         if (count <= 0) return ResUtil.getString(R.string.mpv_config_default);
         return ResUtil.getString(R.string.mpv_config_scripts_count, count);
     }
@@ -973,6 +988,8 @@ public final class MpvConfigStore {
                 CustomButton button = new CustomButton();
                 button.id = id;
                 button.title = title;
+                button.script = stringValue(object, "script").trim();
+                button.trigger = stringValue(object, "trigger").trim();
                 button.content = stringValue(object, "content");
                 button.longPressContent = stringValue(object, "longPressContent");
                 button.onStartup = stringValue(object, "onStartup");
@@ -983,6 +1000,94 @@ public final class MpvConfigStore {
         } catch (Throwable ignored) {
         }
         return result;
+    }
+
+    /** Returns the button metadata attached to a script file, if configured. */
+    public static synchronized CustomButton scriptButton(String script) {
+        if (TextUtils.isEmpty(script)) return null;
+        for (CustomButton button : customButtons()) {
+            if (TextUtils.equals(button.script, script)) return button;
+        }
+        return null;
+    }
+
+    public static synchronized String saveScriptSettings(String id, String title, String content,
+                                                          boolean enabled, String trigger) throws IOException {
+        File source = safeScriptFile(id);
+        if (!source.isFile()) throw missingProfile();
+        String displayName = TextUtils.isEmpty(title) ? fileName(id) : title.trim();
+        String outputName = safeScriptName(displayName);
+        if (!hasExtension(displayName)) {
+            String original = fileName(id);
+            int dot = original.lastIndexOf('.');
+            if (dot > 0) outputName = outputName.substring(0, outputName.lastIndexOf('.')) + original.substring(dot);
+        }
+        File output = source;
+        if (!TextUtils.equals(id, outputName)) {
+            output = new File(scriptsDir(), outputName);
+            if (output.exists()) throw new IOException(App.get().getString(R.string.mpv_config_script_exists));
+            writeTextChecked(output, readText(source));
+            if (!source.delete()) {
+                output.delete();
+                throw writeFailed();
+            }
+            renameScriptButton(id, outputName, displayName);
+        }
+        validateContent(content);
+        writeTextChecked(output, content);
+        List<CustomButton> buttons = customButtons();
+        CustomButton button = null;
+        for (CustomButton item : buttons) {
+            if (TextUtils.equals(item.script, outputName)) {
+                button = item;
+                break;
+            }
+        }
+        if (button == null) {
+            if (buttons.size() >= MAX_CUSTOM_BUTTONS) {
+                throw new IOException(App.get().getString(R.string.mpv_config_custom_buttons_limit));
+            }
+            button = new CustomButton();
+            button.id = UUID.randomUUID().toString().replace("-", "");
+            buttons.add(button);
+        }
+        button.script = outputName;
+        button.title = displayName;
+        button.enabled = enabled;
+        button.trigger = normalizeTrigger(trigger);
+        button.content = "click".equals(button.trigger) ? content : "";
+        button.longPressContent = "long".equals(button.trigger) ? content : "";
+        button.onStartup = "startup".equals(button.trigger) ? content : "";
+        writeCustomButtons(buttons);
+        return outputName;
+    }
+
+    private static String normalizeTrigger(String trigger) {
+        return "long".equals(trigger) || "startup".equals(trigger) ? trigger : "click";
+    }
+
+    private static boolean hasExtension(String name) {
+        String value = fileName(name);
+        int dot = value.lastIndexOf('.');
+        return dot > 0 && dot < value.length() - 1;
+    }
+
+    private static void removeScriptButton(String script) throws IOException {
+        List<CustomButton> buttons = customButtons();
+        boolean changed = buttons.removeIf(item -> TextUtils.equals(item.script, script));
+        if (changed) writeCustomButtons(buttons);
+    }
+
+    private static void renameScriptButton(String oldScript, String newScript, String title) throws IOException {
+        List<CustomButton> buttons = customButtons();
+        boolean changed = false;
+        for (CustomButton button : buttons) {
+            if (!TextUtils.equals(button.script, oldScript)) continue;
+            button.script = newScript;
+            button.title = title;
+            changed = true;
+        }
+        if (changed) writeCustomButtons(buttons);
     }
 
     public static synchronized String saveCustomButton(String id, String title, String content,
@@ -1038,6 +1143,8 @@ public final class MpvConfigStore {
             JsonObject object = new JsonObject();
             object.addProperty("id", button.id);
             object.addProperty("title", button.title);
+            object.addProperty("script", value(button.script));
+            object.addProperty("trigger", value(button.trigger));
             object.addProperty("content", value(button.content));
             object.addProperty("longPressContent", value(button.longPressContent));
             object.addProperty("onStartup", value(button.onStartup));
@@ -1059,14 +1166,27 @@ public final class MpvConfigStore {
             enabledCount++;
             String key = luaString(button.id);
             lua.append("buttons[").append(key).append("] = {}\n");
-            if (!TextUtils.isEmpty(button.onStartup)) lua.append(button.onStartup).append('\n');
-            if (!TextUtils.isEmpty(button.content)) {
-                lua.append("buttons[").append(key).append("].short = function()\n")
-                        .append(button.content).append("\nend\n");
+            String content = button.content;
+            String longContent = button.longPressContent;
+            String startupContent = button.onStartup;
+            if (!TextUtils.isEmpty(button.script)) {
+                try {
+                    String scriptContent = readText(safeScriptFile(button.script));
+                    content = "click".equals(button.trigger) ? scriptContent : "";
+                    longContent = "long".equals(button.trigger) ? scriptContent : "";
+                    startupContent = "startup".equals(button.trigger) ? scriptContent : "";
+                } catch (IOException ignored) {
+                    continue;
+                }
             }
-            if (!TextUtils.isEmpty(button.longPressContent)) {
+            if (!TextUtils.isEmpty(startupContent)) lua.append(startupContent).append('\n');
+            if (!TextUtils.isEmpty(content)) {
+                lua.append("buttons[").append(key).append("].short = function()\n")
+                        .append(content).append("\nend\n");
+            }
+            if (!TextUtils.isEmpty(longContent)) {
                 lua.append("buttons[").append(key).append("].long = function()\n")
-                        .append(button.longPressContent).append("\nend\n");
+                        .append(longContent).append("\nend\n");
             }
         }
         if (enabledCount == 0) {
@@ -1171,6 +1291,8 @@ public final class MpvConfigStore {
     public static final class CustomButton {
         public String id;
         public String title;
+        public String script;
+        public String trigger;
         public String content;
         public String longPressContent;
         public String onStartup;

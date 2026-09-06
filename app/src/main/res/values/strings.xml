@@ -967,9 +967,13 @@
     <string name="mpv_config_custom_button_trigger_long">Long press</string>
     <string name="mpv_config_custom_button_trigger_startup">On startup</string>
     <string name="mpv_config_custom_button_code_hint">Enter Lua script</string>
-    <string name="mpv_config_script_create_desc">Choose how to add a script. Text mode can create a script button; name is optional.</string>
+    <string name="mpv_config_script_new">New script</string>
+    <string name="mpv_config_script_create_desc">Choose how to add a script. Enable its player button later in script settings.</string>
     <string name="mpv_config_script_text_edit">Create from text</string>
     <string name="mpv_config_script_text_edit_desc">Open the text editor to enter and save the Lua script</string>
+    <string name="mpv_config_script_settings_title">Script settings</string>
+    <string name="mpv_config_script_settings_desc">Set the name, enabled state, and trigger</string>
+    <string name="mpv_config_script_open_editor">Open editor</string>
     <string name="mpv_config_script_import_url">Import script from URL</string>
     <string name="mpv_config_script_import_url_desc">Download and save a remote Lua/JS script</string>
     <string name="mpv_config_script_import_file">Import script file</string>
