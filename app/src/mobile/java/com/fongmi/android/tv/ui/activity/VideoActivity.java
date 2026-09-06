@@ -1045,13 +1045,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             view.setContentDescription(button.title);
             view.setOnClickListener(item -> {
                 if (player().sendMpvCustomButton(button.id, false)) {
-                    markCustomButtonClicked(item);
+                    toggleCustomButtonState(item);
                 }
                 setR1Callback();
             });
             view.setOnLongClickListener(item -> {
                 if (player().sendMpvCustomButton(button.id, true)) {
-                    markCustomButtonClicked(item);
+                    toggleCustomButtonState(item);
                 }
                 setR1Callback();
                 return true;
@@ -1072,8 +1072,8 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         updateCustomButtonVisibility();
     }
 
-    private void markCustomButtonClicked(View view) {
-        view.setSelected(true);
+    private void toggleCustomButtonState(View view) {
+        view.setSelected(!view.isSelected());
     }
 
     private void ensureCustomButtonContainers() {
