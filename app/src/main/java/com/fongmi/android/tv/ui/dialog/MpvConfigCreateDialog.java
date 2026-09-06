@@ -99,10 +99,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
             else dismissAllowingStateLoss();
         });
         binding.buttonSave.setOnClickListener(view -> saveScriptButton());
-        binding.textOption.setOnClickListener(view -> {
-            if (MpvConfigStore.TARGET_SCRIPTS.equals(target)) enterScriptButtonEditor();
-            else createText();
-        });
+        binding.textOption.setOnClickListener(view -> createText());
         if (scriptButtonMode) {
             return;
         }

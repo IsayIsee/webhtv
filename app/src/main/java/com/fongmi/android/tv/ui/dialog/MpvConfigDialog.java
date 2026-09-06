@@ -345,7 +345,7 @@ public class MpvConfigDialog extends BaseAlertDialog implements MpvConfigProfile
             try {
                 String savedId = MpvConfigStore.saveTextProfile(target, id, name, text);
                 if (creating && !MpvConfigStore.TARGET_SCRIPTS.equals(target)) MpvConfigStore.selectProfile(target, savedId);
-                reload();
+                if (binding != null) binding.getRoot().post(this::reload);
                 Notify.show(R.string.mpv_config_profile_saved);
                 notifyChanged();
                 return true;
