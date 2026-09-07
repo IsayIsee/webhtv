@@ -148,6 +148,12 @@ public class Updater implements Download.Callback, UpdateListener {
             if (urls != null) apkUrl = urls.optString(BuildConfig.FLAVOR_abi);
             update.apkUrl = (apkUrl != null && !apkUrl.isEmpty()) ? apkUrl : getApk();
 
+            // size/sha256 优先按 ABI 取值(TVBoxOS-Build 多 ABI json),缺失则沿用顶层字段
+            JSONObject sizes = object.optJSONObject("sizes");
+            if (sizes != null) update.size = sizes.optLong(BuildConfig.FLAVOR_abi);
+            JSONObject sha256s = object.optJSONObject("sha256s");
+            if (sha256s != null) update.sha256 = sha256s.optString(BuildConfig.FLAVOR_abi);
+
             if (update.code <= BuildConfig.VERSION_CODE) update.code = 0;
         } catch (Exception e) {
             Log.e(TAG, "fetchUpdate error: " + url, e);
