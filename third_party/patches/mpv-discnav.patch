@@ -1027,7 +1027,7 @@ new file mode 100644
 index 00000000..7fb3442b
 --- /dev/null
 +++ b/player/discnav.c
-@@ -0,0 +1,527 @@
+@@ -0,0 +1,422 @@
 +/*
 + * This file is part of mpv.
 + *
@@ -1090,15 +1090,6 @@ index 00000000..7fb3442b
 +    // selection it displaced (restored on menu close).
 +    struct track *menu_selected_track;
 +    struct track *menu_saved_track;
-+
-+    // Last disc-driven audio/sub/angle we acted on.
-+    int last_audio_id;
-+    int last_sub_id;
-+    bool last_sub_visible;
-+    int last_angle;
-+    bool track_sync_seen;
-+    // Last disc-discontinuity id we acted on for track sync.
-+    uint32_t last_track_disc_id;
 +
 +    // Last menu_active pushed through property-change notification.
 +    bool last_menu_active;
@@ -1313,101 +1304,6 @@ index 00000000..7fb3442b
 +    st->last_discontinuity_id = nav->discontinuity_id;
 +    reset_playback_state(mpctx);
 +    demux_flush(mpctx->demuxer);
-+    // Re-queue the retained menu subpicture the flush may have destroyed.
-+    demux_nav_refresh(mpctx->demuxer);
-+}
-+
-+static struct track *find_track_by_demuxer_id(struct MPContext *mpctx,
-+                                              enum stream_type type, int id)
-+{
-+    if (id < 0)
-+        return NULL;
-+    for (int n = 0; n < mpctx->num_tracks; n++) {
-+        struct track *t = mpctx->tracks[n];
-+        if (t->type == type && t->stream && t->stream->demuxer_id == id)
-+            return t;
-+    }
-+    return NULL;
-+}
-+
-+static void sync_disc_track_selection(struct MPContext *mpctx, struct stream *s,
-+                                      struct stream_nav_state *nav)
-+{
-+    struct disc_nav_state *st = get_state(mpctx);
-+    bool first = !st->track_sync_seen;
-+    bool hopped = nav->discontinuity_id != st->last_track_disc_id;
-+    st->last_track_disc_id = nav->discontinuity_id;
-+    st->track_sync_seen = true;
-+
-+    if (!first && hopped && nav->no_audio &&
-+        mpctx->opts->stream_id[0][STREAM_AUDIO] != -2)
-+    {
-+        // The disc hopped into a domain without any audio stream. Deselect audio.
-+        if (mpctx->current_track[0][STREAM_AUDIO])
-+            mp_switch_track_n(mpctx, 0, STREAM_AUDIO, NULL, 0);
-+        st->last_audio_id = -1;
-+    } else if (!first && (hopped || nav->active_audio_id != st->last_audio_id) &&
-+        mpctx->opts->stream_id[0][STREAM_AUDIO] == -1)
-+    {
-+        struct track *t = find_track_by_demuxer_id(mpctx, STREAM_AUDIO,
-+                                                  nav->active_audio_id);
-+        if (t) {
-+            if (mpctx->current_track[0][STREAM_AUDIO] != t) {
-+                MP_VERBOSE(s, "disc audio -> demuxer_id 0x%x\n",
-+                           nav->active_audio_id);
-+                mp_switch_track_n(mpctx, 0, STREAM_AUDIO, t, 0);
-+            }
-+            st->last_audio_id = nav->active_audio_id;
-+        } else if (nav->active_audio_id >= 0) {
-+            MP_TRACE(s, "disc audio 0x%x not in tracks yet\n",
-+                     nav->active_audio_id);
-+        }
-+    } else if (first) {
-+        st->last_audio_id = nav->active_audio_id;
-+    }
-+
-+    if (!first && (hopped ||
-+                   nav->active_sub_id != st->last_sub_id ||
-+                   nav->sub_visible != st->last_sub_visible) &&
-+        !nav->menu_active && !st->menu_selected_track &&
-+        mpctx->opts->stream_id[0][STREAM_SUB] == -1)
-+    {
-+        if (nav->sub_visible) {
-+            struct track *t = find_track_by_demuxer_id(mpctx, STREAM_SUB,
-+                                                      nav->active_sub_id);
-+            if (t) {
-+                if (mpctx->current_track[0][STREAM_SUB] != t) {
-+                    MP_VERBOSE(s, "disc sub -> demuxer_id 0x%x\n",
-+                               nav->active_sub_id);
-+                    mp_switch_track_n(mpctx, 0, STREAM_SUB, t, 0);
-+                }
-+                st->last_sub_id = nav->active_sub_id;
-+                st->last_sub_visible = true;
-+            } else if (nav->active_sub_id >= 0) {
-+                MP_TRACE(s, "disc sub 0x%x not in tracks yet\n",
-+                         nav->active_sub_id);
-+            }
-+        } else {
-+            if (mpctx->current_track[0][STREAM_SUB]) {
-+                MP_VERBOSE(s, "disc sub -> off\n");
-+                mp_switch_track_n(mpctx, 0, STREAM_SUB, NULL, 0);
-+            }
-+            st->last_sub_id = nav->active_sub_id;
-+            st->last_sub_visible = false;
-+        }
-+    } else if (first) {
-+        st->last_sub_id = nav->active_sub_id;
-+        st->last_sub_visible = nav->sub_visible;
-+    }
-+
-+    if (first) {
-+        st->last_angle = nav->angle;
-+    } else if (nav->angle > 0 && nav->angle != st->last_angle) {
-+        MP_VERBOSE(s, "disc angle %d -> %d (of %d)\n",
-+                   st->last_angle, nav->angle, nav->num_angles);
-+        st->last_angle = nav->angle;
-+        mp_notify_property(mpctx, "angle");
-+    }
 +}
 +
 +// Make sure a dvd_subtitle track is selected while a menu is visible,
@@ -1526,7 +1422,6 @@ index 00000000..7fb3442b
 +
 +    check_async_discontinuity(mpctx, s, &nav);
 +    sync_current_edition(mpctx, s, &nav);
-+    sync_disc_track_selection(mpctx, s, &nav);
 +
 +    bool is_bd = strcmp(s->info->name, "bd") == 0 || strcmp(s->info->name, "bdmv/bluray") == 0;
 +    bool visible = nav.menu_active &&
@@ -1770,15 +1665,7 @@ diff --git a/stream/stream_bluray.c b/stream/stream_bluray.c
 index 79ee67ca..32d47158 100644
 --- a/stream/stream_bluray.c
 +++ b/stream/stream_bluray.c
-@@ -26,7 +26,6 @@
-  *
-  */
- 
--#include <limits.h>
- #include <string.h>
- #include <assert.h>
- 
-@@ -42,9 +41,11 @@
+@@ -42,9 +42,11 @@
  #include "mpv_talloc.h"
  #include "common/common.h"
  #include "common/msg.h"
@@ -1790,14 +1677,6 @@ index 79ee67ca..32d47158 100644
  #include "stream.h"
  #include "osdep/io.h"
  #include "osdep/timer.h"
-@@ -53,7 +54,6 @@
- #include "video/mp_image.h"
- 
- #define BLURAY_SECTOR_SIZE     6144
--#define BLURAY_ISO_BLOCK_SIZE  2048
- 
- #define BLURAY_DEFAULT_ANGLE      0
- #define BLURAY_DEFAULT_CHAPTER    0
 @@ -99,6 +99,9 @@ struct bluray_priv_s {
      int current_title;
      int current_playlist;
