@@ -46,7 +46,7 @@ import java.util.List;
 
 public class MpvCustomButtonDialog extends DialogFragment {
 
-    private static final int SLOT_COUNT = 8;
+    private static final int INITIAL_SLOT_COUNT = 8;
     private Runnable callback;
     private LinearLayout list;
 
@@ -90,7 +90,10 @@ public class MpvCustomButtonDialog extends DialogFragment {
         if (list == null) return;
         list.removeAllViews();
         List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.customButtons();
-        for (int index = 0; index < SLOT_COUNT; index++) addSlot(index, index < buttons.size() ? buttons.get(index) : null);
+        // Keep the familiar initial layout, then append one empty slot so the
+        // list remains extensible instead of imposing a button-count cap.
+        int slotCount = Math.max(INITIAL_SLOT_COUNT, buttons.size() + 1);
+        for (int index = 0; index < slotCount; index++) addSlot(index, index < buttons.size() ? buttons.get(index) : null);
         addImportExportCard();
     }
 
@@ -241,7 +244,6 @@ public class MpvCustomButtonDialog extends DialogFragment {
                     current = null;
                 }
             }
-            if (result.size() >= SLOT_COUNT) break;
         }
         return result;
     }

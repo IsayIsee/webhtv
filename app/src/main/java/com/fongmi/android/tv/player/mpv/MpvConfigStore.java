@@ -47,11 +47,12 @@ public final class MpvConfigStore {
     private static final String CONFIG_DIR = "mpv";
     private static final String CONFIG_FILE = "mpv.conf";
     private static final String PROFILE_DIR = "profiles";
+    /** mpv ignores hidden entries in scripts/, so managed source files are not auto-loaded. */
+    private static final String MANAGED_SCRIPTS_DIR = ".webhtv";
     private static final int MAX_PROFILE_BYTES = 1024 * 1024;
     public static final String CUSTOM_BUTTON_MESSAGE = "webhtv-custom-button";
     private static final String CUSTOM_BUTTONS_FILE = "custombuttons.json";
     private static final String CUSTOM_BUTTON_SCRIPT = "webhtv-custom-buttons.lua";
-    private static final int MAX_CUSTOM_BUTTONS = 8;
     private MpvConfigStore() {
     }
 
@@ -79,8 +80,61 @@ public final class MpvConfigStore {
         return new File(configDir(), TARGET_SCRIPTS);
     }
 
+    private static File scriptLibraryDir() {
+        File dir = new File(scriptsDir(), MANAGED_SCRIPTS_DIR);
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /**
+     * Older builds stored managed scripts directly under scripts/, which mpv
+     * loads independently of the WebHTV button bridge. Move those files into
+     * the hidden library and keep any button metadata pointing at the new file.
+     */
+    private static synchronized void migrateManagedScripts() {
+        File root = scriptsDir();
+        File[] files = root.listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
+        if (files == null || files.length == 0) {
+            scriptLibraryDir();
+            return;
+        }
+        List<CustomButton> buttons = null;
+        boolean metadataChanged = false;
+        for (File source : files) {
+            File target = new File(scriptLibraryDir(), source.getName());
+            if (target.exists()) target = uniqueScriptFile(source.getName());
+            if (!moveScript(source, target)) continue;
+            if (TextUtils.equals(source.getName(), target.getName())) continue;
+            if (buttons == null) buttons = customButtons();
+            for (CustomButton button : buttons) {
+                if (!TextUtils.equals(button.script, source.getName())) continue;
+                button.script = target.getName();
+                metadataChanged = true;
+            }
+        }
+        if (metadataChanged) {
+            try {
+                writeCustomButtons(buttons);
+            } catch (IOException ignored) {
+            }
+        }
+    }
+
+    private static boolean moveScript(File source, File target) {
+        if (source.renameTo(target)) return true;
+        try {
+            writeTextChecked(target, readText(source));
+            if (source.delete()) return true;
+            target.delete();
+        } catch (IOException ignored) {
+            target.delete();
+        }
+        return false;
+    }
+
     public static boolean hasGpuVideoProcessing() {
-        File[] scripts = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
+        migrateManagedScripts();
+        File[] scripts = scriptLibraryDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         if (scripts != null && scripts.length > 0) return true;
         try {
             return containsGpuVideoProcessing(readText(configFile()));
@@ -141,6 +195,7 @@ public final class MpvConfigStore {
     }
 
     public static void ensureReady() {
+        migrateManagedScripts();
         File file = configFile();
         if (!file.isFile() || file.length() == 0) {
             writeText(defaultConfig());
@@ -404,10 +459,11 @@ public final class MpvConfigStore {
         String displayName = name == null ? "" : name.trim();
         if (TextUtils.isEmpty(displayName)) throw new IOException(App.get().getString(R.string.mpv_config_name_required));
         if (TARGET_SCRIPTS.equals(target)) {
+            migrateManagedScripts();
             File source = safeScriptFile(id);
             if (!source.isFile()) throw missingProfile();
             String fileName = safeScriptName(displayName);
-            File output = new File(scriptsDir(), fileName);
+            File output = new File(scriptLibraryDir(), fileName);
             if (source.equals(output)) return source.getName();
             if (output.exists()) throw new IOException(App.get().getString(R.string.mpv_config_script_exists));
             writeTextChecked(output, readText(source));
@@ -546,7 +602,7 @@ public final class MpvConfigStore {
     private static String saveScript(String id, String name, String content) throws IOException {
         String fileName = safeScriptName(name);
         File previous = TextUtils.isEmpty(id) ? null : safeScriptFile(id);
-        File output = previous == null || !safeScriptName(id).equals(fileName) ? new File(scriptsDir(), fileName) : previous;
+        File output = previous == null || !safeScriptName(id).equals(fileName) ? new File(scriptLibraryDir(), fileName) : previous;
         if (previous != null && !previous.equals(output) && output.exists()) throw new IOException(App.get().getString(R.string.mpv_config_script_exists));
         writeTextChecked(output, content);
         if (previous != null && !previous.equals(output) && previous.exists() && !previous.delete()) throw writeFailed();
@@ -554,9 +610,10 @@ public final class MpvConfigStore {
     }
 
     private static List<ConfigProfile> scriptProfiles() {
+        migrateManagedScripts();
         migrateLegacyButtons();
         List<ConfigProfile> result = new ArrayList<>();
-        File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
+        File[] files = scriptLibraryDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         if (files != null) {
             for (File file : files) {
                 ConfigProfile profile = new ConfigProfile();
@@ -591,7 +648,7 @@ public final class MpvConfigStore {
                 trigger = "startup";
             }
             try {
-                writeTextChecked(new File(scriptsDir(), fileName), content);
+                writeTextChecked(new File(scriptLibraryDir(), fileName), content);
                 button.script = fileName;
                 button.trigger = trigger;
                 button.content = "";
@@ -617,21 +674,21 @@ public final class MpvConfigStore {
 
     private static File safeScriptFile(String id) throws IOException {
         if (TextUtils.isEmpty(id) || !TextUtils.equals(id, fileName(id)) || !isScriptName(id)) throw missingProfile();
-        return new File(scriptsDir(), id);
+        return new File(scriptLibraryDir(), id);
     }
 
     private static File uniqueScriptFile(String name) {
         String safe = safeScriptName(name);
-        File file = new File(scriptsDir(), safe);
+        File file = new File(scriptLibraryDir(), safe);
         if (!file.exists()) return file;
         int dot = safe.lastIndexOf('.');
         String base = dot > 0 ? safe.substring(0, dot) : safe;
         String extension = dot > 0 ? safe.substring(dot) : ".lua";
         for (int i = 2; i < 1000; i++) {
-            file = new File(scriptsDir(), base + " (" + i + ")" + extension);
+            file = new File(scriptLibraryDir(), base + " (" + i + ")" + extension);
             if (!file.exists()) return file;
         }
-        return new File(scriptsDir(), base + "-" + System.currentTimeMillis() + extension);
+        return new File(scriptLibraryDir(), base + "-" + System.currentTimeMillis() + extension);
     }
 
     private static String safeScriptName(String name) {
@@ -754,7 +811,7 @@ public final class MpvConfigStore {
     }
 
     private static File scriptFile(String source, String name) {
-        return new File(scriptsDir(), safeScriptName(TextUtils.isEmpty(name) ? fileName(source) : name));
+        return new File(scriptLibraryDir(), safeScriptName(TextUtils.isEmpty(name) ? fileName(source) : name));
     }
 
     private static List<ConfigProfile> readProfiles(String target) {
@@ -968,7 +1025,8 @@ public final class MpvConfigStore {
     }
 
     private static String scriptsSummary() {
-        File[] files = scriptsDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
+        migrateManagedScripts();
+        File[] files = scriptLibraryDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         int count = files == null ? 0 : files.length;
         if (count <= 0) return ResUtil.getString(R.string.mpv_config_default);
         return ResUtil.getString(R.string.mpv_config_scripts_count, count);
@@ -995,7 +1053,6 @@ public final class MpvConfigStore {
                 button.onStartup = stringValue(object, "onStartup");
                 button.enabled = !object.has("enabled") || object.get("enabled").isJsonNull() || object.get("enabled").getAsBoolean();
                 result.add(button);
-                if (result.size() >= MAX_CUSTOM_BUTTONS) break;
             }
         } catch (Throwable ignored) {
         }
@@ -1013,6 +1070,7 @@ public final class MpvConfigStore {
 
     public static synchronized String saveScriptSettings(String id, String title, String content,
                                                           boolean enabled, String trigger) throws IOException {
+        migrateManagedScripts();
         File source = safeScriptFile(id);
         if (!source.isFile()) throw missingProfile();
         String displayName = TextUtils.isEmpty(title) ? fileName(id) : title.trim();
@@ -1024,7 +1082,7 @@ public final class MpvConfigStore {
         }
         File output = source;
         if (!TextUtils.equals(id, outputName)) {
-            output = new File(scriptsDir(), outputName);
+            output = new File(scriptLibraryDir(), outputName);
             if (output.exists()) throw new IOException(App.get().getString(R.string.mpv_config_script_exists));
             writeTextChecked(output, readText(source));
             if (!source.delete()) {
@@ -1044,9 +1102,6 @@ public final class MpvConfigStore {
             }
         }
         if (button == null) {
-            if (buttons.size() >= MAX_CUSTOM_BUTTONS) {
-                throw new IOException(App.get().getString(R.string.mpv_config_custom_buttons_limit));
-            }
             button = new CustomButton();
             button.id = UUID.randomUUID().toString().replace("-", "");
             buttons.add(button);
@@ -1093,6 +1148,7 @@ public final class MpvConfigStore {
     public static synchronized String saveCustomButton(String id, String title, String content,
                                                         String longPressContent, String onStartup,
                                                         boolean enabled) throws IOException {
+        migrateManagedScripts();
         String displayName = title == null ? "" : title.trim();
         if (TextUtils.isEmpty(displayName)) throw new IOException(App.get().getString(R.string.mpv_config_name_required));
         if (!TextUtils.isEmpty(id) && !isSafeCustomButtonId(id)) throw new IOException(App.get().getString(R.string.mpv_config_custom_buttons_invalid));
@@ -1107,7 +1163,6 @@ public final class MpvConfigStore {
         CustomButton target = null;
         for (CustomButton item : buttons) if (TextUtils.equals(item.id, buttonId)) target = item;
         if (target == null) {
-            if (buttons.size() >= MAX_CUSTOM_BUTTONS) throw new IOException(App.get().getString(R.string.mpv_config_custom_buttons_limit));
             target = new CustomButton();
             target.id = buttonId;
             buttons.add(target);
@@ -1131,6 +1186,7 @@ public final class MpvConfigStore {
 
     public static synchronized void ensureCustomButtonScript() {
         try {
+            migrateManagedScripts();
             writeCustomButtonScript(customButtons());
         } catch (IOException ignored) {
         }
@@ -1222,6 +1278,11 @@ public final class MpvConfigStore {
     private static void clearScripts() {
         File[] files = scriptsDir().listFiles(file -> file.isFile() && isScriptName(file.getName()));
         if (files != null) for (File file : files) file.delete();
+        File[] managed = scriptLibraryDir().listFiles();
+        if (managed != null) for (File file : managed) {
+            if (file.isFile()) file.delete();
+        }
+        scriptLibraryDir().delete();
         customButtonsFile().delete();
         new File(scriptsDir(), CUSTOM_BUTTON_SCRIPT).delete();
     }
