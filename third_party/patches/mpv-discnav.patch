@@ -1,1033 +1,9 @@
-diff --git a/demux/demux.c b/demux/demux.c
-index 790d30b5..340148e6 100644
---- a/demux/demux.c
-+++ b/demux/demux.c
-@@ -218,6 +218,8 @@ struct demux_internal {
-     double hyst_secs;           // stop reading till there's hyst_secs remaining
-     size_t hyst_bytes;          // stop reading till there's hyst_bytes remaining
-     bool hyst_active;
-+    bool nav_active;            // disc navigation (DVD/BD menus) is active
-+    bool nav_pump;              // one-shot request to force a single read
-     size_t max_bytes;
-     size_t max_bytes_bw;
-     bool seekable_cache;
-@@ -289,6 +291,15 @@ struct demux_internal {
-     // demux user state (user thread, somewhat similar to reader/decoder state)
-     double last_playback_pts;   // last playback_pts from demux_update()
-     bool force_metadata_update;
-+
-+    // Chapter/edition lists staged by the demux thread (demux_lists_changed),
-+    // published into d_user by demux_update() on the user thread.
-+    bool lists_changed;
-+    struct demux_chapter *staged_chapters;
-+    int num_staged_chapters;
-+    struct demux_edition *staged_editions;
-+    int num_staged_editions;
-+    int staged_edition;
-     int cached_metadata_index;  // speed up repeated lookups
- 
-     struct mp_recorder *dumper;
-@@ -1283,6 +1294,18 @@ void demux_start_prefetch(struct demuxer *demuxer)
-     mp_mutex_unlock(&in->lock);
- }
- 
-+void demux_drive_nav(struct demuxer *demuxer)
-+{
-+    struct demux_internal *in = demuxer->in;
-+    mp_assert(demuxer == in->d_user);
-+
-+    mp_mutex_lock(&in->lock);
-+    in->nav_pump = true;
-+    in->reading = true;
-+    mp_cond_signal(&in->wakeup);
-+    mp_mutex_unlock(&in->lock);
-+}
-+
- const char *stream_type_name(enum stream_type type)
- {
-     switch (type) {
-@@ -2338,6 +2361,13 @@ static bool read_packet(struct demux_internal *in)
-         prefetch_more |= true;
-     }
- 
-+    // While interactive disc navigation is active, never read ahead. It would
-+    // advance the disc VM past what the user is watching. Reads still happen
-+    // whenever a selected stream demands data.
-+    if (in->nav_active)
-+        prefetch_more = false;
-+    prefetch_more |= in->nav_pump;
-+
-     MP_TRACE(in, "bytes=%zd, read_more=%d prefetch_more=%d, refresh_more=%d\n",
-              (size_t)total_fw_bytes, read_more, prefetch_more, refresh_more);
-     if (total_fw_bytes >= in->max_bytes) {
-@@ -2391,6 +2421,7 @@ static bool read_packet(struct demux_internal *in)
-     // Actually read a packet. Drop the lock while doing so, because waiting
-     // for disk or network I/O can take time.
-     in->reading = true;
-+    in->nav_pump = false;
-     in->after_seek = false;
-     in->after_seek_to_start = false;
-     mp_mutex_unlock(&in->lock);
-@@ -2612,6 +2643,8 @@ static void update_opts(struct demuxer *demuxer)
-             seekable = 1;
-     }
-     in->seekable_cache = seekable == 1;
-+    if (in->d_thread->no_cache_seeking)
-+        in->seekable_cache = false;
-     in->using_network_cache_opts = is_streaming && use_cache;
- 
-     if (!in->seekable_cache)
-@@ -3216,6 +3249,53 @@ void demux_metadata_changed(demuxer_t *demuxer)
-     mp_mutex_unlock(&in->lock);
- }
- 
-+// Updates the duration should it need to be changed. Used for demuxers that
-+// changes titles/playlists at runtime.
-+void demux_set_duration(demuxer_t *demuxer, double duration)
-+{
-+    mp_assert(demuxer == demuxer->in->d_thread);
-+    struct demux_internal *in = demuxer->in;
-+
-+    mp_mutex_lock(&in->lock);
-+    in->duration = duration;
-+    in->d_thread->duration = duration;
-+    in->highest_av_pts = MP_NOPTS_VALUE;
-+    in->events |= DEMUX_EVENT_DURATION;
-+    mp_mutex_unlock(&in->lock);
-+}
-+
-+// Tell the cache whether interactive disc navigation is active.
-+void demux_set_nav_active(demuxer_t *demuxer, bool active)
-+{
-+    struct demux_internal *in = demuxer->in;
-+    mp_assert(demuxer == in->d_thread);
-+
-+    mp_mutex_lock(&in->lock);
-+    if (in->nav_active != active) {
-+        in->nav_active = active;
-+        mp_cond_signal(&in->wakeup);
-+    }
-+    mp_mutex_unlock(&in->lock);
-+}
-+
-+// Updates the chapters/editions should it need to be changed. Used for demuxers
-+// that changes titles/playlists at runtime.
-+void demux_lists_changed(demuxer_t *demuxer)
-+{
-+    mp_assert(demuxer == demuxer->in->d_thread);
-+    struct demux_internal *in = demuxer->in;
-+
-+    mp_mutex_lock(&in->lock);
-+    in->lists_changed = true;
-+    in->staged_chapters = in->d_thread->chapters;
-+    in->num_staged_chapters = in->d_thread->num_chapters;
-+    in->staged_editions = in->d_thread->editions;
-+    in->num_staged_editions = in->d_thread->num_editions;
-+    in->staged_edition = in->d_thread->edition;
-+    in->events |= DEMUX_EVENT_LISTS;
-+    mp_mutex_unlock(&in->lock);
-+}
-+
- // Called locked, with user demuxer.
- static void update_final_metadata(demuxer_t *demuxer, struct timed_metadata *tm)
- {
-@@ -3313,6 +3393,14 @@ void demux_update(demuxer_t *demuxer, double pts)
- 
-     demuxer->events |= in->events;
-     in->events = 0;
-+    if (in->lists_changed) {
-+        in->lists_changed = false;
-+        demuxer->chapters = in->staged_chapters;
-+        demuxer->num_chapters = in->num_staged_chapters;
-+        demuxer->editions = in->staged_editions;
-+        demuxer->num_editions = in->num_staged_editions;
-+        demuxer->edition = in->staged_edition;
-+    }
-     if (demuxer->events & (DEMUX_EVENT_METADATA | DEMUX_EVENT_STREAMS))
-         demux_update_replaygain(demuxer);
-     if (demuxer->events & DEMUX_EVENT_DURATION)
-diff --git a/demux/demux.h b/demux/demux.h
-index 659ba888..cc0a0d0c 100644
---- a/demux/demux.h
-+++ b/demux/demux.h
-@@ -136,6 +136,7 @@ enum demux_event {
-     DEMUX_EVENT_DURATION = 1 << 3,  // duration updated
-     DEMUX_EVENT_LIVE = 1 << 4,      // live state updated
-     DEMUX_EVENT_SEEKABLE = 1 << 5,  // seekable state updated
-+    DEMUX_EVENT_LISTS = 1 << 6,     // chapters / editions list changed
-     DEMUX_EVENT_ALL = 0xFFFF,
- };
- 
-@@ -254,6 +255,10 @@ typedef struct demuxer {
-     double duration;  // -1 if unknown
-     // File format allows PTS resets (even if the current file is without)
-     bool ts_resets_possible;
-+    // The underlying source can switch to different content at any time, and
-+    // timestamps restart per title, so cached packet ranges become stale
-+    // without notice and must never be used to satisfy seeks.
-+    bool no_cache_seeking;
-     // The file data was fully read, and there is no need to keep the stream
-     // open, keep the cache active, or to run the demuxer thread. Generating
-     // packets is not slow either (unlike e.g. libavdevice pseudo-demuxers).
-@@ -344,6 +349,7 @@ void demux_start_thread(struct demuxer *demuxer);
- void demux_stop_thread(struct demuxer *demuxer);
- void demux_set_wakeup_cb(struct demuxer *demuxer, void (*cb)(void *ctx), void *ctx);
- void demux_start_prefetch(struct demuxer *demuxer);
-+void demux_drive_nav(struct demuxer *demuxer);
- 
- bool demux_cancel_test(struct demuxer *demuxer);
- bool demux_read_interrupted(struct demuxer *demuxer);
-@@ -373,6 +379,9 @@ void demux_stream_tags_changed(struct demuxer *demuxer, struct sh_stream *sh,
- void demux_close_stream(struct demuxer *demuxer);
- 
- void demux_metadata_changed(demuxer_t *demuxer);
-+void demux_set_duration(demuxer_t *demuxer, double duration);
-+void demux_set_nav_active(demuxer_t *demuxer, bool active);
-+void demux_lists_changed(demuxer_t *demuxer);
- void demux_update(demuxer_t *demuxer, double playback_pts);
- 
- bool demux_cache_dump_set(struct demuxer *demuxer, double start, double end,
-diff --git a/demux/demux_disc.c b/demux/demux_disc.c
-index 86557a71..8daa4221 100644
---- a/demux/demux_disc.c
-+++ b/demux/demux_disc.c
-@@ -29,38 +29,50 @@
- 
- #include "video/csputils.h"
- 
-+// DVD-Video has 32 subpicture (SPU) streams, mapped to PES substream IDs 0x20..0x3F.
-+#define MAX_DVD_SPU_STREAMS 32
-+
-+// If the timestamp difference between subsequent packets is this big, assume
-+// a reset. It should be big enough to account for 1. low video framerates and
-+// large audio frames, and 2. bad interleaving.
-+#define DTS_RESET_THRESHOLD 5.0
-+
- struct priv {
-     struct demuxer *slave;
--    // streams[slave_stream_index] == our_stream
--    struct sh_stream **streams;
--    int num_streams;
--    // This contains each DVD sub stream, or NULL. Needed because DVD packets
--    // can come arbitrarily late in the MPEG stream, so the slave demuxer
--    // might add the streams only later.
--    struct sh_stream *dvd_subs[32];
-+
-+    // All outer sh_streams we have ever surfaced to the parent demuxer.
-+    struct sh_stream **outer_streams;
-+    int num_outer_streams;
-+
-+    // Maps the current slave's stream index to its matching outer sh_stream.
-+    struct sh_stream **slave_to_outer;
-+    int slave_to_outer_count;
-+
-+    // DVD-only: pre-registered sub streams keyed by PES substream ID minus
-+    // 0x20, carrying the disc-level CLUT as extradata.
-+    struct sh_stream *dvd_subs[MAX_DVD_SPU_STREAMS];
-+
-     // Used to rewrite the raw MPEG timestamps to playback time.
-     double base_time;   // playback display start time of current segment
-     double base_dts;    // packet DTS that maps to base_time
-     double last_dts;    // DTS of previously demuxed packet
-     bool seek_reinit;   // needs reinit after seek
-+    uint32_t last_discontinuity_id; // Last source-position-jump id seen from the stream.
-+    bool nav_active;    // last interactive-nav state pushed to the cache
- 
--    bool is_dvd, is_cdda;
-+    bool is_dvd, is_cdda, is_bd;
- };
- 
--// If the timestamp difference between subsequent packets is this big, assume
--// a reset. It should be big enough to account for 1. low video framerates and
--// large audio frames, and 2. bad interleaving.
--#define DTS_RESET_THRESHOLD 5.0
--
- static void reselect_streams(demuxer_t *demuxer)
- {
-     struct priv *p = demuxer->priv;
-+    if (!p->slave)
-+        return;
-     int num_slave = demux_get_num_stream(p->slave);
--    for (int n = 0; n < MPMIN(num_slave, p->num_streams); n++) {
--        if (p->streams[n]) {
--            demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
--                MP_NOPTS_VALUE, demux_stream_is_selected(p->streams[n]));
--        }
-+    for (int n = 0; n < num_slave && n < p->slave_to_outer_count; n++) {
-+        struct sh_stream *outer = p->slave_to_outer[n];
-+        demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
-+            MP_NOPTS_VALUE, outer && demux_stream_is_selected(outer));
-     }
- }
- 
-@@ -82,15 +94,13 @@ static void add_dvd_streams(demuxer_t *demuxer)
-         return;
-     struct stream_dvd_info_req info;
-     if (stream_control(stream, STREAM_CTRL_GET_DVD_INFO, &info) > 0) {
--        for (int n = 0; n < MPMIN(32, info.num_subs); n++) {
-+        for (int n = 0; n < MPMIN(MAX_DVD_SPU_STREAMS, info.num_subs); n++) {
-             struct sh_stream *sh = demux_alloc_sh_stream(STREAM_SUB);
-             sh->demuxer_id = n + 0x20;
-             sh->codec->codec = "dvd_subtitle";
-             get_disc_lang(stream, sh, true);
--            // p->streams _must_ match with p->slave->streams, so we can't add
--            // it yet - it has to be done when the real stream appears, which
--            // could be right on start, or any time later.
-             p->dvd_subs[n] = sh;
-+            MP_TARRAY_APPEND(p, p->outer_streams, p->num_outer_streams, sh);
- 
-             // emulate the extradata
-             struct mp_csp_params csp = MP_CSP_PARAMS_DEFAULTS;
-@@ -120,71 +130,169 @@ static void add_dvd_streams(demuxer_t *demuxer)
-     }
- }
- 
--static void add_streams(demuxer_t *demuxer)
-+// Take ownership of a slave sh_stream's codec params into the outer demuxer
-+// so it survives a slave reopen.
-+static void adopt_codec_params(struct sh_stream *outer, struct sh_stream *src)
-+{
-+    if (outer->codec != src->codec) {
-+        if (!outer->ds)
-+            talloc_free(outer->codec);
-+        outer->codec = src->codec;
-+        talloc_steal(outer, outer->codec);
-+    }
-+    outer->codec->first_packet = NULL;
-+    outer->codec->decoder = NULL;
-+    outer->codec->decoder_desc = NULL;
-+}
-+
-+// Whether a slave stream carries a Blu-ray presentation stream the player
-+// decodes itself.
-+static bool bd_stream_pid_valid(struct sh_stream *src)
-+{
-+    int id = src->demuxer_id;
-+    switch (src->type) {
-+    case STREAM_VIDEO: // primary (0x1011) + additional streams such as the
-+                       // Dolby Vision EL (0x1015), secondary video (PiP)
-+        return (id >= 0x1011 && id <= 0x101F) ||
-+               (id >= 0x1B00 && id <= 0x1B1F);
-+    case STREAM_AUDIO: // primary, secondary
-+        return (id >= 0x1100 && id <= 0x111F) ||
-+               (id >= 0x1A00 && id <= 0x1A1F);
-+    case STREAM_SUB:   // PG, TextST
-+        return (id >= 0x1200 && id <= 0x12FF) ||
-+               (id >= 0x1800 && id <= 0x181F);
-+    default:
-+        return false;
-+    }
-+}
-+
-+// Find the outer stream for a slave stream. `ordinal` disambiguates multiple
-+// slave streams sharing one (type, id): a BD TrueHD PID carries the TrueHD
-+// stream and its embedded AC-3 compatibility core as two lavf streams with
-+// the same id, and each must keep its own outer track (and decoder).
-+static struct sh_stream *find_outer_for_slave(struct priv *p,
-+                                              struct sh_stream *src,
-+                                              int ordinal)
-+{
-+    if (src->type == STREAM_SUB && src->demuxer_id >= 0x20 &&
-+        src->demuxer_id <= 0x3F)
-+    {
-+        struct sh_stream *sub = p->dvd_subs[src->demuxer_id - 0x20];
-+        if (sub)
-+            return sub;
-+    }
-+    for (int i = 0; i < p->num_outer_streams; i++) {
-+        struct sh_stream *sh = p->outer_streams[i];
-+        if (sh && sh->type == src->type && sh->demuxer_id == src->demuxer_id &&
-+            ordinal-- == 0)
-+            return sh;
-+    }
-+    return NULL;
-+}
-+
-+// Build / rebuild the slave-index -> outer-sh map. For each slave stream reuse
-+// or register a fresh outer sh_stream as follows and expose it to the parent demuxer.
-+static void sync_streams(struct demuxer *demuxer)
- {
-     struct priv *p = demuxer->priv;
--    int old_num = p->num_streams;
-+    int num_slave = demux_get_num_stream(p->slave);
-+
-+    if (num_slave > p->slave_to_outer_count) {
-+        MP_TARRAY_GROW(p, p->slave_to_outer, num_slave - 1);
-+        for (int n = p->slave_to_outer_count; n < num_slave; n++)
-+            p->slave_to_outer[n] = NULL;
-+        p->slave_to_outer_count = num_slave;
-+    }
- 
--    for (int n = old_num; n < demux_get_num_stream(p->slave); n++) {
-+    for (int n = 0; n < num_slave; n++) {
-         struct sh_stream *src = demux_get_stream(p->slave, n);
--        if (src->type == STREAM_SUB) {
--            struct sh_stream *sub = NULL;
--            if (src->demuxer_id >= 0x20 && src->demuxer_id <= 0x3F)
--                sub = p->dvd_subs[src->demuxer_id - 0x20];
--            if (sub) {
--                mp_assert(p->num_streams == n); // directly mapped
--                MP_TARRAY_APPEND(p, p->streams, p->num_streams, sub);
--                continue;
--            }
-+
-+        if (p->is_bd && !bd_stream_pid_valid(src)) {
-+            MP_VERBOSE(demuxer, "ignoring non-presentation stream: "
-+                       "type=%s id=0x%x codec=%s\n",
-+                       stream_type_name(src->type), src->demuxer_id,
-+                       src->codec->codec ? src->codec->codec : "?");
-+            continue;
-         }
--        struct sh_stream *sh = demux_alloc_sh_stream(src->type);
--        mp_assert(p->num_streams == n); // directly mapped
--        MP_TARRAY_APPEND(p, p->streams, p->num_streams, sh);
--        // Copy all stream fields that might be relevant
--        *sh->codec = *src->codec;
--        sh->demuxer_id = src->demuxer_id;
--        sh->dependent_track = src->dependent_track;
--        if (src->type == STREAM_VIDEO) {
--            double ar;
--            if (stream_control(demuxer->stream, STREAM_CTRL_GET_ASPECT_RATIO, &ar)
--                                == STREAM_OK)
--            {
--                struct mp_image_params f = {.w = src->codec->disp_w,
--                                            .h = src->codec->disp_h};
--                mp_image_params_set_dsize(&f, 1728 * ar, 1728);
--                sh->codec->par_w = f.p_w;
--                sh->codec->par_h = f.p_h;
-+
-+        // Ordinal of this slave stream among those sharing its (type, id).
-+        int ordinal = 0;
-+        for (int m = 0; m < n; m++) {
-+            struct sh_stream *prev = demux_get_stream(p->slave, m);
-+            if (prev->type == src->type && prev->demuxer_id == src->demuxer_id)
-+                ordinal++;
-+        }
-+
-+        struct sh_stream *outer = find_outer_for_slave(p, src, ordinal);
-+
-+        if (!outer) {
-+            outer = demux_alloc_sh_stream(src->type);
-+            adopt_codec_params(outer, src);
-+            outer->demuxer_id = src->demuxer_id;
-+            outer->dependent_track = src->dependent_track;
-+            if (src->type == STREAM_VIDEO) {
-+                double ar;
-+                if (stream_control(demuxer->stream, STREAM_CTRL_GET_ASPECT_RATIO, &ar)
-+                                    == STREAM_OK)
-+                {
-+                    struct mp_image_params f = {.w = src->codec->disp_w,
-+                                                .h = src->codec->disp_h};
-+                    mp_image_params_set_dsize(&f, 1728 * ar, 1728);
-+                    outer->codec->par_w = f.p_w;
-+                    outer->codec->par_h = f.p_h;
-+                }
-+            }
-+            get_disc_lang(demuxer->stream, outer, p->is_dvd);
-+            MP_TARRAY_APPEND(p, p->outer_streams, p->num_outer_streams, outer);
-+            demux_add_sh_stream(demuxer, outer);
-+        } else if (outer->type != STREAM_SUB && outer->codec && src->codec) {
-+            // Codec change on a reused outer, mostly useful for BD menus, which
-+            // may be MPEG-2 while the video track is H.264.
-+            const char *new_codec = src->codec->codec;
-+            const char *cur_codec = outer->codec->codec;
-+            if (new_codec && cur_codec && strcmp(new_codec, cur_codec) != 0) {
-+                MP_VERBOSE(demuxer, "stream %d codec changed: %s -> %s\n",
-+                           n, cur_codec, new_codec);
-+                adopt_codec_params(outer, src);
-             }
-         }
--        get_disc_lang(demuxer->stream, sh, p->is_dvd);
--        demux_add_sh_stream(demuxer, sh);
-+
-+        p->slave_to_outer[n] = outer;
-+    }
-+
-+    // Propagate outer selection state to the slave. Unmapped slave streams
-+    // (ignored non-presentation streams) are kept deselected so they don't
-+    // deliver packets.
-+    for (int n = 0; n < num_slave; n++) {
-+        struct sh_stream *outer = p->slave_to_outer[n];
-+        demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
-+            MP_NOPTS_VALUE, outer && demux_stream_is_selected(outer));
-     }
- 
--    // Mirror slave sh_stream_group onto the disc-level sh_streams. This is needed
-+    // Mirror slave sh_stream_group onto the outer sh_streams. This is needed
-     // for the Dolby Vision BL+EL group, it's detected well by lavf. We could use
-     // the libbluray `dv_streams[]` info, but it's not available yet in release
-     // version, and mapping it through lavf is less code.
--    for (int n = old_num; n < p->num_streams; n++) {
--        struct sh_stream *disc_sh = p->streams[n];
--        if (!disc_sh || disc_sh->group)
-+    for (int n = 0; n < num_slave; n++) {
-+        struct sh_stream *outer = p->slave_to_outer[n];
-+        if (!outer || outer->group)
-             continue;
-         struct sh_stream *src = demux_get_stream(p->slave, n);
-         if (!src || !src->group)
-             continue;
--        struct sh_stream_group *grp = talloc_zero(disc_sh, struct sh_stream_group);
-+        struct sh_stream_group *grp = talloc_zero(outer, struct sh_stream_group);
-         for (int m = 0; m < src->group->num_members; m++) {
--            struct sh_stream *sh = src->group->members[m];
--            if (!sh || sh->index < 0 || sh->index >= p->num_streams)
-+            struct sh_stream *member = src->group->members[m];
-+            if (!member || member->index < 0 ||
-+                member->index >= p->slave_to_outer_count)
-                 continue;
--            struct sh_stream *disc_member = p->streams[sh->index];
--            if (!disc_member)
-+            struct sh_stream *outer_member = p->slave_to_outer[member->index];
-+            if (!outer_member)
-                 continue;
--            MP_TARRAY_APPEND(grp, grp->members, grp->num_members, disc_member);
--            disc_member->group = grp;
-+            MP_TARRAY_APPEND(grp, grp->members, grp->num_members, outer_member);
-+            outer_member->group = grp;
-         }
-     }
--
--    reselect_streams(demuxer);
- }
- 
- static void d_seek(demuxer_t *demuxer, double seek_pts, int flags)
-@@ -207,7 +315,7 @@ static void d_seek(demuxer_t *demuxer, double seek_pts, int flags)
-     double seek_arg[] = {seek_pts, flags};
-     stream_control(demuxer->stream, STREAM_CTRL_SEEK_TO_TIME, seek_arg);
- 
--    if (p->slave->desc->drop_buffers)
-+    if (p->slave && p->slave->desc->drop_buffers)
-         p->slave->desc->drop_buffers(p->slave);
- 
-     p->seek_reinit = true;
-@@ -228,31 +336,163 @@ static void reset_pts(demuxer_t *demuxer)
-     p->seek_reinit = false;
- }
- 
-+static void add_stream_chapters(struct demuxer *demuxer);
-+
-+// Sync demuxer->edition with the disc's current playback position.
-+static void sync_initial_edition(struct demuxer *demuxer)
-+{
-+    unsigned title;
-+    if (stream_control(demuxer->stream, STREAM_CTRL_GET_CURRENT_TITLE, &title) >= 1 &&
-+        title < (unsigned)demuxer->num_editions)
-+        demuxer->edition = title;
-+    struct stream_nav_state nav = {0};
-+    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1
-+        && nav.menu_active && demuxer->num_editions > 0)
-+    {
-+        demuxer->edition = demuxer->num_editions - 1;
-+    }
-+}
-+
-+static bool reopen_slave(struct demuxer *demuxer)
-+{
-+    struct priv *p = demuxer->priv;
-+
-+    struct demuxer_params params = {
-+        .force_format = "+lavf",
-+        .external_stream = demuxer->stream,
-+        .stream_flags = demuxer->stream_origin,
-+        .depth = demuxer->depth + 1,
-+    };
-+    if (p->is_cdda)
-+        params.force_format = "+rawaudio";
-+
-+    MP_VERBOSE(demuxer, "reopening slave demuxer\n");
-+    demux_free(p->slave);
-+    // Discard anything the stream wrapper buffered before the disc-nav
-+    // discontinuity, and restart byte positions at 0: the post-jump data is
-+    // a new stream, and the fresh slave expects to probe it from the start
-+    // (the disc stream is linear and can't rewind to old positions anyway).
-+    stream_rebase_position(demuxer->stream);
-+    // A disc VM may briefly sit between playlists; pump the stream until the
-+    // next bytes are available before probing a fresh slave demuxer.
-+    uint8_t probe[192];
-+    if (stream_read_peek(demuxer->stream, probe, sizeof(probe)) <= 0)
-+        return false;
-+    p->slave = demux_open_url("-", &params, demuxer->cancel, demuxer->global);
-+    if (!p->slave) {
-+        // Happens when the stream is between positions (e.g. the disc VM is
-+        // mid-jump and probing hit EOF). last_discontinuity_id is left stale
-+        // on purpose: the next read/seek retries the reopen.
-+        MP_WARN(demuxer, "Failed to reopen slave demuxer, will retry.\n");
-+        return false;
-+    }
-+
-+    for (int n = 0; n < p->slave_to_outer_count; n++)
-+        p->slave_to_outer[n] = NULL;
-+
-+    sync_streams(demuxer);
-+
-+    // Refresh duration / chapters / edition for the new playlist.
-+    double len;
-+    if (stream_control(demuxer->stream, STREAM_CTRL_GET_TIME_LENGTH, &len) >= 1)
-+        demux_set_duration(demuxer, len);
-+    else
-+        demux_set_duration(demuxer, -1);
-+
-+    for (int n = 0; n < demuxer->num_chapters; n++)
-+        talloc_free(demuxer->chapters[n].metadata);
-+    demuxer->num_chapters = 0;
-+    add_stream_chapters(demuxer);
-+
-+    sync_initial_edition(demuxer);
-+
-+    demux_lists_changed(demuxer);
-+
-+    return true;
-+}
-+
- static bool d_read_packet(struct demuxer *demuxer, struct demux_packet **out_pkt)
- {
-     struct priv *p = demuxer->priv;
- 
--    struct demux_packet *pkt = demux_read_any_packet(p->slave);
--    if (!pkt)
-+    struct stream_nav_state nav = {0};
-+    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1) {
-+        if (nav.nav_active != p->nav_active) {
-+            p->nav_active = nav.nav_active;
-+            demux_set_nav_active(demuxer, nav.nav_active);
-+        }
-+        if (nav.discontinuity_id != p->last_discontinuity_id) {
-+            MP_VERBOSE(demuxer, "discontinuity %u->%u, reopening slave\n",
-+                       p->last_discontinuity_id, nav.discontinuity_id);
-+            if (!reopen_slave(demuxer))
-+                return false;
-+            if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1)
-+                p->last_discontinuity_id = nav.discontinuity_id;
-+            p->seek_reinit = true;
-+        }
-+    }
-+
-+    // A discontinuity reopen failed and the retry above hasn't succeeded
-+    // yet; report EOF until the stream settles and the reopen goes through.
-+    if (!p->slave)
-         return false;
- 
-+    struct demux_packet *pkt = demux_read_any_packet(p->slave);
-+    if (!pkt) {
-+        // The slave can hit EOF mid-playback when the stream layer breaks
-+        // its read at a disc-driven discontinuity.
-+        struct stream_nav_state nav2 = {0};
-+        if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav2) >= 1
-+            && nav2.discontinuity_id != p->last_discontinuity_id)
-+        {
-+            MP_VERBOSE(demuxer, "discontinuity %u->%u at EOF, reopening slave\n",
-+                       p->last_discontinuity_id, nav2.discontinuity_id);
-+            if (!reopen_slave(demuxer))
-+                return false;
-+            p->last_discontinuity_id = nav2.discontinuity_id;
-+            p->seek_reinit = true;
-+            pkt = demux_read_any_packet(p->slave);
-+        } else if (p->is_bd && p->nav_active) {
-+            // The slave latches the EOF and stops touching the stream.
-+            // Peek to run the event loop, the VM progresses only on reads.
-+            stream_read_peek(demuxer->stream, &(char){0}, 1);
-+        }
-+        if (!pkt) {
-+            MP_VERBOSE(demuxer, "slave EOF (disc id %u)\n",
-+                       nav2.discontinuity_id);
-+            return false;
-+        }
-+    }
-+
-     demux_update(p->slave, MP_NOPTS_VALUE);
- 
-     if (p->seek_reinit)
-         reset_pts(demuxer);
- 
--    add_streams(demuxer);
--    if (pkt->stream >= p->num_streams) { // out of memory?
--        talloc_free(pkt);
--        return true;
-+    int slave_index = pkt->stream;
-+    if (demux_get_num_stream(p->slave) > p->slave_to_outer_count ||
-+        slave_index >= p->slave_to_outer_count ||
-+        !p->slave_to_outer[slave_index])
-+    {
-+        sync_streams(demuxer);
-     }
- 
--    struct sh_stream *sh = p->streams[pkt->stream];
--    if (!demux_stream_is_selected(sh)) {
-+    struct sh_stream *sh = slave_index < p->slave_to_outer_count
-+                              ? p->slave_to_outer[slave_index] : NULL;
-+    if (!sh || !demux_stream_is_selected(sh)) {
-         talloc_free(pkt);
-         return true;
-     }
- 
-+    // Tag every a/v packet with the outer stream's codec params, like
-+    // demux_timeline does: disc jumps can change the codec on a reused
-+    // stream, and a seek flush can discard the first post-change packet,
-+    // so every packet must carry the signal.
-+    if (sh->type == STREAM_VIDEO || sh->type == STREAM_AUDIO) {
-+        pkt->segmented = true;
-+        pkt->codec = sh->codec;
-+    }
-+
-     pkt->stream = sh->index;
- 
-     if (p->is_cdda) {
-@@ -304,10 +544,6 @@ static void add_stream_editions(struct demuxer *demuxer)
-     if (stream_control(demuxer->stream, STREAM_CTRL_GET_NUM_TITLES, &titles) != STREAM_OK)
-         return;
-     for (unsigned title = 0; title < titles; ++title) {
--        double duration = title;
--        if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_LENGTH, &duration) != STREAM_OK)
--            continue;
--
-         struct demux_edition new = {
-             .demuxer_id = title,
-             .default_edition = false,
-@@ -315,6 +551,13 @@ static void add_stream_editions(struct demuxer *demuxer)
-         };
-         MP_TARRAY_APPEND(demuxer, demuxer->editions, demuxer->num_editions, new);
- 
-+        double duration = title;
-+        if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_LENGTH, &duration) != STREAM_OK) {
-+            mp_tags_set_str(new.metadata, "TITLE",
-+                            mp_tprintf(42, "title: %u", title + 1));
-+            continue;
-+        }
-+
-         char *time = mp_format_time(duration, true);
-         double playlist = title;
-         if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_PLAYLIST, &playlist) == STREAM_OK)
-@@ -323,6 +566,19 @@ static void add_stream_editions(struct demuxer *demuxer)
-                         mp_tprintf(42, "title: %u (%s)", title + 1, time));
-         talloc_free(time);
-     }
-+
-+    // Append a synthetic "Disc Menu" entry, if the disc has menu support.
-+    struct stream_nav_state nav = {0};
-+    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) < 1 ||
-+        !nav.nav_active)
-+        return;
-+    struct demux_edition menu = {
-+        .demuxer_id = titles,
-+        .default_edition = false,
-+        .metadata = talloc_zero(demuxer, struct mp_tags),
-+    };
-+    MP_TARRAY_APPEND(demuxer, demuxer->editions, demuxer->num_editions, menu);
-+    mp_tags_set_str(menu.metadata, "TITLE", "Disc Menu");
- }
- 
- static void add_stream_chapters(struct demuxer *demuxer)
-@@ -360,6 +616,8 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
-     p->is_cdda = strcmp(sname, "cdda") == 0;
-     p->is_dvd = strcmp(sname, "dvdnav") == 0 ||
-                 strcmp(sname, "ifo_dvdnav") == 0;
-+    p->is_bd = strcmp(sname, "bd") == 0 ||
-+               strcmp(sname, "bdmv/bluray") == 0;
- 
-     if (p->is_cdda)
-         params.force_format = "+rawaudio";
-@@ -382,9 +640,11 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
- 
-     // Can be seekable even if the stream isn't.
-     demuxer->seekable = true;
-+    demuxer->partially_seekable = !p->is_cdda;
-+    demuxer->no_cache_seeking = !p->is_cdda;
- 
-     add_dvd_streams(demuxer);
--    add_streams(demuxer);
-+    sync_streams(demuxer);
-     add_stream_chapters(demuxer);
-     add_stream_editions(demuxer);
- 
-@@ -392,9 +652,7 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
-     if (stream_control(demuxer->stream, STREAM_CTRL_GET_TIME_LENGTH, &len) >= 1)
-         demuxer->duration = len;
- 
--    unsigned title;
--    if (stream_control(demuxer->stream, STREAM_CTRL_GET_CURRENT_TITLE, &title) >= 1)
--        demuxer->edition = title;
-+    sync_initial_edition(demuxer);
- 
-     return 0;
- }
-diff --git a/demux/demux_lavf.c b/demux/demux_lavf.c
-index cdb76450..26382f13 100644
---- a/demux/demux_lavf.c
-+++ b/demux/demux_lavf.c
-@@ -1894,6 +1894,9 @@ static void demux_drop_buffers_lavf(demuxer_t *demuxer)
-     stream_drop_buffers(priv->stream);
-     avio_flush(priv->avfc->pb);
-     avformat_flush(priv->avfc);
-+    // Clear sticky EOF/error to reuse this demuxer.
-+    priv->avfc->pb->eof_reached = 0;
-+    priv->avfc->pb->error = 0;
-     reset_dovi_split_state(demuxer);
- }
- 
-diff --git a/etc/input.conf b/etc/input.conf
-index 9519bdbe..315b5b6f 100644
---- a/etc/input.conf
-+++ b/etc/input.conf
-@@ -234,6 +234,22 @@
- #Ctrl+KP_UP    add video-align-y -0.01                          # align video up
- #Ctrl+KP_PGUP  add video-align-x  0.01; add video-align-y -0.01 # align video right and up
- 
-+#
-+# The "{discnav}" section is enabled only while a disc menu with a button
-+# highlight is actually on screen.
-+#
-+#UP         {discnav} discnav up
-+#DOWN       {discnav} discnav down
-+#LEFT       {discnav} discnav left
-+#RIGHT      {discnav} discnav right
-+#ENTER      {discnav} discnav select
-+#ESC        {discnav} discnav prev
-+#BS         {discnav} discnav prev
-+#MOUSE_MOVE {discnav} discnav mouse-move
-+#MBTN_LEFT  {discnav} discnav mouse-click
-+#Ctrl+m    discnav menu                    # jump to the disc's root menu
-+#Ctrl+M    discnav popup                   # show/hide Blu-ray popup menu
-+
- #
- # Legacy bindings (may or may not be removed in the future)
- #
-diff --git a/meson.build b/meson.build
-index 5d3a378c..48c12651 100644
---- a/meson.build
-+++ b/meson.build
-@@ -170,6 +170,7 @@ sources = files(
-     'player/client.c',
-     'player/command.c',
-     'player/configfiles.c',
-+    'player/discnav.c',
-     'player/external_files.c',
-     'player/loadfile.c',
-     'player/main.c',
-diff --git a/options/options.c b/options/options.c
-index 865036b0..54e5661c 100644
---- a/options/options.c
-+++ b/options/options.c
-@@ -612,6 +612,7 @@ static const m_option_t mp_opts[] = {
-     {"force-iso", OPT_BOOL(force_iso)},
-     {"edition", OPT_CHOICE(edition_id, {"auto", -1}), M_RANGE(0, 8190)},
-     {"flatten-editions", OPT_BOOL(flatten_editions)},
-+    {"disc-menu", OPT_BOOL(disc_menu)},
-     {"show-dependent-tracks", OPT_BOOL(show_dependent_tracks)},
- #if HAVE_LIBBLURAY
-     {"bluray", OPT_SUBSTRUCT(stream_bluray_opts, stream_bluray_conf)},
-diff --git a/options/options.h b/options/options.h
-index ebd3b085..cdf7e39a 100644
---- a/options/options.h
-+++ b/options/options.h
-@@ -274,6 +274,7 @@ typedef struct MPOpts {
-     int hls_bitrate;
-     int edition_id;
-     bool flatten_editions;
-+    bool disc_menu;
-     bool show_dependent_tracks;
-     bool initial_audio_sync;
-     double sync_max_video_change;
-diff --git a/player/command.c b/player/command.c
-index a1038104..0f05a3f6 100644
---- a/player/command.c
-+++ b/player/command.c
-@@ -1142,6 +1142,19 @@ static int mp_property_current_edition(void *ctx, struct m_property *prop,
-     return m_property_int_ro(action, arg, demuxer->edition);
- }
- 
-+static int mp_property_disc_menu_active(void *ctx, struct m_property *prop,
-+                                        int action, void *arg)
-+{
-+    MPContext *mpctx = ctx;
-+    struct stream *s = disc_nav_get_stream(mpctx);
-+    if (!s)
-+        return M_PROPERTY_UNAVAILABLE;
-+    struct stream_nav_state st = {0};
-+    if (stream_control(s, STREAM_CTRL_GET_NAV_STATE, &st) < 1)
-+        return M_PROPERTY_UNAVAILABLE;
-+    return m_property_bool_ro(action, arg, st.menu_active);
-+}
-+
- static int mp_property_edition(void *ctx, struct m_property *prop,
-                                int action, void *arg)
- {
-@@ -1177,6 +1190,26 @@ static int mp_property_edition(void *ctx, struct m_property *prop,
-         }
-         return M_PROPERTY_OK;
-     }
-+    case M_PROPERTY_SET: {
-+        // For disc demuxers, jump the title directly, we sometimes need to
-+        // react even if the actual edition "value" doesn't change.
-+        if (disc_nav_get_stream(mpctx)) {
-+            int new_ed = *(int *)arg;
-+            if (new_ed < 0 || new_ed >= demuxer->num_editions)
-+                return M_PROPERTY_ERROR;
-+            unsigned new_title = new_ed;
-+            if (stream_control(demuxer->stream, STREAM_CTRL_SET_CURRENT_TITLE,
-+                               &new_title) < 1)
-+                return M_PROPERTY_ERROR;
-+            mpctx->opts->edition_id = new_ed;
-+            m_config_notify_change_opt_ptr(mpctx->mconfig,
-+                                           &mpctx->opts->edition_id);
-+            mp_notify_property(mpctx, "edition");
-+            mp_wakeup_core(mpctx);
-+            return M_PROPERTY_OK;
-+        }
-+        return mp_property_generic_option(mpctx, prop, action, arg);
-+    }
-     default:
-         return mp_property_generic_option(mpctx, prop, action, arg);
-     }
-@@ -4700,6 +4733,7 @@ static const struct m_property mp_properties_base[] = {
-     {"chapter", mp_property_chapter},
-     {"edition", mp_property_edition},
-     {"current-edition", mp_property_current_edition},
-+    {"disc-menu-active", mp_property_disc_menu_active},
-     {"chapters", mp_property_chapters},
-     {"editions", mp_property_editions},
-     {"metadata", mp_property_metadata},
-@@ -5421,7 +5455,7 @@ done:
-         new->num_parts = 0;
-     }
- 
--    osd_set_external2(mpctx->osd, new);
-+    osd_set_bitmaps(mpctx->osd, OSDTYPE_EXTERNAL2, new);
-     mp_wakeup_core(mpctx);
-     cmd->overlay_osd_current = overlay_next;
- }
-@@ -5559,7 +5593,7 @@ static void overlay_uninit(struct MPContext *mpctx)
-         return;
-     for (int id = 0; id < cmd->num_overlays; id++)
-         replace_overlay(mpctx, id, &(struct overlay){0});
--    osd_set_external2(mpctx->osd, NULL);
-+    osd_set_bitmaps(mpctx->osd, OSDTYPE_EXTERNAL2, NULL);
-     for (int n = 0; n < 2; n++)
-         mp_image_unrefp(&cmd->overlay_osd[n].packed);
- }
-@@ -7471,6 +7505,50 @@ static void cmd_context_menu(void *p)
-         vo_control(vo, VOCTRL_SHOW_MENU, NULL);
- }
- 
-+static void cmd_discnav(void *p)
-+{
-+    struct mp_cmd_ctx *cmd = p;
-+    struct MPContext *mpctx = cmd->mpctx;
-+    int action = cmd->args[0].v.i;
-+
-+    struct stream *s = disc_nav_get_stream(mpctx);
-+    if (!s) {
-+        cmd->success = false;
-+        return;
-+    }
-+
-+    struct stream_nav_cmd nc = { .action = action };
-+
-+    struct stream_nav_state pre = {0};
-+    stream_control(s, STREAM_CTRL_GET_NAV_STATE, &pre);
-+
-+    if (action == STREAM_NAV_MOUSE_MOVE || action == STREAM_NAV_MOUSE_CLICK) {
-+        double nx = cmd->args[1].v.d;
-+        double ny = cmd->args[2].v.d;
-+        if (nx >= 0 && ny >= 0) {
-+            if (pre.src_w <= 0 || pre.src_h <= 0 || nx > 1 || ny > 1) {
-+                cmd->success = false;
-+                return;
-+            }
-+            nc.x = (int)(nx * pre.src_w);
-+            nc.y = (int)(ny * pre.src_h);
-+        } else if (!disc_nav_mouse_pos_to_src(mpctx, pre.src_w, pre.src_h,
-+                                              &nc.x, &nc.y))
-+        {
-+            cmd->success = false;
-+            return;
-+        }
-+    }
-+
-+    if (stream_control(s, STREAM_CTRL_NAV_CMD, &nc) < 1) {
-+        cmd->success = false;
-+    } else if (mpctx->demuxer && stream_nav_action_activates(action)) {
-+        demux_drive_nav(mpctx->demuxer);
-+    }
-+
-+    mp_wakeup_core(mpctx);
-+}
-+
- static void cmd_flush_status_line(void *p)
- {
-     struct mp_cmd_ctx *cmd = p;
-@@ -8027,6 +8105,23 @@ const struct mp_cmd_def mp_cmds[] = {
- 
-     { "context-menu", cmd_context_menu },
- 
-+    { "discnav", cmd_discnav,
-+        { {"action", OPT_CHOICE(v.i,
-+            {"up",          STREAM_NAV_UP},
-+            {"down",        STREAM_NAV_DOWN},
-+            {"left",        STREAM_NAV_LEFT},
-+            {"right",       STREAM_NAV_RIGHT},
-+            {"select",      STREAM_NAV_SELECT},
-+            {"menu",        STREAM_NAV_MENU_ROOT},
-+            {"title-menu",  STREAM_NAV_MENU_TITLE},
-+            {"popup",       STREAM_NAV_MENU_POPUP},
-+            {"prev",        STREAM_NAV_PREV_MENU},
-+            {"mouse-move",  STREAM_NAV_MOUSE_MOVE},
-+            {"mouse-click", STREAM_NAV_MOUSE_CLICK})},
-+          {"x", OPT_DOUBLE(v.d), OPTDEF_DOUBLE(-1)},
-+          {"y", OPT_DOUBLE(v.d), OPTDEF_DOUBLE(-1)} },
-+    },
-+
-     { "flush-status-line", cmd_flush_status_line, { {"clear", OPT_BOOL(v.b)} } },
- 
-     { "notify-property", cmd_notify_property, { {"property", OPT_STRING(v.s)} } },
-@@ -8562,6 +8657,10 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
-                     mp_notify_property(mpctx, "current-edition");
-                     print_track_list(mpctx,
-                         mp_tprintf(42, "Selected edition %d:", demuxer->edition));
-+                } else if (disc_nav_get_stream(mpctx)) {
-+                    unsigned new_title = opts->edition_id;
-+                    stream_control(demuxer->stream,
-+                                   STREAM_CTRL_SET_CURRENT_TITLE, &new_title);
-                 } else {
-                     if (!mpctx->stop_play)
-                         mpctx->stop_play = PT_CURRENT_ENTRY;
-diff --git a/player/core.h b/player/core.h
-index 09c667df..6dd668ab 100644
---- a/player/core.h
-+++ b/player/core.h
-@@ -447,6 +447,9 @@ typedef struct MPContext {
- 
-     struct screenshot_ctx *screenshot_ctx;
-     struct command_ctx *command_ctx;
-+    struct disc_nav_state *disc_nav;
-+    // Demuxer parked on an indefinite still frame (DVD/BD menu).
-+    bool disc_nav_still_frame;
-     struct encode_lavc_context *encode_lavc_ctx;
- 
-     struct mp_option_callback *option_callbacks;
-@@ -672,6 +675,16 @@ void uninit_sub_all(struct MPContext *mpctx);
- void update_osd_msg(struct MPContext *mpctx);
- bool update_subtitles(struct MPContext *mpctx, double video_pts);
- 
-+// discnav.c
-+struct stream;
-+struct stream_nav_state;
-+void disc_nav_update(struct MPContext *mpctx);
-+void disc_nav_reset(struct MPContext *mpctx);
-+void disc_nav_destroy(struct MPContext *mpctx);
-+struct stream *disc_nav_get_stream(struct MPContext *mpctx);
-+bool disc_nav_mouse_pos_to_src(struct MPContext *mpctx, int src_w, int src_h,
-+                               int *out_x, int *out_y);
-+
- // video.c
- void reset_video_state(struct MPContext *mpctx);
- int init_video_decoder(struct MPContext *mpctx, struct track *track);
 diff --git a/player/discnav.c b/player/discnav.c
 new file mode 100644
-index 00000000..7fb3442b
+index 0000000..52a9fd6
 --- /dev/null
 +++ b/player/discnav.c
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,504 @@
 +/*
 + * This file is part of mpv.
 + *
@@ -1306,6 +282,88 @@ index 00000000..7fb3442b
 +    demux_flush(mpctx->demuxer);
 +}
 +
++#if 0
++static void sync_disc_track_selection(struct MPContext *mpctx, struct stream *s,
++                                      struct stream_nav_state *nav)
++{
++    struct disc_nav_state *st = get_state(mpctx);
++    bool first = !st->track_sync_seen;
++    bool hopped = nav->discontinuity_id != st->last_track_disc_id;
++    st->last_track_disc_id = nav->discontinuity_id;
++    st->track_sync_seen = true;
++
++    if (!first && hopped && nav->no_audio &&
++        mpctx->opts->stream_id[0][STREAM_AUDIO] != -2)
++    {
++        // The disc hopped into a domain without any audio stream. Deselect audio.
++        if (mpctx->current_track[0][STREAM_AUDIO])
++            mp_switch_track_n(mpctx, 0, STREAM_AUDIO, NULL, 0);
++        st->last_audio_id = -1;
++    } else if (!first && (hopped || nav->active_audio_id != st->last_audio_id) &&
++        mpctx->opts->stream_id[0][STREAM_AUDIO] == -1)
++    {
++        struct track *t = find_track_by_demuxer_id(mpctx, STREAM_AUDIO,
++                                                  nav->active_audio_id);
++        if (t) {
++            if (mpctx->current_track[0][STREAM_AUDIO] != t) {
++                MP_VERBOSE(s, "disc audio -> demuxer_id 0x%x\n",
++                           nav->active_audio_id);
++                mp_switch_track_n(mpctx, 0, STREAM_AUDIO, t, 0);
++            }
++            st->last_audio_id = nav->active_audio_id;
++        } else if (nav->active_audio_id >= 0) {
++            MP_TRACE(s, "disc audio 0x%x not in tracks yet\n",
++                     nav->active_audio_id);
++        }
++    } else if (first) {
++        st->last_audio_id = nav->active_audio_id;
++    }
++
++    if (!first && (hopped ||
++                   nav->active_sub_id != st->last_sub_id ||
++                   nav->sub_visible != st->last_sub_visible) &&
++        !nav->menu_active && !st->menu_selected_track &&
++        mpctx->opts->stream_id[0][STREAM_SUB] == -1)
++    {
++        if (nav->sub_visible) {
++            struct track *t = find_track_by_demuxer_id(mpctx, STREAM_SUB,
++                                                      nav->active_sub_id);
++            if (t) {
++                if (mpctx->current_track[0][STREAM_SUB] != t) {
++                    MP_VERBOSE(s, "disc sub -> demuxer_id 0x%x\n",
++                               nav->active_sub_id);
++                    mp_switch_track_n(mpctx, 0, STREAM_SUB, t, 0);
++                }
++                st->last_sub_id = nav->active_sub_id;
++                st->last_sub_visible = true;
++            } else if (nav->active_sub_id >= 0) {
++                MP_TRACE(s, "disc sub 0x%x not in tracks yet\n",
++                         nav->active_sub_id);
++            }
++        } else {
++            if (mpctx->current_track[0][STREAM_SUB]) {
++                MP_VERBOSE(s, "disc sub -> off\n");
++                mp_switch_track_n(mpctx, 0, STREAM_SUB, NULL, 0);
++            }
++            st->last_sub_id = nav->active_sub_id;
++            st->last_sub_visible = false;
++        }
++    } else if (first) {
++        st->last_sub_id = nav->active_sub_id;
++        st->last_sub_visible = nav->sub_visible;
++    }
++
++    if (first) {
++        st->last_angle = nav->angle;
++    } else if (nav->angle > 0 && nav->angle != st->last_angle) {
++        MP_VERBOSE(s, "disc angle %d -> %d (of %d)\n",
++                   st->last_angle, nav->angle, nav->num_angles);
++        st->last_angle = nav->angle;
++        mp_notify_property(mpctx, "angle");
++    }
++}
++
++#endif
 +// Make sure a dvd_subtitle track is selected while a menu is visible,
 +// so the SPU graphics decoded by sd_lavc reach the OSD.
 +static void ensure_menu_sub_selection(struct MPContext *mpctx, bool menu_on)
@@ -1450,8 +508,1045 @@ index 00000000..7fb3442b
 +        st->overlay_visible = visible;
 +    }
 +}
+diff --git a/demux/demux.c b/demux/demux.c
+index dac126d..6538511 100644
+--- a/demux/demux.c
++++ b/demux/demux.c
+@@ -209,6 +209,8 @@ struct demux_internal {
+     double hyst_secs;           // stop reading till there's hyst_secs remaining
+     size_t hyst_bytes;          // stop reading till there's hyst_bytes remaining
+     bool hyst_active;
++    bool nav_active;            // disc navigation (DVD/BD menus) is active
++    bool nav_pump;              // one-shot request to force a single read
+     size_t max_bytes;
+     size_t max_bytes_bw;
+     bool seekable_cache;
+@@ -280,6 +282,15 @@ struct demux_internal {
+     // demux user state (user thread, somewhat similar to reader/decoder state)
+     double last_playback_pts;   // last playback_pts from demux_update()
+     bool force_metadata_update;
++
++    // Chapter/edition lists staged by the demux thread (demux_lists_changed),
++    // published into d_user by demux_update() on the user thread.
++    bool lists_changed;
++    struct demux_chapter *staged_chapters;
++    int num_staged_chapters;
++    struct demux_edition *staged_editions;
++    int num_staged_editions;
++    int staged_edition;
+     int cached_metadata_index;  // speed up repeated lookups
+ 
+     struct mp_recorder *dumper;
+@@ -1274,6 +1285,18 @@ void demux_start_prefetch(struct demuxer *demuxer)
+     mp_mutex_unlock(&in->lock);
+ }
+ 
++void demux_drive_nav(struct demuxer *demuxer)
++{
++    struct demux_internal *in = demuxer->in;
++    mp_assert(demuxer == in->d_user);
++
++    mp_mutex_lock(&in->lock);
++    in->nav_pump = true;
++    in->reading = true;
++    mp_cond_signal(&in->wakeup);
++    mp_mutex_unlock(&in->lock);
++}
++
+ const char *stream_type_name(enum stream_type type)
+ {
+     switch (type) {
+@@ -2329,6 +2352,13 @@ static bool read_packet(struct demux_internal *in)
+         prefetch_more |= true;
+     }
+ 
++    // While interactive disc navigation is active, never read ahead. It would
++    // advance the disc VM past what the user is watching. Reads still happen
++    // whenever a selected stream demands data.
++    if (in->nav_active)
++        prefetch_more = false;
++    prefetch_more |= in->nav_pump;
++
+     MP_TRACE(in, "bytes=%zd, read_more=%d prefetch_more=%d, refresh_more=%d\n",
+              (size_t)total_fw_bytes, read_more, prefetch_more, refresh_more);
+     if (total_fw_bytes >= in->max_bytes) {
+@@ -2382,6 +2412,7 @@ static bool read_packet(struct demux_internal *in)
+     // Actually read a packet. Drop the lock while doing so, because waiting
+     // for disk or network I/O can take time.
+     in->reading = true;
++    in->nav_pump = false;
+     in->after_seek = false;
+     in->after_seek_to_start = false;
+     mp_mutex_unlock(&in->lock);
+@@ -2603,6 +2634,8 @@ static void update_opts(struct demuxer *demuxer)
+             seekable = 1;
+     }
+     in->seekable_cache = seekable == 1;
++    if (in->d_thread->no_cache_seeking)
++        in->seekable_cache = false;
+     in->using_network_cache_opts = is_streaming && use_cache;
+ 
+     if (!in->seekable_cache)
+@@ -3207,6 +3240,53 @@ void demux_metadata_changed(demuxer_t *demuxer)
+     mp_mutex_unlock(&in->lock);
+ }
+ 
++// Updates the duration should it need to be changed. Used for demuxers that
++// changes titles/playlists at runtime.
++void demux_set_duration(demuxer_t *demuxer, double duration)
++{
++    mp_assert(demuxer == demuxer->in->d_thread);
++    struct demux_internal *in = demuxer->in;
++
++    mp_mutex_lock(&in->lock);
++    in->duration = duration;
++    in->d_thread->duration = duration;
++    in->highest_av_pts = MP_NOPTS_VALUE;
++    in->events |= DEMUX_EVENT_DURATION;
++    mp_mutex_unlock(&in->lock);
++}
++
++// Tell the cache whether interactive disc navigation is active.
++void demux_set_nav_active(demuxer_t *demuxer, bool active)
++{
++    struct demux_internal *in = demuxer->in;
++    mp_assert(demuxer == in->d_thread);
++
++    mp_mutex_lock(&in->lock);
++    if (in->nav_active != active) {
++        in->nav_active = active;
++        mp_cond_signal(&in->wakeup);
++    }
++    mp_mutex_unlock(&in->lock);
++}
++
++// Updates the chapters/editions should it need to be changed. Used for demuxers
++// that changes titles/playlists at runtime.
++void demux_lists_changed(demuxer_t *demuxer)
++{
++    mp_assert(demuxer == demuxer->in->d_thread);
++    struct demux_internal *in = demuxer->in;
++
++    mp_mutex_lock(&in->lock);
++    in->lists_changed = true;
++    in->staged_chapters = in->d_thread->chapters;
++    in->num_staged_chapters = in->d_thread->num_chapters;
++    in->staged_editions = in->d_thread->editions;
++    in->num_staged_editions = in->d_thread->num_editions;
++    in->staged_edition = in->d_thread->edition;
++    in->events |= DEMUX_EVENT_LISTS;
++    mp_mutex_unlock(&in->lock);
++}
++
+ // Called locked, with user demuxer.
+ static void update_final_metadata(demuxer_t *demuxer, struct timed_metadata *tm)
+ {
+@@ -3304,6 +3384,14 @@ void demux_update(demuxer_t *demuxer, double pts)
+ 
+     demuxer->events |= in->events;
+     in->events = 0;
++    if (in->lists_changed) {
++        in->lists_changed = false;
++        demuxer->chapters = in->staged_chapters;
++        demuxer->num_chapters = in->num_staged_chapters;
++        demuxer->editions = in->staged_editions;
++        demuxer->num_editions = in->num_staged_editions;
++        demuxer->edition = in->staged_edition;
++    }
+     if (demuxer->events & (DEMUX_EVENT_METADATA | DEMUX_EVENT_STREAMS))
+         demux_update_replaygain(demuxer);
+     if (demuxer->events & DEMUX_EVENT_DURATION)
+diff --git a/demux/demux.h b/demux/demux.h
+index 1819e1e..b16be4e 100644
+--- a/demux/demux.h
++++ b/demux/demux.h
+@@ -123,6 +123,7 @@ enum demux_event {
+     DEMUX_EVENT_DURATION = 1 << 3,  // duration updated
+     DEMUX_EVENT_LIVE = 1 << 4,      // live state updated
+     DEMUX_EVENT_SEEKABLE = 1 << 5,  // seekable state updated
++    DEMUX_EVENT_LISTS = 1 << 6,     // chapters / editions list changed
+     DEMUX_EVENT_ALL = 0xFFFF,
+ };
+ 
+@@ -241,6 +242,10 @@ typedef struct demuxer {
+     double duration;  // -1 if unknown
+     // File format allows PTS resets (even if the current file is without)
+     bool ts_resets_possible;
++    // The underlying source can switch to different content at any time, and
++    // timestamps restart per title, so cached packet ranges become stale
++    // without notice and must never be used to satisfy seeks.
++    bool no_cache_seeking;
+     // The file data was fully read, and there is no need to keep the stream
+     // open, keep the cache active, or to run the demuxer thread. Generating
+     // packets is not slow either (unlike e.g. libavdevice pseudo-demuxers).
+@@ -331,6 +336,7 @@ void demux_start_thread(struct demuxer *demuxer);
+ void demux_stop_thread(struct demuxer *demuxer);
+ void demux_set_wakeup_cb(struct demuxer *demuxer, void (*cb)(void *ctx), void *ctx);
+ void demux_start_prefetch(struct demuxer *demuxer);
++void demux_drive_nav(struct demuxer *demuxer);
+ 
+ bool demux_cancel_test(struct demuxer *demuxer);
+ bool demux_read_interrupted(struct demuxer *demuxer);
+@@ -360,6 +366,9 @@ void demux_stream_tags_changed(struct demuxer *demuxer, struct sh_stream *sh,
+ void demux_close_stream(struct demuxer *demuxer);
+ 
+ void demux_metadata_changed(demuxer_t *demuxer);
++void demux_set_duration(demuxer_t *demuxer, double duration);
++void demux_set_nav_active(demuxer_t *demuxer, bool active);
++void demux_lists_changed(demuxer_t *demuxer);
+ void demux_update(demuxer_t *demuxer, double playback_pts);
+ 
+ bool demux_cache_dump_set(struct demuxer *demuxer, double start, double end,
+diff --git a/demux/demux_disc.c b/demux/demux_disc.c
+index 86557a7..327a13d 100644
+--- a/demux/demux_disc.c
++++ b/demux/demux_disc.c
+@@ -29,38 +29,50 @@
+ 
+ #include "video/csputils.h"
+ 
++// DVD-Video has 32 subpicture (SPU) streams, mapped to PES substream IDs 0x20..0x3F.
++#define MAX_DVD_SPU_STREAMS 32
++
++// If the timestamp difference between subsequent packets is this big, assume
++// a reset. It should be big enough to account for 1. low video framerates and
++// large audio frames, and 2. bad interleaving.
++#define DTS_RESET_THRESHOLD 5.0
++
+ struct priv {
+     struct demuxer *slave;
+-    // streams[slave_stream_index] == our_stream
+-    struct sh_stream **streams;
+-    int num_streams;
+-    // This contains each DVD sub stream, or NULL. Needed because DVD packets
+-    // can come arbitrarily late in the MPEG stream, so the slave demuxer
+-    // might add the streams only later.
+-    struct sh_stream *dvd_subs[32];
++
++    // All outer sh_streams we have ever surfaced to the parent demuxer.
++    struct sh_stream **outer_streams;
++    int num_outer_streams;
++
++    // Maps the current slave's stream index to its matching outer sh_stream.
++    struct sh_stream **slave_to_outer;
++    int slave_to_outer_count;
++
++    // DVD-only: pre-registered sub streams keyed by PES substream ID minus
++    // 0x20, carrying the disc-level CLUT as extradata.
++    struct sh_stream *dvd_subs[MAX_DVD_SPU_STREAMS];
++
+     // Used to rewrite the raw MPEG timestamps to playback time.
+     double base_time;   // playback display start time of current segment
+     double base_dts;    // packet DTS that maps to base_time
+     double last_dts;    // DTS of previously demuxed packet
+     bool seek_reinit;   // needs reinit after seek
++    uint32_t last_discontinuity_id; // Last source-position-jump id seen from the stream.
++    bool nav_active;    // last interactive-nav state pushed to the cache
+ 
+-    bool is_dvd, is_cdda;
++    bool is_dvd, is_cdda, is_bd;
+ };
+ 
+-// If the timestamp difference between subsequent packets is this big, assume
+-// a reset. It should be big enough to account for 1. low video framerates and
+-// large audio frames, and 2. bad interleaving.
+-#define DTS_RESET_THRESHOLD 5.0
+-
+ static void reselect_streams(demuxer_t *demuxer)
+ {
+     struct priv *p = demuxer->priv;
++    if (!p->slave)
++        return;
+     int num_slave = demux_get_num_stream(p->slave);
+-    for (int n = 0; n < MPMIN(num_slave, p->num_streams); n++) {
+-        if (p->streams[n]) {
+-            demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
+-                MP_NOPTS_VALUE, demux_stream_is_selected(p->streams[n]));
+-        }
++    for (int n = 0; n < num_slave && n < p->slave_to_outer_count; n++) {
++        struct sh_stream *outer = p->slave_to_outer[n];
++        demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
++            MP_NOPTS_VALUE, outer && demux_stream_is_selected(outer));
+     }
+ }
+ 
+@@ -82,15 +94,13 @@ static void add_dvd_streams(demuxer_t *demuxer)
+         return;
+     struct stream_dvd_info_req info;
+     if (stream_control(stream, STREAM_CTRL_GET_DVD_INFO, &info) > 0) {
+-        for (int n = 0; n < MPMIN(32, info.num_subs); n++) {
++        for (int n = 0; n < MPMIN(MAX_DVD_SPU_STREAMS, info.num_subs); n++) {
+             struct sh_stream *sh = demux_alloc_sh_stream(STREAM_SUB);
+             sh->demuxer_id = n + 0x20;
+             sh->codec->codec = "dvd_subtitle";
+             get_disc_lang(stream, sh, true);
+-            // p->streams _must_ match with p->slave->streams, so we can't add
+-            // it yet - it has to be done when the real stream appears, which
+-            // could be right on start, or any time later.
+             p->dvd_subs[n] = sh;
++            MP_TARRAY_APPEND(p, p->outer_streams, p->num_outer_streams, sh);
+ 
+             // emulate the extradata
+             struct mp_csp_params csp = MP_CSP_PARAMS_DEFAULTS;
+@@ -120,71 +130,168 @@ static void add_dvd_streams(demuxer_t *demuxer)
+     }
+ }
+ 
+-static void add_streams(demuxer_t *demuxer)
++// Take ownership of a slave sh_stream's codec params into the outer demuxer
++// so it survives a slave reopen.
++static void adopt_codec_params(struct sh_stream *outer, struct sh_stream *src)
++{
++    if (outer->codec != src->codec) {
++        if (!outer->ds)
++            talloc_free(outer->codec);
++        outer->codec = src->codec;
++        talloc_steal(outer, outer->codec);
++    }
++    outer->codec->first_packet = NULL;
++    outer->codec->decoder = NULL;
++    outer->codec->decoder_desc = NULL;
++}
++
++// Whether a slave stream carries a Blu-ray presentation stream the player
++// decodes itself.
++static bool bd_stream_pid_valid(struct sh_stream *src)
++{
++    int id = src->demuxer_id;
++    switch (src->type) {
++    case STREAM_VIDEO: // primary (0x1011) + additional streams such as the
++                       // Dolby Vision EL (0x1015), secondary video (PiP)
++        return (id >= 0x1011 && id <= 0x101F) ||
++               (id >= 0x1B00 && id <= 0x1B1F);
++    case STREAM_AUDIO: // primary, secondary
++        return (id >= 0x1100 && id <= 0x111F) ||
++               (id >= 0x1A00 && id <= 0x1A1F);
++    case STREAM_SUB:   // PG, TextST
++        return (id >= 0x1200 && id <= 0x12FF) ||
++               (id >= 0x1800 && id <= 0x181F);
++    default:
++        return false;
++    }
++}
++
++// Find the outer stream for a slave stream. `ordinal` disambiguates multiple
++// slave streams sharing one (type, id): a BD TrueHD PID carries the TrueHD
++// stream and its embedded AC-3 compatibility core as two lavf streams with
++// the same id, and each must keep its own outer track (and decoder).
++static struct sh_stream *find_outer_for_slave(struct priv *p,
++                                              struct sh_stream *src,
++                                              int ordinal)
++{
++    if (src->type == STREAM_SUB && src->demuxer_id >= 0x20 &&
++        src->demuxer_id <= 0x3F)
++    {
++        struct sh_stream *sub = p->dvd_subs[src->demuxer_id - 0x20];
++        if (sub)
++            return sub;
++    }
++    for (int i = 0; i < p->num_outer_streams; i++) {
++        struct sh_stream *sh = p->outer_streams[i];
++        if (sh && sh->type == src->type && sh->demuxer_id == src->demuxer_id &&
++            ordinal-- == 0)
++            return sh;
++    }
++    return NULL;
++}
++
++// Build / rebuild the slave-index -> outer-sh map. For each slave stream reuse
++// or register a fresh outer sh_stream as follows and expose it to the parent demuxer.
++static void sync_streams(struct demuxer *demuxer)
+ {
+     struct priv *p = demuxer->priv;
+-    int old_num = p->num_streams;
++    int num_slave = demux_get_num_stream(p->slave);
++
++    if (num_slave > p->slave_to_outer_count) {
++        MP_TARRAY_GROW(p, p->slave_to_outer, num_slave - 1);
++        for (int n = p->slave_to_outer_count; n < num_slave; n++)
++            p->slave_to_outer[n] = NULL;
++        p->slave_to_outer_count = num_slave;
++    }
+ 
+-    for (int n = old_num; n < demux_get_num_stream(p->slave); n++) {
++    for (int n = 0; n < num_slave; n++) {
+         struct sh_stream *src = demux_get_stream(p->slave, n);
+-        if (src->type == STREAM_SUB) {
+-            struct sh_stream *sub = NULL;
+-            if (src->demuxer_id >= 0x20 && src->demuxer_id <= 0x3F)
+-                sub = p->dvd_subs[src->demuxer_id - 0x20];
+-            if (sub) {
+-                mp_assert(p->num_streams == n); // directly mapped
+-                MP_TARRAY_APPEND(p, p->streams, p->num_streams, sub);
+-                continue;
+-            }
++
++        // A TS padding PID is never an audio/video track, including when the
++        // Blu-ray bytes arrive through a custom stream callback instead of bd.
++        if (src->demuxer_id == 0x1FFF || (p->is_bd && !bd_stream_pid_valid(src))) {
++            MP_VERBOSE(demuxer, "ignoring non-presentation stream: "
++                       "type=%s id=0x%x codec=%s\n",
++                       stream_type_name(src->type), src->demuxer_id,
++                       src->codec->codec ? src->codec->codec : "?");
++            continue;
+         }
+-        struct sh_stream *sh = demux_alloc_sh_stream(src->type);
+-        mp_assert(p->num_streams == n); // directly mapped
+-        MP_TARRAY_APPEND(p, p->streams, p->num_streams, sh);
+-        // Copy all stream fields that might be relevant
+-        *sh->codec = *src->codec;
+-        sh->demuxer_id = src->demuxer_id;
+-        sh->dependent_track = src->dependent_track;
+-        if (src->type == STREAM_VIDEO) {
+-            double ar;
+-            if (stream_control(demuxer->stream, STREAM_CTRL_GET_ASPECT_RATIO, &ar)
+-                                == STREAM_OK)
+-            {
+-                struct mp_image_params f = {.w = src->codec->disp_w,
+-                                            .h = src->codec->disp_h};
+-                mp_image_params_set_dsize(&f, 1728 * ar, 1728);
+-                sh->codec->par_w = f.p_w;
+-                sh->codec->par_h = f.p_h;
++
++        // Ordinal of this slave stream among those sharing its (type, id).
++        int ordinal = 0;
++        for (int m = 0; m < n; m++) {
++            struct sh_stream *prev = demux_get_stream(p->slave, m);
++            if (prev->type == src->type && prev->demuxer_id == src->demuxer_id)
++                ordinal++;
++        }
++
++        struct sh_stream *outer = find_outer_for_slave(p, src, ordinal);
++
++        if (!outer) {
++            outer = demux_alloc_sh_stream(src->type);
++            adopt_codec_params(outer, src);
++            outer->demuxer_id = src->demuxer_id;
++            outer->dependent_track = src->dependent_track;
++            if (src->type == STREAM_VIDEO) {
++                double ar;
++                if (stream_control(demuxer->stream, STREAM_CTRL_GET_ASPECT_RATIO, &ar)
++                                    == STREAM_OK)
++                {
++                    struct mp_image_params f = {.w = src->codec->disp_w,
++                                                .h = src->codec->disp_h};
++                    mp_image_params_set_dsize(&f, 1728 * ar, 1728);
++                    outer->codec->par_w = f.p_w;
++                    outer->codec->par_h = f.p_h;
++                }
++            }
++            get_disc_lang(demuxer->stream, outer, p->is_dvd);
++            MP_TARRAY_APPEND(p, p->outer_streams, p->num_outer_streams, outer);
++            demux_add_sh_stream(demuxer, outer);
++        } else if (outer->type != STREAM_SUB && outer->codec && src->codec) {
++            // Codec change on a reused outer, mostly useful for BD menus, which
++            // may be MPEG-2 while the video track is H.264.
++            if (outer->codec != src->codec) {
++                MP_VERBOSE(demuxer, "stream %d codec parameters changed\n", n);
++                adopt_codec_params(outer, src);
+             }
+         }
+-        get_disc_lang(demuxer->stream, sh, p->is_dvd);
+-        demux_add_sh_stream(demuxer, sh);
++
++        p->slave_to_outer[n] = outer;
++    }
++
++    // Propagate outer selection state to the slave. Unmapped slave streams
++    // (ignored non-presentation streams) are kept deselected so they don't
++    // deliver packets.
++    for (int n = 0; n < num_slave; n++) {
++        struct sh_stream *outer = p->slave_to_outer[n];
++        demuxer_select_track(p->slave, demux_get_stream(p->slave, n),
++            MP_NOPTS_VALUE, outer && demux_stream_is_selected(outer));
+     }
+ 
+-    // Mirror slave sh_stream_group onto the disc-level sh_streams. This is needed
++    // Mirror slave sh_stream_group onto the outer sh_streams. This is needed
+     // for the Dolby Vision BL+EL group, it's detected well by lavf. We could use
+     // the libbluray `dv_streams[]` info, but it's not available yet in release
+     // version, and mapping it through lavf is less code.
+-    for (int n = old_num; n < p->num_streams; n++) {
+-        struct sh_stream *disc_sh = p->streams[n];
+-        if (!disc_sh || disc_sh->group)
++    for (int n = 0; n < num_slave; n++) {
++        struct sh_stream *outer = p->slave_to_outer[n];
++        if (!outer || outer->group)
+             continue;
+         struct sh_stream *src = demux_get_stream(p->slave, n);
+         if (!src || !src->group)
+             continue;
+-        struct sh_stream_group *grp = talloc_zero(disc_sh, struct sh_stream_group);
++        struct sh_stream_group *grp = talloc_zero(outer, struct sh_stream_group);
+         for (int m = 0; m < src->group->num_members; m++) {
+-            struct sh_stream *sh = src->group->members[m];
+-            if (!sh || sh->index < 0 || sh->index >= p->num_streams)
++            struct sh_stream *member = src->group->members[m];
++            if (!member || member->index < 0 ||
++                member->index >= p->slave_to_outer_count)
+                 continue;
+-            struct sh_stream *disc_member = p->streams[sh->index];
+-            if (!disc_member)
++            struct sh_stream *outer_member = p->slave_to_outer[member->index];
++            if (!outer_member)
+                 continue;
+-            MP_TARRAY_APPEND(grp, grp->members, grp->num_members, disc_member);
+-            disc_member->group = grp;
++            MP_TARRAY_APPEND(grp, grp->members, grp->num_members, outer_member);
++            outer_member->group = grp;
+         }
+     }
+-
+-    reselect_streams(demuxer);
+ }
+ 
+ static void d_seek(demuxer_t *demuxer, double seek_pts, int flags)
+@@ -207,7 +314,7 @@ static void d_seek(demuxer_t *demuxer, double seek_pts, int flags)
+     double seek_arg[] = {seek_pts, flags};
+     stream_control(demuxer->stream, STREAM_CTRL_SEEK_TO_TIME, seek_arg);
+ 
+-    if (p->slave->desc->drop_buffers)
++    if (p->slave && p->slave->desc->drop_buffers)
+         p->slave->desc->drop_buffers(p->slave);
+ 
+     p->seek_reinit = true;
+@@ -228,31 +335,165 @@ static void reset_pts(demuxer_t *demuxer)
+     p->seek_reinit = false;
+ }
+ 
++static void add_stream_chapters(struct demuxer *demuxer);
++
++// Sync demuxer->edition with the disc's current playback position.
++static void sync_initial_edition(struct demuxer *demuxer)
++{
++    unsigned title;
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_CURRENT_TITLE, &title) >= 1 &&
++        title < (unsigned)demuxer->num_editions)
++        demuxer->edition = title;
++    struct stream_nav_state nav = {0};
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1
++        && nav.menu_active && demuxer->num_editions > 0)
++    {
++        demuxer->edition = demuxer->num_editions - 1;
++    }
++}
++
++static bool reopen_slave(struct demuxer *demuxer)
++{
++    struct priv *p = demuxer->priv;
++
++    struct demuxer_params params = {
++        .force_format = "+lavf",
++        .external_stream = demuxer->stream,
++        .stream_flags = demuxer->stream_origin,
++        .depth = demuxer->depth + 1,
++    };
++    if (p->is_cdda)
++        params.force_format = "+rawaudio";
++
++    MP_VERBOSE(demuxer, "reopening slave demuxer\n");
++    demux_free(p->slave);
++    p->slave = NULL;
++    // Discard anything the stream wrapper buffered before the disc-nav
++    // discontinuity, and restart byte positions at 0: the post-jump data is
++    // a new stream, and the fresh slave expects to probe it from the start
++    // (the disc stream is linear and can't rewind to old positions anyway).
++    stream_rebase_position(demuxer->stream);
++    // A disc VM may briefly sit between playlists; pump the stream until the
++    // next bytes are available before probing a fresh slave demuxer.
++    uint8_t probe[192];
++    if (stream_read_peek(demuxer->stream, probe, sizeof(probe)) <= 0)
++        return false;
++    p->slave = demux_open_url("-", &params, demuxer->cancel, demuxer->global);
++    if (!p->slave) {
++        // Happens when the stream is between positions (e.g. the disc VM is
++        // mid-jump and probing hit EOF). last_discontinuity_id is left stale
++        // on purpose: the next read/seek retries the reopen.
++        MP_WARN(demuxer, "Failed to reopen slave demuxer, will retry.\n");
++        return false;
++    }
++
++    for (int n = 0; n < p->slave_to_outer_count; n++)
++        p->slave_to_outer[n] = NULL;
++
++    sync_streams(demuxer);
++
++    // Refresh duration / chapters / edition for the new playlist.
++    double len;
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_TIME_LENGTH, &len) >= 1)
++        demux_set_duration(demuxer, len);
++    else
++        demux_set_duration(demuxer, -1);
++
++    for (int n = 0; n < demuxer->num_chapters; n++)
++        talloc_free(demuxer->chapters[n].metadata);
++    demuxer->num_chapters = 0;
++    add_stream_chapters(demuxer);
++
++    sync_initial_edition(demuxer);
++
++    demux_lists_changed(demuxer);
++
++    return true;
++}
++
+ static bool d_read_packet(struct demuxer *demuxer, struct demux_packet **out_pkt)
+ {
+     struct priv *p = demuxer->priv;
+ 
+-    struct demux_packet *pkt = demux_read_any_packet(p->slave);
+-    if (!pkt)
++    struct stream_nav_state nav = {0};
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1) {
++        if (nav.nav_active != p->nav_active) {
++            p->nav_active = nav.nav_active;
++            demux_set_nav_active(demuxer, nav.nav_active);
++        }
++        if (nav.discontinuity_id != p->last_discontinuity_id) {
++            MP_VERBOSE(demuxer, "discontinuity %u->%u, reopening slave\n",
++                       p->last_discontinuity_id, nav.discontinuity_id);
++            if (!reopen_slave(demuxer))
++                return false;
++            if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1)
++                p->last_discontinuity_id = nav.discontinuity_id;
++            p->seek_reinit = true;
++        }
++    }
++
++    // A discontinuity reopen failed and the retry above hasn't succeeded
++    // yet; report EOF until the stream settles and the reopen goes through.
++    if (!p->slave)
+         return false;
+ 
++    struct demux_packet *pkt = demux_read_any_packet(p->slave);
++    if (!pkt) {
++        // The slave can hit EOF mid-playback when the stream layer breaks
++        // its read at a disc-driven discontinuity.
++        struct stream_nav_state nav2 = {0};
++        if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav2) >= 1
++            && nav2.discontinuity_id != p->last_discontinuity_id)
++        {
++            MP_VERBOSE(demuxer, "discontinuity %u->%u at EOF, reopening slave\n",
++                       p->last_discontinuity_id, nav2.discontinuity_id);
++            if (!reopen_slave(demuxer))
++                return false;
++            stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav2);
++            p->last_discontinuity_id = nav2.discontinuity_id;
++            p->seek_reinit = true;
++            pkt = demux_read_any_packet(p->slave);
++        } else if (p->is_bd && p->nav_active) {
++            // The slave latches the EOF and stops touching the stream.
++            // Peek to run the event loop, the VM progresses only on reads.
++            stream_read_peek(demuxer->stream, &(char){0}, 1);
++        }
++        if (!pkt) {
++            MP_VERBOSE(demuxer, "slave EOF (disc id %u)\n",
++                       nav2.discontinuity_id);
++            return false;
++        }
++    }
++
+     demux_update(p->slave, MP_NOPTS_VALUE);
+ 
+     if (p->seek_reinit)
+         reset_pts(demuxer);
+ 
+-    add_streams(demuxer);
+-    if (pkt->stream >= p->num_streams) { // out of memory?
+-        talloc_free(pkt);
+-        return true;
++    int slave_index = pkt->stream;
++    if (demux_get_num_stream(p->slave) > p->slave_to_outer_count ||
++        slave_index >= p->slave_to_outer_count ||
++        !p->slave_to_outer[slave_index])
++    {
++        sync_streams(demuxer);
+     }
+ 
+-    struct sh_stream *sh = p->streams[pkt->stream];
+-    if (!demux_stream_is_selected(sh)) {
++    struct sh_stream *sh = slave_index < p->slave_to_outer_count
++                              ? p->slave_to_outer[slave_index] : NULL;
++    if (!sh || !demux_stream_is_selected(sh)) {
+         talloc_free(pkt);
+         return true;
+     }
+ 
++    // Tag every a/v packet with the outer stream's codec params, like
++    // demux_timeline does: disc jumps can change the codec on a reused
++    // stream, and a seek flush can discard the first post-change packet,
++    // so every packet must carry the signal.
++    if (p->nav_active && (sh->type == STREAM_VIDEO || sh->type == STREAM_AUDIO)) {
++        pkt->segmented = true;
++        pkt->codec = sh->codec;
++    }
++
+     pkt->stream = sh->index;
+ 
+     if (p->is_cdda) {
+@@ -304,10 +545,6 @@ static void add_stream_editions(struct demuxer *demuxer)
+     if (stream_control(demuxer->stream, STREAM_CTRL_GET_NUM_TITLES, &titles) != STREAM_OK)
+         return;
+     for (unsigned title = 0; title < titles; ++title) {
+-        double duration = title;
+-        if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_LENGTH, &duration) != STREAM_OK)
+-            continue;
+-
+         struct demux_edition new = {
+             .demuxer_id = title,
+             .default_edition = false,
+@@ -315,6 +552,13 @@ static void add_stream_editions(struct demuxer *demuxer)
+         };
+         MP_TARRAY_APPEND(demuxer, demuxer->editions, demuxer->num_editions, new);
+ 
++        double duration = title;
++        if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_LENGTH, &duration) != STREAM_OK) {
++            mp_tags_set_str(new.metadata, "TITLE",
++                            mp_tprintf(42, "title: %u", title + 1));
++            continue;
++        }
++
+         char *time = mp_format_time(duration, true);
+         double playlist = title;
+         if (stream_control(demuxer->stream, STREAM_CTRL_GET_TITLE_PLAYLIST, &playlist) == STREAM_OK)
+@@ -323,6 +567,19 @@ static void add_stream_editions(struct demuxer *demuxer)
+                         mp_tprintf(42, "title: %u (%s)", title + 1, time));
+         talloc_free(time);
+     }
++
++    // Append a synthetic "Disc Menu" entry, if the disc has menu support.
++    struct stream_nav_state nav = {0};
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) < 1 ||
++        !nav.nav_active)
++        return;
++    struct demux_edition menu = {
++        .demuxer_id = titles,
++        .default_edition = false,
++        .metadata = talloc_zero(demuxer, struct mp_tags),
++    };
++    MP_TARRAY_APPEND(demuxer, demuxer->editions, demuxer->num_editions, menu);
++    mp_tags_set_str(menu.metadata, "TITLE", "Disc Menu");
+ }
+ 
+ static void add_stream_chapters(struct demuxer *demuxer)
+@@ -360,6 +617,8 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
+     p->is_cdda = strcmp(sname, "cdda") == 0;
+     p->is_dvd = strcmp(sname, "dvdnav") == 0 ||
+                 strcmp(sname, "ifo_dvdnav") == 0;
++    p->is_bd = strcmp(sname, "bd") == 0 ||
++               strcmp(sname, "bdmv/bluray") == 0;
+ 
+     if (p->is_cdda)
+         params.force_format = "+rawaudio";
+@@ -382,9 +641,11 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
+ 
+     // Can be seekable even if the stream isn't.
+     demuxer->seekable = true;
++    demuxer->partially_seekable = !p->is_cdda;
++    demuxer->no_cache_seeking = !p->is_cdda;
+ 
+     add_dvd_streams(demuxer);
+-    add_streams(demuxer);
++    sync_streams(demuxer);
+     add_stream_chapters(demuxer);
+     add_stream_editions(demuxer);
+ 
+@@ -392,9 +653,16 @@ static int d_open(demuxer_t *demuxer, enum demux_check check)
+     if (stream_control(demuxer->stream, STREAM_CTRL_GET_TIME_LENGTH, &len) >= 1)
+         demuxer->duration = len;
+ 
+-    unsigned title;
+-    if (stream_control(demuxer->stream, STREAM_CTRL_GET_CURRENT_TITLE, &title) >= 1)
+-        demuxer->edition = title;
++    sync_initial_edition(demuxer);
++
++    // Opening/probing already consumed the initial title/playlist events.
++    // They are the baseline, not a jump that should discard the first clip.
++    struct stream_nav_state nav = {0};
++    if (stream_control(demuxer->stream, STREAM_CTRL_GET_NAV_STATE, &nav) >= 1) {
++        p->last_discontinuity_id = nav.discontinuity_id;
++        p->nav_active = nav.nav_active;
++        demux_set_nav_active(demuxer, nav.nav_active);
++    }
+ 
+     return 0;
+ }
+diff --git a/demux/demux_lavf.c b/demux/demux_lavf.c
+index 1be9e9f..7330204 100644
+--- a/demux/demux_lavf.c
++++ b/demux/demux_lavf.c
+@@ -1900,6 +1900,9 @@ static void demux_drop_buffers_lavf(demuxer_t *demuxer)
+     stream_drop_buffers(priv->stream);
+     avio_flush(priv->avfc->pb);
+     avformat_flush(priv->avfc);
++    // Clear sticky EOF/error to reuse this demuxer.
++    priv->avfc->pb->eof_reached = 0;
++    priv->avfc->pb->error = 0;
+     reset_dovi_split_state(demuxer);
+ }
+ 
+diff --git a/etc/input.conf b/etc/input.conf
+index 9519bdb..315b5b6 100644
+--- a/etc/input.conf
++++ b/etc/input.conf
+@@ -234,6 +234,22 @@
+ #Ctrl+KP_UP    add video-align-y -0.01                          # align video up
+ #Ctrl+KP_PGUP  add video-align-x  0.01; add video-align-y -0.01 # align video right and up
+ 
++#
++# The "{discnav}" section is enabled only while a disc menu with a button
++# highlight is actually on screen.
++#
++#UP         {discnav} discnav up
++#DOWN       {discnav} discnav down
++#LEFT       {discnav} discnav left
++#RIGHT      {discnav} discnav right
++#ENTER      {discnav} discnav select
++#ESC        {discnav} discnav prev
++#BS         {discnav} discnav prev
++#MOUSE_MOVE {discnav} discnav mouse-move
++#MBTN_LEFT  {discnav} discnav mouse-click
++#Ctrl+m    discnav menu                    # jump to the disc's root menu
++#Ctrl+M    discnav popup                   # show/hide Blu-ray popup menu
++
+ #
+ # Legacy bindings (may or may not be removed in the future)
+ #
+diff --git a/meson.build b/meson.build
+index 433dea0..229f7bc 100644
+--- a/meson.build
++++ b/meson.build
+@@ -170,6 +170,7 @@ sources = files(
+     'player/client.c',
+     'player/command.c',
+     'player/configfiles.c',
++    'player/discnav.c',
+     'player/external_files.c',
+     'player/loadfile.c',
+     'player/main.c',
+diff --git a/options/options.c b/options/options.c
+index 78ac3e9..497b1d2 100644
+--- a/options/options.c
++++ b/options/options.c
+@@ -610,6 +610,7 @@ static const m_option_t mp_opts[] = {
+     {"force-iso", OPT_BOOL(force_iso)},
+     {"edition", OPT_CHOICE(edition_id, {"auto", -1}), M_RANGE(0, 8190)},
+     {"flatten-editions", OPT_BOOL(flatten_editions)},
++    {"disc-menu", OPT_BOOL(disc_menu)},
+     {"show-dependent-tracks", OPT_BOOL(show_dependent_tracks)},
+ #if HAVE_LIBBLURAY
+     {"bluray", OPT_SUBSTRUCT(stream_bluray_opts, stream_bluray_conf)},
+diff --git a/options/options.h b/options/options.h
+index 707a853..4087970 100644
+--- a/options/options.h
++++ b/options/options.h
+@@ -272,6 +272,7 @@ typedef struct MPOpts {
+     int hls_bitrate;
+     int edition_id;
+     bool flatten_editions;
++    bool disc_menu;
+     bool show_dependent_tracks;
+     bool initial_audio_sync;
+     double sync_max_video_change;
+diff --git a/player/command.c b/player/command.c
+index bd82f2d..f0285a0 100644
+--- a/player/command.c
++++ b/player/command.c
+@@ -1142,6 +1142,21 @@ static int mp_property_current_edition(void *ctx, struct m_property *prop,
+     return m_property_int_ro(action, arg, demuxer->edition);
+ }
+ 
++static int mp_property_disc_menu_active(void *ctx, struct m_property *prop,
++                                        int action, void *arg)
++{
++    MPContext *mpctx = ctx;
++    struct stream *s = disc_nav_get_stream(mpctx);
++    if (!s)
++        return M_PROPERTY_UNAVAILABLE;
++    struct stream_nav_state st = {0};
++    if (stream_control(s, STREAM_CTRL_GET_NAV_STATE, &st) < 1)
++        return M_PROPERTY_UNAVAILABLE;
++    bool active = strcmp(prop->name, "disc-nav-active") == 0
++                    ? st.nav_active : st.menu_active;
++    return m_property_bool_ro(action, arg, active);
++}
++
+ static int mp_property_edition(void *ctx, struct m_property *prop,
+                                int action, void *arg)
+ {
+@@ -1177,6 +1190,26 @@ static int mp_property_edition(void *ctx, struct m_property *prop,
+         }
+         return M_PROPERTY_OK;
+     }
++    case M_PROPERTY_SET: {
++        // For disc demuxers, jump the title directly, we sometimes need to
++        // react even if the actual edition "value" doesn't change.
++        if (disc_nav_get_stream(mpctx)) {
++            int new_ed = *(int *)arg;
++            if (new_ed < 0 || new_ed >= demuxer->num_editions)
++                return M_PROPERTY_ERROR;
++            unsigned new_title = new_ed;
++            if (stream_control(demuxer->stream, STREAM_CTRL_SET_CURRENT_TITLE,
++                               &new_title) < 1)
++                return M_PROPERTY_ERROR;
++            mpctx->opts->edition_id = new_ed;
++            m_config_notify_change_opt_ptr(mpctx->mconfig,
++                                           &mpctx->opts->edition_id);
++            mp_notify_property(mpctx, "edition");
++            mp_wakeup_core(mpctx);
++            return M_PROPERTY_OK;
++        }
++        return mp_property_generic_option(mpctx, prop, action, arg);
++    }
+     default:
+         return mp_property_generic_option(mpctx, prop, action, arg);
+     }
+@@ -4696,6 +4731,8 @@ static const struct m_property mp_properties_base[] = {
+     {"chapter", mp_property_chapter},
+     {"edition", mp_property_edition},
+     {"current-edition", mp_property_current_edition},
++    {"disc-menu-active", mp_property_disc_menu_active},
++    {"disc-nav-active", mp_property_disc_menu_active},
+     {"chapters", mp_property_chapters},
+     {"editions", mp_property_editions},
+     {"metadata", mp_property_metadata},
+@@ -5417,7 +5451,7 @@ done:
+         new->num_parts = 0;
+     }
+ 
+-    osd_set_external2(mpctx->osd, new);
++    osd_set_bitmaps(mpctx->osd, OSDTYPE_EXTERNAL2, new);
+     mp_wakeup_core(mpctx);
+     cmd->overlay_osd_current = overlay_next;
+ }
+@@ -5555,7 +5589,7 @@ static void overlay_uninit(struct MPContext *mpctx)
+         return;
+     for (int id = 0; id < cmd->num_overlays; id++)
+         replace_overlay(mpctx, id, &(struct overlay){0});
+-    osd_set_external2(mpctx->osd, NULL);
++    osd_set_bitmaps(mpctx->osd, OSDTYPE_EXTERNAL2, NULL);
+     for (int n = 0; n < 2; n++)
+         mp_image_unrefp(&cmd->overlay_osd[n].packed);
+ }
+@@ -7467,6 +7501,50 @@ static void cmd_context_menu(void *p)
+         vo_control(vo, VOCTRL_SHOW_MENU, NULL);
+ }
+ 
++static void cmd_discnav(void *p)
++{
++    struct mp_cmd_ctx *cmd = p;
++    struct MPContext *mpctx = cmd->mpctx;
++    int action = cmd->args[0].v.i;
++
++    struct stream *s = disc_nav_get_stream(mpctx);
++    if (!s) {
++        cmd->success = false;
++        return;
++    }
++
++    struct stream_nav_cmd nc = { .action = action };
++
++    struct stream_nav_state pre = {0};
++    stream_control(s, STREAM_CTRL_GET_NAV_STATE, &pre);
++
++    if (action == STREAM_NAV_MOUSE_MOVE || action == STREAM_NAV_MOUSE_CLICK) {
++        double nx = cmd->args[1].v.d;
++        double ny = cmd->args[2].v.d;
++        if (nx >= 0 && ny >= 0) {
++            if (pre.src_w <= 0 || pre.src_h <= 0 || nx > 1 || ny > 1) {
++                cmd->success = false;
++                return;
++            }
++            nc.x = (int)(nx * pre.src_w);
++            nc.y = (int)(ny * pre.src_h);
++        } else if (!disc_nav_mouse_pos_to_src(mpctx, pre.src_w, pre.src_h,
++                                              &nc.x, &nc.y))
++        {
++            cmd->success = false;
++            return;
++        }
++    }
++
++    if (stream_control(s, STREAM_CTRL_NAV_CMD, &nc) < 1) {
++        cmd->success = false;
++    } else if (mpctx->demuxer && stream_nav_action_activates(action)) {
++        demux_drive_nav(mpctx->demuxer);
++    }
++
++    mp_wakeup_core(mpctx);
++}
++
+ static void cmd_flush_status_line(void *p)
+ {
+     struct mp_cmd_ctx *cmd = p;
+@@ -8023,6 +8101,23 @@ const struct mp_cmd_def mp_cmds[] = {
+ 
+     { "context-menu", cmd_context_menu },
+ 
++    { "discnav", cmd_discnav,
++        { {"action", OPT_CHOICE(v.i,
++            {"up",          STREAM_NAV_UP},
++            {"down",        STREAM_NAV_DOWN},
++            {"left",        STREAM_NAV_LEFT},
++            {"right",       STREAM_NAV_RIGHT},
++            {"select",      STREAM_NAV_SELECT},
++            {"menu",        STREAM_NAV_MENU_ROOT},
++            {"title-menu",  STREAM_NAV_MENU_TITLE},
++            {"popup",       STREAM_NAV_MENU_POPUP},
++            {"prev",        STREAM_NAV_PREV_MENU},
++            {"mouse-move",  STREAM_NAV_MOUSE_MOVE},
++            {"mouse-click", STREAM_NAV_MOUSE_CLICK})},
++          {"x", OPT_DOUBLE(v.d), OPTDEF_DOUBLE(-1)},
++          {"y", OPT_DOUBLE(v.d), OPTDEF_DOUBLE(-1)} },
++    },
++
+     { "flush-status-line", cmd_flush_status_line, { {"clear", OPT_BOOL(v.b)} } },
+ 
+     { "notify-property", cmd_notify_property, { {"property", OPT_STRING(v.s)} } },
+@@ -8558,6 +8653,10 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
+                     mp_notify_property(mpctx, "current-edition");
+                     print_track_list(mpctx,
+                         mp_tprintf(42, "Selected edition %d:", demuxer->edition));
++                } else if (disc_nav_get_stream(mpctx)) {
++                    unsigned new_title = opts->edition_id;
++                    stream_control(demuxer->stream,
++                                   STREAM_CTRL_SET_CURRENT_TITLE, &new_title);
+                 } else {
+                     if (!mpctx->stop_play)
+                         mpctx->stop_play = PT_CURRENT_ENTRY;
+diff --git a/player/core.h b/player/core.h
+index 09c667d..6dd668a 100644
+--- a/player/core.h
++++ b/player/core.h
+@@ -447,6 +447,9 @@ typedef struct MPContext {
+ 
+     struct screenshot_ctx *screenshot_ctx;
+     struct command_ctx *command_ctx;
++    struct disc_nav_state *disc_nav;
++    // Demuxer parked on an indefinite still frame (DVD/BD menu).
++    bool disc_nav_still_frame;
+     struct encode_lavc_context *encode_lavc_ctx;
+ 
+     struct mp_option_callback *option_callbacks;
+@@ -672,6 +675,16 @@ void uninit_sub_all(struct MPContext *mpctx);
+ void update_osd_msg(struct MPContext *mpctx);
+ bool update_subtitles(struct MPContext *mpctx, double video_pts);
+ 
++// discnav.c
++struct stream;
++struct stream_nav_state;
++void disc_nav_update(struct MPContext *mpctx);
++void disc_nav_reset(struct MPContext *mpctx);
++void disc_nav_destroy(struct MPContext *mpctx);
++struct stream *disc_nav_get_stream(struct MPContext *mpctx);
++bool disc_nav_mouse_pos_to_src(struct MPContext *mpctx, int src_w, int src_h,
++                               int *out_x, int *out_y);
++
+ // video.c
+ void reset_video_state(struct MPContext *mpctx);
+ int init_video_decoder(struct MPContext *mpctx, struct track *track);
 diff --git a/player/loadfile.c b/player/loadfile.c
-index a0211382..aaefa698 100644
+index d6f44c8..5d3d721 100644
 --- a/player/loadfile.c
 +++ b/player/loadfile.c
 @@ -367,6 +367,23 @@ void update_demuxer_properties(struct MPContext *mpctx)
@@ -1505,7 +1600,40 @@ index a0211382..aaefa698 100644
      demuxer->events = 0;
  }
  
-@@ -1814,6 +1851,7 @@ static void play_current_file(struct MPContext *mpctx)
+@@ -1224,6 +1261,32 @@ static void load_per_file_options(m_config_t *conf,
+     }
+ }
+ 
++static void load_disc_navigation_options(struct MPContext *mpctx)
++{
++    struct stream *s = disc_nav_get_stream(mpctx);
++    if (!s || (strcmp(s->info->name, "bd") != 0 &&
++               strcmp(s->info->name, "bdmv/bluray") != 0))
++        return;
++
++    struct stream_nav_state state = {0};
++    if (stream_control(s, STREAM_CTRL_GET_NAV_STATE, &state) < 1 ||
++        !state.nav_active)
++        return;
++
++    // HDMV clips may use a codec/profile unsupported by the device. Keep
++    // trying hardware first, but allow software on outputs that can render it.
++    // In particular, mediacodec_embed accepts hardware frames only.
++    struct m_obj_settings *vos = mpctx->opts->vo->video_driver_list;
++    if (!vos || !vos[0].name ||
++        (strcmp(vos[0].name, "gpu") != 0 &&
++         strcmp(vos[0].name, "gpu-next") != 0))
++        return;
++
++    m_config_set_option_cli(mpctx->mconfig, bstr0("hwdec-software-fallback"),
++                           bstr0("yes"), M_SETOPT_BACKUP);
++    MP_VERBOSE(mpctx, "HDMV navigation: enabling file-local decoder fallback.\n");
++}
++
+ static MP_THREAD_VOID open_demux_thread(void *ctx)
+ {
+     struct MPContext *mpctx = ctx;
+@@ -1802,6 +1865,7 @@ static void play_current_file(struct MPContext *mpctx)
      // let get_current_time() show 0 as start time (before playback_pts is set)
      mpctx->last_seek_pts = 0.0;
      mpctx->seek = (struct seek_params){ 0 };
@@ -1513,8 +1641,17 @@ index a0211382..aaefa698 100644
      mpctx->filter_root = mp_filter_create_root(mpctx->global);
      mp_filter_graph_set_wakeup_cb(mpctx->filter_root, mp_wakeup_core_cb, mpctx);
      mp_filter_graph_set_max_run_time(mpctx->filter_root, 0.1);
+@@ -1916,6 +1980,8 @@ static void play_current_file(struct MPContext *mpctx)
+     if (mpctx->stop_play)
+         goto terminate_playback;
+ 
++    load_disc_navigation_options(mpctx);
++
+     if (reinit_complex_filters(mpctx, false) < 0)
+         goto terminate_playback;
+ 
 diff --git a/player/main.c b/player/main.c
-index 6891c9d5..0ef3d7f6 100644
+index 6891c9d..0ef3d7f 100644
 --- a/player/main.c
 +++ b/player/main.c
 @@ -190,6 +190,7 @@ void mp_destroy(struct MPContext *mpctx)
@@ -1526,7 +1663,7 @@ index 6891c9d5..0ef3d7f6 100644
      mp_clients_destroy(mpctx);
  
 diff --git a/player/playloop.c b/player/playloop.c
-index e5dc80c2..76f7a888 100644
+index e5dc80c..76f7a88 100644
 --- a/player/playloop.c
 +++ b/player/playloop.c
 @@ -1248,6 +1248,10 @@ static void handle_eof(struct MPContext *mpctx)
@@ -1550,7 +1687,7 @@ index e5dc80c2..76f7a888 100644
  
      handle_eof(mpctx);
 diff --git a/stream/stream.c b/stream/stream.c
-index 85d9650e..190008a8 100644
+index 85d9650..190008a 100644
 --- a/stream/stream.c
 +++ b/stream/stream.c
 @@ -732,6 +732,15 @@ void stream_drop_buffers(stream_t *s)
@@ -1569,8 +1706,18 @@ index 85d9650e..190008a8 100644
  // Seek function bypassing the local stream buffer.
  static bool stream_seek_unbuffered(stream_t *s, int64_t newpos)
  {
+@@ -973,6 +982,9 @@ bool stream_has_proto(const char *proto)
+     for (int i = 0; i < MP_ARRAY_SIZE(stream_list); i++) {
+         const stream_info_t *stream_info = stream_list[i];
++        if (stream_info == &stream_info_iso &&
++            strcmp(proto, "webhtv-dvdiso") == 0)
++            continue;
+
+         bool match = false;
+         char **get_protocols = stream_info->get_protocols ? stream_info->get_protocols() : NULL;
+         char **protocols = get_protocols ? get_protocols : (char **)stream_info->protocols;
 diff --git a/stream/stream.h b/stream/stream.h
-index e849b53d..ebd6d05c 100644
+index e849b53..ebd6d05 100644
 --- a/stream/stream.h
 +++ b/stream/stream.h
 @@ -25,6 +25,7 @@
@@ -1662,7 +1809,7 @@ index e849b53d..ebd6d05c 100644
  
  struct mpv_global;
 diff --git a/stream/stream_bluray.c b/stream/stream_bluray.c
-index 79ee67ca..32d47158 100644
+index 79ee67c..ae6dbb6 100644
 --- a/stream/stream_bluray.c
 +++ b/stream/stream_bluray.c
 @@ -42,9 +42,11 @@
@@ -1677,7 +1824,7 @@ index 79ee67ca..32d47158 100644
  #include "stream.h"
  #include "osdep/io.h"
  #include "osdep/timer.h"
-@@ -99,6 +99,9 @@ struct bluray_priv_s {
+@@ -99,6 +101,9 @@ struct bluray_priv_s {
      int current_title;
      int current_playlist;
  
@@ -1687,7 +1834,7 @@ index 79ee67ca..32d47158 100644
      int cfg_title;
      int cfg_playlist;
      char *cfg_device;
-@@ -107,6 +110,28 @@ struct bluray_priv_s {
+@@ -107,13 +112,210 @@ struct bluray_priv_s {
  
      struct mp_bluray_opts *opts;
      struct m_config_cache *opts_cache;
@@ -1716,7 +1863,8 @@ index 79ee67ca..32d47158 100644
  };
  
  extern const stream_info_t stream_info_ffmpeg;
-@@ -114,6 +139,180 @@ extern const stream_info_t stream_info_bdmv_dir;
++extern const stream_info_t stream_info_cb;
+ extern const stream_info_t stream_info_bdmv_dir;
  
  static int bluray_stream_open_internal(stream_t *s);
  
@@ -1897,7 +2045,7 @@ index 79ee67ca..32d47158 100644
  inline static int play_playlist(struct bluray_priv_s *priv, int playlist)
  {
      return bd_select_playlist(priv->bd, playlist);
-@@ -132,8 +331,13 @@ static void bluray_stream_close(stream_t *s)
+@@ -132,8 +334,13 @@ static void bluray_stream_close(stream_t *s)
  
      if (priv->title_info)
          bd_free_title_info(priv->title_info);
@@ -1912,7 +2060,16 @@ index 79ee67ca..32d47158 100644
      if (priv->iso_stream)
          free_stream(priv->iso_stream);
  }
-@@ -170,7 +374,6 @@ static int open_bluray_from_stream(stream_t *s, const char *url)
+@@ -163,14 +370,14 @@ static int open_bluray_from_stream(stream_t *s, const char *url)
+         .cancel = s->cancel,
+         .url = url,
+         .flags = STREAM_READ | (s->stream_origin & STREAM_ORIGIN_MASK),
+-        .sinfo = &stream_info_ffmpeg,
++        .sinfo = bstr_startswith0(bstr0(url), "webhtv-dvdiso://")
++                     ? &stream_info_cb : &stream_info_ffmpeg,
+     };
+ 
+     stream_t *iso_stream = NULL;
      int r = stream_create_with_args(&args, &iso_stream);
      if (r != STREAM_OK || !iso_stream)
          return STREAM_UNSUPPORTED;
@@ -1920,7 +2077,7 @@ index 79ee67ca..32d47158 100644
      if (!iso_stream->seekable) {
          MP_ERR(s, "Blu-ray ISO stream must be seekable.\n");
          free_stream(iso_stream);
-@@ -182,13 +385,11 @@ static int open_bluray_from_stream(stream_t *s, const char *url)
+@@ -182,13 +389,11 @@ static int open_bluray_from_stream(stream_t *s, const char *url)
          free_stream(iso_stream);
          return STREAM_ERROR;
      }
@@ -1934,7 +2091,7 @@ index 79ee67ca..32d47158 100644
      b->bd = bd;
      b->iso_stream = iso_stream;
      return STREAM_OK;
-@@ -204,7 +405,6 @@ static int open_bluray_from_device(stream_t *s, const char *device)
+@@ -204,7 +409,6 @@ static int open_bluray_from_device(stream_t *s, const char *device)
          MP_ERR(s, "Couldn't open Blu-ray device: %s\n", device);
          return STREAM_UNSUPPORTED;
      }
@@ -1942,7 +2099,7 @@ index 79ee67ca..32d47158 100644
      b->bd = bd;
      return STREAM_OK;
  }
-@@ -212,33 +412,69 @@ static int open_bluray_from_device(stream_t *s, const char *device)
+@@ -212,33 +416,76 @@ static int open_bluray_from_device(stream_t *s, const char *device)
  static void handle_event(stream_t *s, const BD_EVENT *ev)
  {
      struct bluray_priv_s *b = s->priv;
@@ -1995,6 +2152,7 @@ index 79ee67ca..32d47158 100644
                                               b->current_angle);
 +        if (b->hdmv_mode) {
 +            mp_mutex_lock(&b->overlay_lock);
++            b->still_active = false;
 +            b->discontinuity_id++;
 +            mp_mutex_unlock(&b->overlay_lock);
 +        }
@@ -2011,13 +2169,19 @@ index 79ee67ca..32d47158 100644
          }
 +        if (b->hdmv_mode) {
 +            mp_mutex_lock(&b->overlay_lock);
++            b->still_active = false;
 +            b->discontinuity_id++;
 +            mp_mutex_unlock(&b->overlay_lock);
 +        }
++        break;
++    case BD_EVENT_PLAYITEM:
++        mp_mutex_lock(&b->overlay_lock);
++        b->still_active = false;
++        mp_mutex_unlock(&b->overlay_lock);
          break;
      case BD_EVENT_ANGLE:
          b->current_angle = ev->param;
-@@ -249,6 +485,13 @@ static void handle_event(stream_t *s, const BD_EVENT *ev)
+@@ -249,6 +496,13 @@ static void handle_event(stream_t *s, const BD_EVENT *ev)
          }
          break;
      case BD_EVENT_POPUP:
@@ -2031,7 +2195,28 @@ index 79ee67ca..32d47158 100644
          break;
  #if BLURAY_VERSION >= BLURAY_VERSION_CODE(0, 5, 0)
      case BD_EVENT_DISCONTINUITY:
-@@ -264,6 +507,56 @@ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
+@@ -260,10 +514,81 @@ static void handle_event(stream_t *s, const BD_EVENT *ev)
+     }
+ }
+ 
++static int bluray_poll_hdmv_events(stream_t *s)
++{
++    struct bluray_priv_s *b = s->priv;
++    // User input queues VM commands, not just BD_EVENTs. A zero-byte read
++    // executes those commands even while the current clip holds a still.
++    for (int i = 0; i < 200; i++) {
++        BD_EVENT event = {0};
++        if (mp_cancel_test(s->cancel) ||
++            bd_read_ext(b->bd, NULL, 0, &event) < 0)
++            return -1;
++        if (event.event == BD_EVENT_NONE)
++            return 0;
++        handle_event(s, &event);
++    }
++    return 0;
++}
++
+ static int bluray_stream_fill_buffer(stream_t *s, void *buf, int len)
  {
      struct bluray_priv_s *b = s->priv;
      BD_EVENT event;
@@ -2041,8 +2226,12 @@ index 79ee67ca..32d47158 100644
 +        // bytecode would never run and we'd be stuck with "no valid title"
 +        // forever. bd_read_ext() runs the VM between event drains and also
 +        // delivers one event per call, which we hand off to handle_event.
-+        while (bd_get_event(b->bd, &event))
-+            handle_event(s, &event);
++        uint32_t disc_before_poll = b->discontinuity_id;
++        if (bluray_poll_hdmv_events(s) < 0)
++            return -1;
++        // Do not feed the first bytes of a new clip into the old demuxer.
++        if (b->data_delivered && b->discontinuity_id != disc_before_poll)
++            return 0;
 +        if (b->still_active)
 +            return 0;
 +        int total = 0;
@@ -2088,7 +2277,7 @@ index 79ee67ca..32d47158 100644
      while (bd_get_event(b->bd, &event))
          handle_event(s, &event);
      return bd_read(b->bd, buf, len);
-@@ -296,6 +589,12 @@ static int bluray_stream_control(stream_t *s, int cmd, void *arg)
+@@ -296,6 +621,12 @@ static int bluray_stream_control(stream_t *s, int cmd, void *arg)
      }
      case STREAM_CTRL_SET_CURRENT_TITLE: {
          const uint32_t title = *((unsigned int*)arg);
@@ -2101,7 +2290,7 @@ index 79ee67ca..32d47158 100644
          if (title >= b->num_titles || !play_title(b, title))
              return STREAM_UNSUPPORTED;
          b->current_title = title;
-@@ -404,6 +703,109 @@ static int bluray_stream_control(stream_t *s, int cmd, void *arg)
+@@ -404,6 +735,103 @@ static int bluray_stream_control(stream_t *s, int cmd, void *arg)
          *(char**)arg = talloc_strdup(NULL, meta->di_name);
          return STREAM_OK;
      }
@@ -2150,14 +2339,8 @@ index 79ee67ca..32d47158 100644
 +        }
 +        if (key != BD_VK_NONE)
 +            bd_user_input(b->bd, -1, key);
-+        // If an activation just ran a button command, it may have released a
-+        // held still, bump discontinuity_id.
-+        if (stream_nav_action_activates(nav->action)) {
-+            mp_mutex_lock(&b->overlay_lock);
-+            if (b->still_active)
-+                b->discontinuity_id++;
-+            mp_mutex_unlock(&b->overlay_lock);
-+        }
++        // The next demux read runs pending VM commands. Only actual disc
++        // events may change the generation; a page/button change is no seek.
 +        return STREAM_OK;
 +    }
 +    case STREAM_CTRL_GET_NAV_STATE: {
@@ -2211,7 +2394,7 @@ index 79ee67ca..32d47158 100644
      default:
          break;
      }
-@@ -426,34 +828,26 @@ static const char *aacs_strerr(int err)
+@@ -426,34 +854,26 @@ static const char *aacs_strerr(int err)
      }
  }
  
@@ -2251,7 +2434,7 @@ index 79ee67ca..32d47158 100644
          }
      }
  
-@@ -461,15 +855,15 @@ static int check_disc_info(stream_t *s)
+@@ -461,15 +881,15 @@ static int check_disc_info(stream_t *s)
      if (info->bdplus_detected) {
          if (!info->libbdplus_detected) {
              MP_ERR(s, "BD+ encryption detected but cannot find libbdplus.\n");
@@ -2270,7 +2453,7 @@ index 79ee67ca..32d47158 100644
  }
  
  static void select_initial_title(stream_t *s, int title_guess) {
-@@ -502,42 +896,45 @@ static int bluray_stream_open_internal(stream_t *s)
+@@ -502,42 +922,45 @@ static int bluray_stream_open_internal(stream_t *s)
      struct bluray_priv_s *b = s->priv;
  
      struct m_config_cache *opts_cache =
@@ -2319,15 +2502,15 @@ index 79ee67ca..32d47158 100644
          goto err;
 +    }
 +
-+    // BD-J discs keep the existing longest-title behavior. Do not expose a
-+    // menu-active state or start a VM/JVM for a BD-J top menu.
 +    const BLURAY_DISC_INFO *disc_info = bd_get_disc_info(b->bd);
-+    if (b->cfg_title == BLURAY_MENU_TITLE && disc_info && disc_info->bdj_detected)
++    if (b->cfg_title == BLURAY_MENU_TITLE &&
++        (!disc_info || !disc_info->top_menu_supported ||
++         !disc_info->top_menu || disc_info->top_menu->bdj))
 +        b->cfg_title = BLURAY_DEFAULT_TITLE;
  
      /* check for available titles on disc */
      b->num_titles = bd_get_titles(b->bd, TITLES_RELEVANT, 0);
-@@ -550,13 +947,17 @@ static int bluray_stream_open_internal(stream_t *s)
+@@ -550,13 +973,17 @@ static int bluray_stream_open_internal(stream_t *s)
      MP_INFO(s, "List of available titles:\n");
  
      /* parse titles information */
@@ -2345,7 +2528,7 @@ index 79ee67ca..32d47158 100644
          char *time = mp_format_time(ti->duration / 90000, false);
          MP_INFO(s, "idx: %3d duration: %s angles: %2d (playlist: %05d.mpls)\n",
                      i, time, ti->angle_count, ti->playlist);
-@@ -572,10 +973,28 @@ static int bluray_stream_open_internal(stream_t *s)
+@@ -572,10 +999,35 @@ static int bluray_stream_open_internal(stream_t *s)
      // initialize libbluray event queue
      bd_get_event(b->bd, NULL);
  
@@ -2356,14 +2539,21 @@ index 79ee67ca..32d47158 100644
 +        mp_mutex_init(&b->overlay_lock);
 +        bd_register_overlay_proc(b->bd, b, bd_yuv_overlay_cb);
 +        if (!bd_play(b->bd)) {
-+            MP_ERR(s, "Couldn't start Blu-ray HDMV playback.\n");
-+            ret = STREAM_UNSUPPORTED;
-+            goto err;
++            bd_register_overlay_proc(b->bd, NULL, NULL);
++            mp_mutex_destroy(&b->overlay_lock);
++            b->hdmv_mode = false;
++            b->cfg_title = BLURAY_DEFAULT_TITLE;
++            MP_VERBOSE(s, "bdnav: menu start failed; using main title.\n");
++        } else {
++            // bd_play() schedules FIRST PLAY; the VM executes on read_ext().
++            // Jumping to TOP MENU here skips its register/menu initialization
++            // and can trap authored discs in a title-0 loop with no playlist.
++            b->current_title = bd_get_current_title(b->bd);
++            MP_VERBOSE(s, "bdnav: HDMV entered; current title=%d\n",
++                       b->current_title);
 +        }
-+        b->current_title = bd_get_current_title(b->bd);
-+        MP_VERBOSE(s, "bdnav: HDMV entered; current title=%d\n",
-+                   b->current_title);
-+    } else {
++    }
++    if (!b->hdmv_mode) {
 +        select_initial_title(s, bd_get_main_title(b->bd));
 +    }
  
@@ -2377,7 +2567,7 @@ index 79ee67ca..32d47158 100644
  
      b->current_angle = bd_get_current_angle(b->bd);
  
-@@ -606,12 +1025,15 @@ static int bluray_stream_open(stream_t *s)
+@@ -606,12 +1058,15 @@ static int bluray_stream_open(stream_t *s)
  
      struct MPOpts *opts = mp_get_config_group(s, s->global, &mp_opt_root);
      int edition_id = opts->edition_id;
@@ -2395,7 +2585,7 @@ index 79ee67ca..32d47158 100644
      } else if (bstr_equals0(title, "menu")) {
          b->cfg_title = BLURAY_MENU_TITLE;
      } else if (bstr_equals0(title, "mpls")) {
-@@ -658,7 +1080,8 @@ int stream_open_bluray_iso(stream_t *stream, const char *url, bool local_path)
+@@ -658,7 +1113,8 @@ int stream_open_bluray_iso(stream_t *stream, const char *url, bool local_path)
      stream->priv = b;
  
      struct MPOpts *opts = mp_get_config_group(stream, stream->global, &mp_opt_root);
@@ -2405,7 +2595,7 @@ index 79ee67ca..32d47158 100644
      talloc_free(opts);
  
      if (local_path)
-@@ -673,7 +1096,6 @@ int stream_open_bluray_iso(stream_t *stream, const char *url, bool local_path)
+@@ -673,7 +1129,6 @@ int stream_open_bluray_iso(stream_t *stream, const char *url, bool local_path)
          stream->priv = NULL;
          return r;
      }
@@ -2413,7 +2603,7 @@ index 79ee67ca..32d47158 100644
      stream->info = &stream_info_bdmv_dir;
      return STREAM_OK;
  }
-@@ -722,8 +1144,11 @@ static int bdmv_dir_stream_open(stream_t *stream)
+@@ -722,8 +1177,11 @@ static int bdmv_dir_stream_open(stream_t *stream)
      struct bluray_priv_s *priv = talloc_ptrtype(stream, priv);
      stream->priv = priv;
      struct MPOpts *opts = mp_get_config_group(NULL, stream->global, &mp_opt_root);
@@ -2426,8 +2616,57 @@ index 79ee67ca..32d47158 100644
      };
      talloc_free(opts);
  
+diff --git a/stream/stream_dvdnav.c b/stream/stream_dvdnav.c
+index 985c40e..dacb8e1 100644
+--- a/stream/stream_dvdnav.c
++++ b/stream/stream_dvdnav.c
+@@ -606,6 +606,7 @@ static bool open_dvdnav_path(stream_t *stream, const char *filename)
+ }
+
+ extern const stream_info_t stream_info_ffmpeg;
++extern const stream_info_t stream_info_cb;
+
+ static int open_dvdnav_iso_stream(stream_t *stream, const char *url)
+ {
+@@ -615,7 +616,8 @@ static int open_dvdnav_iso_stream(stream_t *stream, const char *url)
+         .cancel = stream->cancel,
+         .url = url,
+         .flags = STREAM_READ | (stream->stream_origin & STREAM_ORIGIN_MASK),
+-        .sinfo = &stream_info_ffmpeg,
++        .sinfo = bstr_startswith0(bstr0(url), "webhtv-dvdiso://")
++                     ? &stream_info_cb : &stream_info_ffmpeg,
+     };
+
+     if (stream_create_with_args(&args, &priv->iso_stream) != STREAM_OK ||
+diff --git a/stream/stream_iso.c b/stream/stream_iso.c
+index dcf1481..dac0e7d 100644
+--- a/stream/stream_iso.c
++++ b/stream/stream_iso.c
+@@ -40,9 +40,12 @@ static int iso_stream_open(stream_t *stream)
+ {
+     struct MPOpts *opts = mp_get_config_group(stream, stream->global, &mp_opt_root);
+     bool force_iso = opts->force_iso;
++    bool disc_menu = opts->disc_menu;
+     talloc_free(opts);
+
+-    bool is_iso_candidate = force_iso || has_iso_extension(bstr0(stream->url));
++    bool is_webhtv_iso = bstr_startswith0(bstr0(stream->url), "webhtv-dvdiso://");
++    bool is_iso_candidate = force_iso || has_iso_extension(bstr0(stream->url)) ||
++                            (disc_menu && is_webhtv_iso);
+     if (!is_iso_candidate)
+         return STREAM_UNSUPPORTED;
+     if (!stream->access_references)
+@@ -101,7 +104,7 @@ static int iso_stream_open(stream_t *stream)
+ const stream_info_t stream_info_iso = {
+     .name = "iso",
+     .open = iso_stream_open,
+-    .protocols = (const char*const[]){ "file", "http", "https", "proxy", "",
++    .protocols = (const char*const[]){ "file", "http", "https", "proxy", "webhtv-dvdiso", "",
+                                        NULL },
+     .stream_origin = STREAM_ORIGIN_UNSAFE,
+ };
 diff --git a/sub/dec_sub.h b/sub/dec_sub.h
-index d8f15396..63832cb6 100644
+index d8f1539..63832cb 100644
 --- a/sub/dec_sub.h
 +++ b/sub/dec_sub.h
 @@ -5,6 +5,7 @@
@@ -2447,7 +2686,7 @@ index d8f15396..63832cb6 100644
  
  enum sd_text_type {
 diff --git a/sub/osd.c b/sub/osd.c
-index ef646b67..0a073bd7 100644
+index ef646b6..0a073bd 100644
 --- a/sub/osd.c
 +++ b/sub/osd.c
 @@ -192,7 +192,8 @@ void osd_free(struct osd_state *osd)
@@ -2504,7 +2743,7 @@ index ef646b67..0a073bd7 100644
      } else {
          res = osd_object_get_bitmaps(osd, obj, format);
 diff --git a/sub/osd.h b/sub/osd.h
-index 44cf2edc..d6938722 100644
+index 44cf2ed..d693872 100644
 --- a/sub/osd.h
 +++ b/sub/osd.h
 @@ -113,7 +113,7 @@ struct mp_osd_res {
@@ -2526,7 +2765,7 @@ index 44cf2edc..d6938722 100644
  enum mp_osd_draw_flags {
      OSD_DRAW_SUB_FILTER = (1 << 0),
 diff --git a/sub/osd_state.h b/sub/osd_state.h
-index cd4ca15a..57bd565c 100644
+index cd4ca15..57bd565 100644
 --- a/sub/osd_state.h
 +++ b/sub/osd_state.h
 @@ -10,6 +10,8 @@ enum mp_osdtype {
@@ -2550,7 +2789,7 @@ index cd4ca15a..57bd565c 100644
      // VO cache state
      int vo_change_id;
 diff --git a/sub/sd_lavc.c b/sub/sd_lavc.c
-index 5096648c..ce9416e8 100644
+index 5096648..ce9416e 100644
 --- a/sub/sd_lavc.c
 +++ b/sub/sd_lavc.c
 @@ -71,6 +71,11 @@ struct sd_lavc_priv {

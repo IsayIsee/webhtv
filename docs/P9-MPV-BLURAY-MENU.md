@@ -6,13 +6,14 @@
 - 接受标准：HDMV 菜单从远程/本地 Range ISO 入口可达并可操作；菜单跳转后音视频轨和时间线重建；普通 Blu-ray 最长标题、DVD、非 ISO、双 Surface OSD、硬解/软解和现有 Range 行为不回退。
 - BD-J 产品边界：不启动 BD-J runtime，不处理 BD-J ARGB 菜单，不新增提示；遇到 BD-J 菜单时继续按现状选择最长标题播放。
 - 用户决定：2026-09-06 明确“实现；遇到 BD-J 菜单时不用提示，就不处理菜单，跟现在一样即可”。
-- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU`。
-- 分支/HEAD：`feature-menu` / `966b3b6747ece447c2f34f7787df7c6af572baa0`。
-- 任务开始工作区：干净；外部缓存 `/Users/macbookpro/Desktop/github/webhtv/build/mpv-native/mpv-android` 有预存修改，只读使用，不纳入提交。
+- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU-FIX`。
+- 分支/HEAD：`feature-menu` / `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`。
+- 当前修复保护路径：未跟踪 `app/.cxx/`；延续现有任务源码修改，不接管其它工作。
 - MPV 固定基线：`cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`；构建框架 `99a60ad2141d5ace94453590903c2c6b9a0a2443`；libbluray 1.4.1 tarball SHA-256 `76b5dc40097f28dca4ebb009c98ed51321b2927453f75cc72cf74acd09b9f449`。
-- 当前状态：HDMV 适配补丁、MPV App 接线和 native 构建/资产检查接线已落盘；生产 native 编译与真实设备验收仍未完成。
-- 回滚锚点：`966b3b6747ece447c2f34f7787df7c6af572baa0`，并成套恢复 MPV patch、JNI header/source、App 接线和双 ABI assets。
-- 唯一下一动作：在具备 `libplacebo` 与 Android NDK 的环境中执行一次双 ABI native 构建/资产校验；若环境仍缺失则保留当前源码提交并记录阻塞。
+- 当前状态：Checkpoint 18/20 的 Java 缓存与原生音频空读等待修复已通过定向测试、两ABI构建及资产检查，Mobile debug已成功安装。2026-09-08用户确认肉眼流畅度明显改善，并明确要求先打tag；随后补充仍有少量掉帧、CPU约60%、最近观看缺少《豪斯医生》。本次按用户请求保存已测试版本的阶段性恢复点，**不等于P9全部验收通过**；剩余音频/掉帧与历史问题继续只读确认。
+- 本轮补充修复：ISO 探测返回 null 的异常、Leanback 抢先消费方向键、手机触屏/菜单控制入口、HDMV Top Menu 判别及菜单启动失败回退。设置默认关闭，DVD 不增加菜单能力。
+- 回滚锚点：`831b70433e3dbdfd6f119c6036a3c8cf22d85ae4` / 本地 tag `recovery/P9-MPV-BLURAY-MENU-FIX/20260908-071735`；tag 仅包含已提交基线，不包含当前修复。回滚需成套恢复 MPV patch、JNI、App 接线和双 ABI assets。
+- 唯一下一动作：完成用户要求的本地恢复提交/tag，然后采样当前手机《豪斯医生》的音频线程、稳定播放掉帧和历史保存链路；不重复已通过的测试和构建。
 
 ## 1. 授权、范围与排除项
 
@@ -42,7 +43,7 @@
 
 结论：采用 WebHTV 适配方案；不整体升级，不做 Java 层自建 Blu-ray VM。
 
-## 3. 当前 WebHTV 调用链
+## 3. 修复前 WebHTV 调用链
 
 - `IsoSessionManager.create()` 产生 `webhtv-dvdiso://<id>/longest`。
 - `MpvPlayer` 用 `loadfile` 打开该 URL。
@@ -108,10 +109,11 @@
 
 1. `webhtv-dvdiso` callback 增加 raw ISO 模式，只负责 Java Range read/seek/size，不在 JNI 内抢先选择最长 playlist。
 2. MPV `stream_iso` 识别该 callback scheme，并让 `stream_bluray` 明确通过 `stream_info_cb` 打开嵌套原始流，避免递归和 FFmpeg URL handler 绕行。
-3. 只有当 libbluray 报告 `top_menu_supported` 且 top menu 是 HDMV 时进入菜单；使用 `bd_play_title(..., BLURAY_TITLE_TOP_MENU)`，不注册 BD-J ARGB callback，不调用 BD-J runtime。
+3. 只有当 libbluray 报告 `top_menu_supported` 且 `top_menu->bdj == 0` 时进入菜单；调用 `bd_play()` 从 FIRST PLAY 启动并让 `bd_read_ext()` 执行光盘自己的初始化，不在初始化完成前强跳 TOP MENU（Checkpoint 15 修正）。不注册 BD-J ARGB callback。BD-J top menu 直接走最长标题，不能仅凭整盘 `bdj_detected` 排除其中的 HDMV top menu。
 4. 其它情况（包括 BD-J top menu、无 HDMV top menu、menu boot 失败）无提示回退 `bd_get_main_title()`/最长标题语义。
-5. App 对 ISO load 传入 `disc-menu=yes`；MPV 暴露 `disc-menu-active`，只有 true 时 Android Activity 截获 DPAD/ENTER/BACK/MENU 并发送 `discnav`。
+5. App 按默认关闭的 `playback_bluray_menu` 设置，在每次加载时同步 `disc-menu=yes/no` 与 ISO `/raw`/`/longest` 路由；非 ISO 探测返回 null 时保持普通播放。HDMV 菜单激活时优先转发 DPAD/ENTER/BACK/MENU；菜单曾激活的当前 ISO 正片中，MENU 仍可唤出 Popup。音量/媒体键和普通播放输入保留原行为。
 6. 菜单 bitmap 继续走 MPV OSD renderer，复用现有 Android OSD Surface；不在 Java 额外复制整帧 bitmap。
+7. 手机点击由 MPV `mouse` + `discnav mouse-click` 处理，坐标经原生 VO 的源/目标矩形映射；长按菜单画面打开导航面板。进入正片后可从播放控制栏的“蓝光原盘菜单”再次打开导航面板。
 
 ## 7. 证据
 
@@ -171,3 +173,305 @@
 - Files changed：`third_party/patches/mpv-discnav.patch`、`app/src/main/java/androidx/media3/mpvplayer/MpvPlayer.java`、`app/src/main/java/com/fongmi/android/tv/ui/activity/PlaybackActivity.java`、`scripts/build_mpv_native.sh`、`scripts/verify_mpv_native_assets.sh`、本任务文档。
 - Rollback anchor：`966b3b6747ece447c2f34f7787df7c6af572baa0`。
 - 唯一下一动作：具备依赖时执行一次双 ABI native 构建和资产校验；否则以当前未完成 native 验证的状态进入用户可见交接，不虚报设备支持。
+
+## Checkpoint 3：2026-09-07 原始 ISO 接管修复与开关
+
+- 完成：播放设置在 Mobile/Leanback 加入默认关闭的“蓝光原盘菜单”开关，首选项为 `playback_bluray_menu`，并纳入备份设置；仅 MPV 播放器显示。
+- 完成：`MpvPlayer` 按开关传递 `disc-menu=yes/no`。开启时把 `webhtv-dvdiso://<id>/longest` 改为 `/raw`，关闭时保留 `/longest` 兼容路径。
+- 完成：JNI `iso_dvd.cpp` 增加 RAW callback 模式，只提供 Java Range 原始字节，不创建 libbluray、不扫描标题、不选择 playlist；原有关闭开关的 Blu-ray/DVD 最长标题路径未改动。
+- 完成：MPV disc patch 让 `stream_iso` 识别 WebHTV raw scheme，并让 Blu-ray/DVD nested stream 通过 `stream_info_cb` 打开，避免 FFmpeg URL handler 绕过 Java Range callback；固定基线上的 patch chain 已重新应用通过。
+- DVD 结论：DVD-Video 确有 VMG/VTS 菜单，但当前 WebHTV 仍由 JNI 直接选择最长标题，未接入 DVD overlay/按钮/导航；本开关不宣称支持 DVD 菜单。
+- 验证：`bash ./gradlew --offline :app:compileMobileArm64_v8aDebugJavaWithJavac :app:compileLeanbackArm64_v8aDebugJavaWithJavac` 成功；固定 MPV 基线先应用 `mpv-stream-cb-disc-controls.patch` 再应用当前 `mpv-discnav.patch` 成功；`bash .codex/scripts/task_guard.sh check` 成功。第一次 `./gradlew` 无执行权限，已按仓库规则改用 `bash ./gradlew`，不属于代码失败。
+- 未完成：当前环境仍无 Android NDK/libplacebo/native 构建依赖，未重建 `libplayer.so`/`libmpv.so`，也未安装新 APK 做真实 HDMV/BD-J 设备验证；不能把源码接线等同于实机菜单已验收。
+- 当前文件：App 设置/资源、`MpvPlayer.java`、`iso_dvd.cpp`、`mpv-discnav.patch`、本任务文档。
+- 回滚锚点：`831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`（本修复前）；保护未跟踪 `app/.cxx/`。
+- 唯一下一动作：在具备 Android NDK、libplacebo 和确认的 HDMV/BD-J 样片时，执行一次双 ABI native 构建并安装到设备，验证开关开/关两条日志与菜单画面；若仍缺依赖，保留“源码完成、native/实机未验证”状态。
+
+## Checkpoint 4：2026-09-07 双 ABI、自动验收与 debug 包完成
+
+- 环境恢复：NDK `29.0.14206865`、API 24、本工作区 `build/mpv-native` 缓存可用；Checkpoint 2/3 的“缺 NDK/native 依赖”已不再成立。`feature-menu` HEAD 仍为 `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`，本轮尚未提交。
+- 补齐修复：`MpvDiscMenuPolicy` 使 ISO 路由对 null 安全、仅改写本协议末尾 `/longest`；`MpvPlayer` 每次加载同步开关；Leanback 在普通播放键处理之前路由菜单；只消费实际菜单按键，不吞音量/媒体键的抬起事件。
+- 手机入口：新增 `DiscMenuDialog` 导航面板和控制栏入口；菜单画面支持触屏定位/点击，长按打开方向、确认、主菜单、Popup、菜单返回面板。布局/字符串同时经过 Mobile/Leanback 编译。
+- 原生修正：检查实际 top menu 类型，菜单启动失败静默退回正片；RAW callback 在镜像 EOF 返回 0 并约束最后一段读取长度；删除会把通用 `stream_cb` 限制为仅一个 scheme 的 protocol marker，保留其它 callback 的原有协议能力。
+- 构建：armeabi-v7a 全依赖首次构建通过；最后使用相同补丁源码分别增量重编两个 ABI 的 MPV，并 `--stage-only --install` 安装产物；`build_mpv_player_jni.sh --abi all --install` 在 RAW EOF 修复后重编两个 ABI 的 JNI。没有更新上游锁定版本。
+- 自动验收：`MpvDiscMenuPolicyTest` **6 tests / 0 failures / 0 errors**；Mobile arm64、Leanback arm64 与 armeabi-v7a Java/资源编译通过；`verify_mpv_native_assets.sh --require-elf` 双 ABI 通过；固定 MPV 基线加 callback-controls/discnav 补丁干净应用，生成的 `stream_bluray.c` / `stream_cb.c` 与实际编译源码一致。
+- 打包：`bash ./gradlew --offline --init-script /tmp/p9-menu-gradle-staging.gradle :app:assembleMobileArm64_v8aDebug` 成功（1m33s）。临时 init script 仅将 App CMake 中间文件重定位到 `build/mpv-native/app-cxx`，不改生产 Gradle 文件，也不接管原有 `app/.cxx/`。
+- APK：`app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk`；包名 `com.fongmi.android.tv`；versionCode 560 / versionName 5.6.0；大小 168019744 bytes；SHA-256 `0625bac238d0a9bd806330b64ef9a48d267aecec3f4a8e04b8e0afe8eaa74d1e`。已解包逐字节比较全部 arm64 MPV 库，确认装入的是本次候选资产。
+- 输入哈希：lock `a009a6dd9066eacd8547383f93cc7dce2956fff7d6d338bd886be75b9e4ae159`；discnav patch `17efb68ea38a08746d462a146fdc824b1df33a0407d8af4d4cbd2dd52dd4e567`；JNI ISO source `7335df9abf1cf0988f48415440ed8afd3d8b53b4aaa7051f45a83aa45734a17d`。收尾检查发现补丁中 5 行空白 context 的空格，已规范化为空行；只调整 patch 文本形式，源码一致性用重新应用后比较确认，不重复 native/APK 构建。
+
+| 资产 | SHA-256 |
+| --- | --- |
+| arm64 `libmpv.so` | `497cb7e9549323f9e9bb8278b277edebb09651a6258f32b6a6a58b66815286a1` |
+| arm64 `libplayer.so` | `a63e7b34f5ccfdf00a5d8204401e57042f7f9366e4c1fd00538aafc84210c3a1` |
+| armv7 `libmpv.so` | `7acfbb728c3530fc5555ab5f51a760032d762edc66548ec4f6bee418c542afec` |
+| armv7 `libplayer.so` | `60f058ff16d70eec42d4bb3acf31253d7f7e507853adebf9f70ca011ce958977` |
+
+- 完整临时证据：`/tmp/p9-menu-native-armv7.log`、`/tmp/p9-menu-mpv-arm64-final.log`、`/tmp/p9-menu-mpv-armv7-final.log`、`/tmp/p9-menu-jni-final.log`、`/tmp/p9-menu-assets-final.log`、`/tmp/p9-menu-native-sha256.txt`、`/tmp/p9-menu-app-tests.log`、`/tmp/p9-menu-apk-build.log`。Junit XML 位于 `app/build/test-results/testMobileArm64_v8aDebugUnitTest/TEST-androidx.media3.mpvplayer.MpvDiscMenuPolicyTest.xml`。
+- 未完成/风险：截至 21:24，`adb devices -l` 无设备，mDNS 也未发现无线调试服务；未安装本 APK、未运行真实 HDMV/BD-J/DVD、菜单跳转和 Surface 生命周期场景。编译/资产通过不是菜单画面与操作通过，不做原子提交或 recovery tag。
+- DVD 边界：DVD-Video 确有菜单，但本实现不提供 DVD 菜单；开关关闭保留 JNI 最长标题路径，开启后的 DVD 分支也选最长标题。BD-J 不提示、不启用菜单，继续普通正片播放。
+- 回滚：现有 HEAD `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4` 是成套源码/二进制恢复基线；不要单独混回某一个 ABI 或 `libplayer.so`。
+- 唯一下一动作：手机连接后，用 Android 安装辅助脚本安装上述 APK，测试默认关闭、开启后的 HDMV 菜单操作和 BD-J 静默回退；不重新做已完成的依赖研究、构建或自动检查。
+
+## Checkpoint 5：2026-09-07 真机发现协议注册冲突
+
+- 设备：`10CF6H1D2L0009S` / vivo V2453A / Android 15 API 35；安装更新时间 21:39:27；设备 base.apk SHA-256 为 `0625bac238d0a9bd806330b64ef9a48d267aecec3f4a8e04b8e0afe8eaa74d1e`，与本次测试包完全相同，不是旧包混装。
+- 证据：`/tmp/p9-menu-device-20260907.Vq7vyl/history.log` 保存了 21:41–21:43 的七次失败；`live.log` 继续捕获 21:51 的多次重播，均先报 `iso protocol registration failed: invalid parameter`，随后 `/raw` 报 `No protocol handler found`。未进入 libbluray 菜单判断，不是 BD-J 不支持造成的。
+- 根因：`stream_iso.c::stream_info_iso.protocols` 声明 `webhtv-dvdiso`，而 JNI 又通过 `mpv_stream_cb_add_ro()` 注册同名 callback；`player/client.c` 明确用 `stream_has_proto()` 拒绝覆盖内置协议。ISO 在此只是探测器，不应抢占 WebHTV 底层 callback 的注册名。
+- 最小修复：仅在 `stream_has_proto()` 检查中排除 ISO 探测器对 `webhtv-dvdiso` 的占名，不放宽 file/https 等真正内置传输协议保护、不放宽重复注册、不改其它 callback API；保留现有 raw/nested callback 路由及开关关闭的最长标题行为。
+- 验证计划：新增手机可运行的 `third_party/mpv-player-jni/tests/disc_protocol_test.c`，覆盖 ISO 注册、重复注册、其它 custom callback、file/https 保留名和空 callback。先证明当前库失败，再验证候选库通过；只增量重编 MPV 两 ABI，不重建未改动的 FFmpeg/libplacebo/JNI。
+- 当前边界：日志持续抓取，未清日志、未改用户 MPV 配置。`http-allow-redirect` 和 `custombuttons.json` 的配置报错不是当前 ISO 入口失败的根因，不在本修复中清理。
+- 已验证：旧 arm64 库的 ISO callback 首次注册返回 `-4`，其余 5 项通过；修复后同一手机、同一测试 6 项全通过，重复注册及 file/https 内置协议覆盖仍被拒绝。日志：`protocol-before.log` / `protocol-after.log`，位于上述证据目录。手机独立测试目录 `/data/local/tmp/webhtv-p9-protocol-20260907/` 不改 App 数据或配置。
+- 构建：仅增量重编 MPV arm64、armv7，未重建未改动的 FFmpeg/libplacebo/JNI；双 ABI staging 和 `verify_mpv_native_assets.sh --require-elf` 通过。固定基线重新应用 callback-controls/discnav 补丁后，`stream.c`、`stream_bluray.c`、`stream_cb.c`、`stream_dvdnav.c`、`stream_iso.c` 与实际编译源码全部一致。
+- 候选 SHA-256：arm64 `libmpv.so` 为 `cda2282c89ea2b2c07c0ac7fec676a9f3d34986cfbef2d14a55ee6e197a924ed`；armv7 `libmpv.so` 为 `80786d019f6533279a84447401c29e1b553ff8709d4329f980d11224daf82aca`；discnav patch 为 `1fb616f4b60bc3a1f073f340a32ae9d4a808a637ba6cb6152780076373443856`。
+- 22:30 正在运行一次增量 `:app:assembleMobileArm64_v8aDebug`，继续用 `/tmp/p9-menu-gradle-staging.gradle` 保护 `app/.cxx/`。尚未安装本轮修复，不得沿用 Checkpoint 4 的 APK 哈希作为新候选。
+- 下一动作：核对新 APK 内候选库并安装，复播此前失败的原盘，确认已进入实际 ISO 读取及菜单/静默回退路径。
+
+## Checkpoint 6：2026-09-07 修复包安装与实际原盘复播
+
+- 新 APK：`app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk`；SHA-256 `686b514cb59b10d15c19318c0daab4d7e793bff0c5bb7853068e7396296588ec`。增量构建用时 1m21s；解包 `libmpv.so` 与 Checkpoint 5 arm64 候选逐字节相同。
+- 安装：OEM 辅助脚本成功处理风险复选框和继续安装按钮，覆盖安装保留用户数据，随后启动。设备 base.apk 哈希与新包一致，App PID `8672`。证据 `install-protocol-fix.log`、`after-install.xml` / `.png`。
+- 日志：旧采集会话在设备连接中断后结束；已保留原文件并从最后时间续采至 `live-protocol-fix.log`，未清 logcat。用户 `playback_bluray_menu=true`，未修改 MPV 配置文件。
+- 复播《背水一战》：23:32:57 手机日志确认 `iso-native opened raw Blu-ray ISO callback session=1001 size=51435929600`；后续持续 Range 206，正片画面及约 188 秒进度可见。原有协议注册错误及 `/raw` 无 handler 未再出现，入口修复有效。
+- 未通过项：同次播放有频繁缓冲/音频 underrun，后续出现 `mpegts: Packet corrupt`、`dca: Failed to decode block code(s)`、PTS discontinuity 和音画不同步告警。尚不能归因给片源或新实现，不能报告“播放完全正常”。App 播放性能的正常日志级别为 warn，该次日志不能证明菜单类型。
+- 下一动作：同片菜单开关开/关对照并恢复原状态；继续以实际 HDMV 菜单画面和操作作为 P9 验收条件。
+
+## Checkpoint 7：2026-09-08 首次真实 HDMV 菜单及开关对照
+
+- 《背水一战》关菜单对照：session `1003`，`iso-native opened Blu-ray image ... playlist=1 titles=46 durationMs=6433260 chapters=17`，确认走旧 JNI 最长标题路径。00:21:07 同样出现 `dca: Residual encoded channels are present without core`；持续有缓冲，故这两项不是开启菜单后独有。开启路径后期的 Packet corrupt / PTS 跳变仍不可由此单次对照完全归因。
+- 《哈利·波特3》带 BDJ 菜单修改标記的原盘：session `1002` `/raw` 打开成功且有 MediaCodec 持续运行，未复现入口错误；未将文件名当作已验证的 BD-J 类型证据。
+- 《超脱》HDMV：session `1004`，原始 ISO 大小 `21159477248` bytes；00:58:01 明确 `bdnav: cfg_title=-1 hdmv_mode=1`、`HDMV entered; current title=0`、`Blu-ray successfully opened`。`detachment-menu-now.png` 显示 PLAY / SET-UP / SCENE INDEX 原盘菜单及高亮。
+- 交互取证：触摸 SET-UP 打开音轨/字幕设置页（`detachment-setup-confirm.png`），点圆形 X 关闭（`detachment-audio-closed.png`）；长按画面出现方向、确认、主菜单、弹出菜单、菜单返回控制面板（`detachment-controls.png`），方向输入日志返回成功；关闭面板后触摸 SCENE INDEX，显示章节 1–4 缩略图页（`detachment-chapter-page.png`）。仅按键返回 0 不作为页面跳转成功证据，以截图为准。
+- 日志续采：原采集在 01:14:21 结束，新增 `live-hdmv-test.log` 从该时间续采且只监听 App PID `8672`；不清历史日志。
+- 临时状态：菜单开关已由关闭对照恢复 `true`；为了得到菜单模式证据，播放性能里的“详细日志”由正常改为详细。恢复时须设回正常并移除本次增加的 `mpv_verbose_log` override，保留用户原有 `mpv_render` override；不要重置整个播放性能或修改 `mpv.conf`。
+- 唯一下一动作：确认章节 2 启动正片与 Popup 返回，随后恢复临时日志状态，按实际剩余风险决定是否达到提交验收条件。
+
+## Checkpoint 8：2026-09-08 菜单到正片、Popup 与静默回退实测
+
+- 章节选择：01:20:40 点击章节页第 2 个缩略图，libbluray title 切至 13、playlist 切至 0；01:20:42 `discontinuity 6->8, reopening slave` / `reopening slave demuxer`，菜单状态关闭，截图 `detachment-chapter-two.png` 已是正片。记录“章节页选项启动正片”已验证，不把启动时 chapter=0 误写成已精确验证任意章节时间点。
+- Popup：01:28:25 `disc navigation action=popup result=0`、菜单 event 30=1；`detachment-popup-return.png` 显示正片上 MAIN MENU / SET-UP / SCENE INDEX 弹出菜单。该盘 Popup 会自行超时关闭；不把超时后发送的确认键当作已验证的返回主菜单动作。
+- 无菜单回退：01:34:48《哈利·波特3》session `1005` 打开同一 4K ISO；01:34:50 `cfg_title=-2 hdmv_mode=0`；01:34:53 AudioTrack 7.1，01:34:58 `VO: [gpu-next] 3840x2160 mediacodec` 且首帧，未弹 BD-J 提示。`bdj-verbose-playing.png` / `live-hdmv-test.log` 为证据。该模式输出证明未启用 HDMV 菜单；实际 BD-J 类型仍以盘元数据而非文件名为准。
+- 恢复用户状态：退出测试播放后备份最新 SharedPreferences，唯一文本差异是 `perf_mpv_verbose_log: true -> false` 和移除本轮新增的 `mpv_verbose_log` override；保留 `mpv_render`、`playback_bluray_menu=true` 及其余内容。首次 `adb exec-in` 临时文件传输得到零字节，校验失败后在 App 未启动的状态立即从私有备份恢复并逐字节确认；改用 adb push、复制到私有临时文件并先逐字节校验，再替换成功。重新启动后只读确认这两项恢复正确。
+- 隐私/清理：未修改 `mpv.conf`、未清日志或 App 数据。仅移除本任务产生的设备公共临时传输文件；App 私有备份 `shared_prefs/com.fongmi.android.tv_preferences.xml.p9-log-backup` 和本机权限 0600 的恢复证据仍在，均不进 Git。
+- 日志继续：`live-user-followup.log` 以 UID `10464` 过滤本 App，避免 App 重启后旧 PID 过滤丢失日志；回到 App 首页交还操作。完整证据目录仍为 `/tmp/p9-menu-device-20260907.Vq7vyl/`。
+- 本轮结论：统一 ISO 入口致命错误已修复、已换包，真实 HDMV 核心交互链路已证实；尚未验证完整 DVD/所有 HDMV still/任意章节定位，且《背水一战》后期时间戳/损坏包需同一片段比较。保持 P9 未收尾，不以编译或一次菜单成功宣称全量无回归。
+- 唯一下一动作：仅对《背水一战》的同一异常正片时间段做菜单开/关对照，区分现有音频/网络问题和新 RAW 路径风险。
+
+## Checkpoint 9：2026-09-08 最近观看复播失败与原生崩溃修复
+
+- 用户反例取代 Checkpoint 8 的下一动作：最近观看中的《超脱》《幽灵公主》均不正常；不再把曾显示菜单或首帧当作完成。
+- 证据（同一 vivo/API35，UID 10464）：`recent-user-failures-0358.log` / `recent-user-0358.png` / `live-user-0400.log` / `recent-native-crash.log`，均在 `/tmp/p9-menu-device-20260907.Vq7vyl/`，不清设备日志，不输出分享直链/凭据。
+- 03:57《超脱》session 1001，ISO 21159477248 bytes；file-loaded 后立即 seek，接着 SPS/PPS 缺失、no frame，最终连接超时。只读历史副本 position=821112、duration=794960；Mobile `onPrepare -> setPosition` 无菜单判断，`onTimeChanged/updatePlaybackHistoryPosition` 把不同 playlist 时间线写成单一电影进度。此为直接调用链证据，不据此解释全部原生故障。
+- 03:55 和 04:13 SIGABRT：`FORTIFY: pthread_mutex_lock called on a destroyed mutex`。用已安装库对应的 arm64 未剥离产物 `llvm-addr2line` 解析 0x695e60 / 0x692678 / 0x692508 / 0x69e914 / 0x69dc44，依次为 `demux_flush / demux_shutdown / demux_free / reopen_slave / d_read_packet`。
+- 确认根因：`reopen_slave` 释放 `p->slave` 后，遇到短暂 event-only/EOF 从 peek 分支提前返回，但未清空指针，下一次 reopen/close 重复释放。另一个初始化缺口是初次 probe 后 discontinuity 基线仍为 0，首轮读取误将初始化 playlist 事件当成跳转，丢弃首个短 clip。
+- 04:14 崩溃后重新点击《幽灵公主》，这次是分享页 HTTPS（urlLen=35）直接交给 MPV，不是 ISO callback；需独立检查配置/推送解析恢复，不能把该次 unknown_format 当成 HDMV 解码证据。原先 02:08 的 raw ISO unknown_format 仍仅作旧反例。
+- 局部设计沿用第 7 节 libbluray/上游导航契约，不新增 VM 或扩大 DVD/BD-J 能力：保留现状不满足复播；对所有 ISO 禁续播会破坏 BD-J/普通标题；采用原生只读 `disc-nav-active`（区别于瞬时 `disc-menu-active`），RAW ISO 延迟到 file-loaded 判别后决定是否恢复进度。实际 HDMV 会话不恢复/覆盖单一历史时间线，非导航回退保持续播。历史不删除、不迁移，菜单开关仍默认关。
+- 本轮源码改动：失败立即置空 slave；初次读取冻结导航 generation；App 不给待判别 RAW ISO 嵌入 loadfile start/提前 seek；实际导航会话冻结历史时间/片尾跳转，Mobile/Leanback 一致。新单测覆盖待判别、HDMV、BD-J/无菜单回退和普通媒体；C fixture 提取真实 `reopen_slave` 函数覆盖 event-only 重试/关闭/探测失败/恢复。
+- 打包完整性发现：缓存中 `player/discnav.c` 为未跟踪新文件，旧持久补丁只引用它，未收录其内容；本轮将该文件逐字纳入 `mpv-discnav.patch`，防止干净构建依赖残留缓存。
+- 验证：真实 `reopen_slave` fixture 对旧 `/tmp/p9-protocol-apply.oJenrV` 在“失败后必须置空”处失败；对当前源码 event-only 三次重试、关闭、探测失败及恢复全部通过。干净基线先应用 stream-cb patch 再应用菜单 patch 成功，`discnav.c`、`demux_disc.c` 与编译源码逐字一致，目录 `/tmp/p9-resume-apply.VmeyRn`。
+- Java：`:app:testMobileArm64_v8aDebugUnitTest --tests androidx.media3.mpvplayer.MpvDiscMenuPolicyTest` 10/10，通过；同次 `:app:compileLeanbackArm64_v8aDebugJavaWithJavac` 通过（44s）。日志 `resume-app-tests.log`。native 第一次被沙箱 `sysctl ... Operation not permitted` 阻止，实际未开始编译；获准后重跑两个 ABI，仅编译 MPV，均成功，日志 `resume-mpv-arm64-built.log` / `resume-mpv-armv7-built.log`。
+- 产物：双 ABI stage/安装 assets 与 ELF 校验通过，日志 `resume-native-stage.log` / `resume-native-assets.log`。patch SHA-256 `b91aee65650c4e6cb5e3671b3cad8e5e90121a379fee86a52d44e143102cc5cb`；arm64 libmpv `b15d07c4bf201fa7560289d05c2bf9fe44cff7d367ed8903668d7fec9adefda3`；armv7 libmpv `37cc016ef993800cc7903dd69a22a2c12198e303530deed549af4e8669fe67e2`。JNI 未变，不重复重编或重跑已通过的注册测试。
+- 分享页错误的代码解释：进程死亡后直接恢复播放/历史 Activity，不经过 HomeActivity.initConfig；VodConfig sites 为空，SiteApi 的空 push_agent 回退将分享页作为直接媒体。原生崩溃是本轮必须修复的触发条件；全局配置初始化未改，先验证正常启动后最近观看可恢复，不能将此解释误写为已修复全局进程恢复。
+- 授权/范围/回滚仍为本 P9 guard 与 HEAD 831b70433e3dbdfd6f119c6036a3c8cf22d85ae4，保护 app/.cxx/。尚未装本轮新包，不提交/tag。
+- 唯一下一动作：安装正在构建的 debug 包，从正常启动的首页进入最近观看并重复播放两个条目、菜单到正片跳转，检查原生崩溃和历史写入。
+
+## Checkpoint 10：2026-09-08 新包复播与导航缓存暂停冲突
+
+- 新包构建 22s，通过；APK SHA-256 `1999ce4848acd53d0d4d9c281735c00773983c58f998f1ada67372d76b7641cc`。OEM 辅助安装成功，从首页正常启动；第一次播放后设备私有 libmpv SHA-256 已确认是 Checkpoint 9 的 b15d07c4... 候选（播放前磁盘保留旧库，首次使用时才重新提取，不能在提取前误判）。
+- 新采集 `/tmp/p9-menu-device-20260907.Vq7vyl/resume-device.log`，UID 10464；前一采集 04:35 断开，已从该时间接续，未清日志。
+- 《超脱》04:56:39、04:58:07 两次最近观看复播均进入 HDMV 菜单，日志明确忽略旧历史 821112ms，未再执行错误续播；截图 `resume-detachment-menu.png`。04:57:58 为主动 stop，不是 EOF/崩溃。04:59:14 PLAY、随后主菜单/Popup 操作有状态切换；尚不能据此宣称播放正常。
+- 反例：菜单画面仍反复缓冲，一分钟内 rebuffer 计数增长到 41；菜单暂停/恢复期间网络流量和进度间歇变化。这轮未再看到旧 destroyed-mutex SIGABRT，但持续性验证未完成。
+- 确认配置冲突：native `demux.c::read_packet` 在 nav_active 下禁止普通 read-ahead；App 初始化强制 cache-pause=yes，而 `playloop.c::handle_update_cache` 仍按缓存低阈值暂停。因此修复必须改变真实 cache-pause 行为，不能只隐藏 App 进度提示。
+- 最窄适配：仅在 file-loaded 已确认 `disc-nav-active` 时设置 `file-local-options/cache-pause=no`，不关闭网络/ISO页面缓存，不改持久设置；BD-J/无菜单回退不适用。mpv 固定源码 `DOCS/man/input.rst` 的 file-local-options 文档、`command.c::mp_property_local_options/access_option_list` 明确保证停止当前文件时自动恢复旧值；`loadfile.c` 在通知 file-loaded 前已设置 playback_initialized，设置时机有效（A级源码/项目文档证据，2026-09-08）。
+- 相比全局关闭 cache-pause，此方案不污染普通影片或复用上下文；相比再改 native cache 调度，此方案只补 App 已有导航集成的选项冲突。Native ABI/产物不变，无需重建两个 ABI或重复通过的原生门槛。
+- 本轮新 Java 变更待构建实测，不提交/tag。唯一下一动作：只增量打包/安装这个 file-local 修正，验证两个最近观看条目、连续菜单/正片进度和退出重入。
+
+## Checkpoint 11：2026-09-08 用户补充菜单触控/全屏与导航面板反例
+
+- 用户 05:05 两张截图：内嵌菜单无法唤出全屏操作；全屏底栏的菜单按钮打开了透明、低对比、横排方向键的辅助面板。用户授权修正这些菜单 UI 问题，仍在 P9 App/资源范围内。
+- 直接代码证据：Mobile 视频 FrameLayout 的 touch listener 先调用 `dispatchDiscMenuTouch`，后者对整个视频区域无条件消费事件，导致原有 `onSingleTap/showControl` 与 `onDoubleTap/enterFullscreen` 不可达；`DiscMenuDialog` 的 `transparent=true/stableOverlay=true` 清除了面板底色并清除全屏 Window flag，按钮仍受默认主题颜色影响。
+- 局部方案比较：保持现状不满足显式全屏入口；把所有 tap 同时交给手势和光盘会误触光盘按钮；采用独立的小型播放控制/全屏入口，在播放器控制栏可见时优先交还普通手势。底栏“原盘菜单”直接发送 Top Menu，辅助导航改为长按入口，不冒充盘片本身菜单。
+- 面板沿用项目已有底部操作层范式，限宽、清晰深色底与白字、48dp 点击目标、十字方向布局、明确标题和关闭；不调整全局主题/BaseBottomSheetDialog。打开导航面板保留当前全屏系统栏状态，执行确认/主菜单/Popup 后自动关闭面板，方向选择时保留以便观察盘片高亮。
+- 这是既有 HDMV 输入接线和辅助面板的局部修正，不引入新菜单 VM/API、网络策略或架构；论文/上游提交合并不适用。验收以用户这两张截图对应的内嵌/全屏、关闭旋转全屏情况下的可点入口、真实光盘按钮仍可点击及面板清晰性为准。
+- 已装缓存修正 APK SHA-256 `a48ef292a248a911be7297dcb8c092b7cdc34e79da838ced59349fc765ba99ca`；新 UID 日志 `nav-cache-device.log`：05:09:16/30/46、05:11:35 多次 HDMV 启动均 cache-pause=false；05:10 截图显示 READY/0 重缓冲。仍须分别验证两个条目的正片和章节/Popup，不据启动日志宣称完成。
+- 唯一下一动作：实施这两个 UI 修正，增量构建安装后结合连续播放做同一轮真机验收。
+
+## Checkpoint 12：2026-09-08 05:54 手机专用菜单图标与 MPEG-2 失败
+
+- 延续同一 guard/HEAD/范围；保护 `app/.cxx/`。用户最新授权：额外全屏入口仅在实际蓝光菜单显示时出现，去掉“播放控制”，电视端不添加，图标和底栏一致且无额外背景色；继续修复《幽灵公主》。目标约 06:10 完成当前修正和真机验证，失败按实际证据继续收敛。
+- 第一版 UI 包 SHA-256 `d3f7e98cd633820ef459968c357375b76b092b24404ad3baaa0cdc40f4615adc` 已构建/安装；内嵌与全屏切换图标已点击验证。`ui-navigation-card.png` 实际仍是封面/播放控制入口，不能当作导航面板通过证据。该入口在 `app/src/mobile/res/layout*/activity_video.xml`，Leanback 不包含此布局。
+- UI 根因与适配：`hasDiscMenu()` 是整张盘的可用性，不能表示菜单当前可见；只换条件但不订阅事件仍会陈旧。用 MPV 主线程的 `disc-menu-active` 属性变化通知手机 Activity，注册/移除随当前 player 和 Activity 生命周期；ISO 关闭时立即通知隐藏。不增加轮询、不伪造轨道变化。图标复用 `ic_control_fullscreen`/`ic_control_fullscreen_exit` 和底栏 48dp 点击样式，去除文字与容器底色。
+- 原始失败证据：`nav-cache-device.log` 05:11:35，《幽灵公主》RAW ISO session=1004/47655223296 bytes 已打开；`mpeg2_mediacodec: Unsupported or unknown profile`、`MediaCodec ... failed to start`、`Software decoding fallback is disabled`、`Decoder init failed for mpeg2video`。这是解码失败，不是未识别 ISO。旧采集已停止；不清日志，从 05:29:32.867 续采 `menu-icon-decode-device.log`。
+- 直接依据（A级，2026-09-08，MPV `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42` + 已记录本地补丁）：`DOCS/man/options.rst::hwdec-software-fallback` 规定硬解失败后可回退，yes=1 并保留启动包；`video/decode/vd_lavc.c::select_and_set_hwdec` 在禁回退时强制 EOF；`player/loadfile.c::play_current_file` 的 decoder 初始化早于 FILE_LOADED；`load_per_file_options`/`M_SETOPT_BACKUP` 在退出文件时恢复选项。App `MpvPlayerEngine.hardwareDecodeSoftwareFallbackOption()` 当前固定 no。故 FILE_LOADED 时才补选项无效。
+- 方案比较：不改无法显示 MPEG-2 菜单；全局解除 no 会改变普通影片既有策略；采用 `loadfile.c` 在真实 HDMV 已确认、decoder 初始化前设置带 BACKUP 的文件局部 yes，仍先尝试硬解。只对支持软件帧的 `gpu`/`gpu-next` 生效；`vo_mediacodec_embed.c::query_format` 只支持 MediaCodec 帧，不能假装它能渲染软解帧，不改其策略或全局输出选择。BD-J、无菜单、DVD、普通媒体不进入此分支。当前用户实际输出 gpu-next/androidvk 符合此门槛。
+- 这是现有菜单集成遗漏的选项兼容修复，不引入新的上游候选、算法或性能优化；不重复先前已覆盖的论文/项目/讨论研究。证据由固定项目文档、原生源码和同机失败日志交叉印证。软件解码功耗/能力受设备和码流影响，不宣称所有盘或 Surface 直出已通过。
+- 验证：真实 helper 提取测试覆盖 HDMV GPU、无菜单/BD-J、DVD、未知输出、硬解专用输出及 BACKUP 标记；双 ABI 仅增量 MPV + 资产检查；一次 Mobile APK/Leanback 编译；手机检查菜单图标显隐、全屏、两张盘的菜单到正片与退出重入。回滚仍成套恢复到本文件记录的 HEAD；未通过真实播放前不提交/tag。
+- 唯一下一动作：按以上方案实施并完成一轮定向构建安装。
+
+### 06:14 对“旧版可以硬解”的反证核查
+
+- 用户指出旧版可硬解《幽灵公主》。此前从 `Unsupported or unknown profile` 推断整部影片不支持硬解是不成立的；暂停候选安装，先用原始日志和设备运行时能力交叉核查。
+- 手机于 06:04:20 已覆盖安装旧版 APK，SHA-256 `2ffd0a01c39aae708b2c86c016168955f1371161cb64492dfd0a298b85ef194b`；不是本轮候选包。旧版无原盘菜单设置，普通路径 `playlist=1`、`durationMs=8002911`。续采日志 06:05/06:06/06:07 均直接打开正片；06:07:08 明确 `h264 / High / 1920x1080 / 23.976`、`decoder=h264_mediacodec`，Android 创建 `c2.qti.avc.decoder`。不再重复这个已成立的对照。
+- 新菜单旧候选 05:11:35 的实际 track-list 为 `mpeg2video / Main / 1920x1080`，与正片 H.264 不同；不是缺少整个 codec/profile。FFmpeg `mediacodec_wrapper.c::ff_AMediaCodecProfile_getProfileFromAVCodecContext` 不映射 MPEG-2，因此“unknown profile”警告本身不能判定流坏了。
+- 用 `/tmp/p9-menu-device-20260907.Vq7vyl/P9CodecProbe.java` 经 Android `MediaCodecList` 做只读查询，结果保存在 `device-codec-probe.log`：regular 列表无 MPEG-2；all 列表仅 `c2.vivo.mpeg2.decoder`/alias，`hardware=false software=true special=true`；H.264 的 `c2.qti.avc.decoder` 为 `hardware=true software=false`。和 XML/FFmpeg 排除 software-only decoder 的源码相符。没有改写用户 mpv.conf 或解码偏好。
+- 对照结论：普通版直接进入 H.264 正片而菜单模式进入另一个 MPEG-2 片段，不能说“设备不能硬解幽灵公主”。修正应兼容这个片段且每次新视频解码器仍先尝试硬解，正片必须实际恢复为高通 H.264 硬解。是否成功到达/操作菜单、是否正常切入正片仍待真机，不能仅据能力查询宣称修好。
+- 定向 helper 实测通过；干净补丁应用 `/tmp/p9-icon-decoder-apply.ohqoZ6` 与源码 helper 一致。双 ABI 仅编译 `player/loadfile.c` 成功；stage/ELF 验证通过；Mobile APK + Leanback Java 构建成功（54s）。补丁 SHA-256 `a79d2fb2357836f9b3eea91893a8768e1636e362f17bc07c7d147a0e43ff9fac`，arm64 libmpv `c3cb51cb147451041afca120891a1dcb1d8e2f93888b1cd803039c745c0b8caf`，armv7 `77eb578b39b3dced1810d51426ece34e281a1df4e74a348434fed7e0870b0c37`。
+- UI XML 检查通过，无文字控件；手机复用原有白色图标/48dp点击样式，Leanback 未引用手机专用入口。尚未安装这次 UI/decoder 候选，因补做用户指出的硬解反证，06:10 目标顺延。唯一下一动作：安装已构建候选，验证 MPEG-2 片段到可操作菜单再到 H.264 硬解正片，不重跑已通过构建。
+
+## Checkpoint 13：2026-09-08 06:31 菜单无响应和关闭菜单超时
+
+- Checkpoint 12 候选 APK `c0b397f4dd847c01cc0e5cf18e34cff8afacf02b3f4400f132c1e0ed24fe59cc` 于 06:15:54 安装；首次播放后已核对私有 arm64 libmpv 为 `c3cb51cb147451041afca120891a1dcb1d8e2f93888b1cd803039c745c0b8caf`。用户报告开菜单按钮无响应，关菜单容易超时，验收失败；不提交/tag。
+- 屏幕 `after-log-tags.png` 确认《幽灵公主》可显示绿色 HDMV 菜单和独立白色全屏退出图标，无“播放控制”和底色。但首次菜单会话在 06:16:53 达到 ENDED，后续菜单静止页点击无进展；不能把截图当作菜单功能完成。
+- 系统 `log.tag=M`，即使临时打开 `mpv/TV-mpv/TV-player-engine/TV-player-error/TV-iso/MediaCodec/CCodec` 的非持久标签仍没有新 logcat。原值保存在 `candidate-log-tags-before.txt`，结束需恢复。改读 App 自己的 `cache/webhtv-debug-log.txt`，本地 `candidate-app-log.txt` 和续采 `candidate-file-live.log`；含 NUL，用 rg -a 并限制长行，不输出 URL/凭据。设备旧日志与 App 数据不清理。
+- 菜单输入根因：06:26 连续 `disc: discontinuity 4->9, reopening slave`。`STREAM_CTRL_NAV_CMD` 在静止页每次 activation 都人为递增 generation，但 `bluray_stream_fill_buffer()` 先 `bd_get_event()` 后 `still_active` 立即返回；libbluray 1.4.1 `bluray.c::_run_gc` 只是把按钮字节码挂到 HDMV VM，必须 `bd_read_ext()` 才运行。故已接受的命令永远等不到执行，反复重开也无法解锁。
+- 最窄修正：在静止状态判断前用 `bd_read_ext(..., len=0)` 排空事件并推进待执行 VM，保持 bounded/cancel 检查；真实 PLAYLIST/TITLE/PLAYITEM 事件退出旧 still。只对真实流跳转递增 generation，去掉“每次点击都伪造跳转”；遇真实跳转先返回边界 EOF，再让新 slave 从新 clip 开头 probe。重开后两条路径都读取最新 generation；同 codec 的新 clip 也必须接管新 extradata/参数，防止复用旧 SPS/PPS。依据为固定 libbluray 源码和保留的同机失败日志，无新依赖/ABI。
+- 关闭菜单超时证据：06:17:51 和 06:19:33 普通 `/longest` 复播均设置 start=10.771/55.101，H.264 已读出，但 aid=1 被选成 `srcId=8191(0x1fff), codec=mp3, sampleRate=0`；15s 没有首帧，06:18 从头重试后能播放。0x1fff 是 TS NULL_PID，固定 FFmpeg `mpegtsenc.c::mpegts_insert_null_packet` 也用此 PID 填充。现有 `is_bd` 只认 native bd，不认 JNI callback，导致本应过滤的非音视频填充流被自动选为主音轨。先拒绝这个保留 PID，并仅在 nav_active 时给 packet 加动态 codec segment 标记，保持普通单时间线包语义；不通过放宽15s超时掩盖。此因果关系待实机复播证伪。
+- 当前总耗时超出最初预计，原因是用户追加两个真实失败和旧版对照。停止额外 UI 探索；下一轮只验确定性状态/轨道规则、两 ABI 增量 MPV、一次 APK 和菜单/正片复播。预计约 15–20 分钟，不把时间目标作为降低验收的理由。
+- 唯一下一动作：实现并用提取真实函数的回归检查验证静止菜单推进及 NULL_PID 排除，再构建。
+
+## Checkpoint 14：2026-09-08 07:27 菜单片段 EOF 不应触发下一集
+
+- 延续已授权的 `P9-MPV-BLURAY-MENU-FIX` guard、分支与范围，保护 `app/.cxx/`。用户要求先打 tag，07:17:35 已为已提交 HEAD 创建上述本地基线 tag；没有提交未验收工作或推送。07:22 用户明确继续解决。
+- Checkpoint 13 已完成的验证：真实函数回归 `test_disc_navigation_progress.sh` 通过（静止页命令推进、跳转边界、无命令不跳 still、取消/IO 失败、普通路径与 NULL_PID 排除），旧候选在 pending command/still 断言失败；干净应用 `/tmp/p9-still-pid-apply.U9bsDe` 与源码一致。双 ABI MPV 增量编译、stage/ELF 资产检查、Mobile APK 与 Leanback Java 构建通过。日志均在 `/tmp/p9-menu-device-20260907.Vq7vyl/still-pid-*.log`。
+- 已安装的 Checkpoint 13 APK SHA-256 `038e0087a0cee9752c68ea34932cc6411d06369f1411773ccff4e63b2c6c142d`；patch `8e6e4963dca857d826bda748e4208428ad3e6852eb6973061bad6d6e404cb428`；arm64 libmpv `128629331266c3e952fc750a40bdaf747f6d506f2bd1c45624030f250656b77a`；armv7 `f0754c06b8d7983365c53e85608ab311677d4e8cf2041c7db7088d08d9b43e71`。安装脚本曾因 USB 断连退出 1，但设备 06:54:13 安装时间、实际 base.apk 与首次播放解出的 libmpv hash 均已核对匹配，不重装旧候选。
+- 最新证据 `menu-ended-recovery.log`：06:56:26.573，duration=1001 的菜单片段触发 `playback ended reason=property:eof-reached`；06:56:30.587 原生继续 `playback-restart`，后续可切换 1993ms 菜单与 8002912ms 正片，但 Java 状态仍为 ENDED。07:00:05.738 再次复现。没有相应自然 `end-file` 事件；真正的 stop 仅在退出条目时发生。
+- 根因/最小修正：MPV 的 `eof-reached` 表示当前解码队列结束，包括光盘静止菜单背景，不等价于结束 libbluray 导航会话。`MpvPlayer` 仅在非导航播放时映射该属性为终态；使用已在 FILE_LOADED 确认的 `discNavigationActive`，不依赖菜单 overlay 当下是否可见。真实 end-file/error/idle 路径不改；关闭菜单、BD-J/无菜单回退、普通视频仍保留原 EOF 行为。`MpvDiscMenuPolicyTest` 覆盖菜单 EOF、跨片段 EOF 往返及普通播放 EOF。
+- 这是现有已批准导航设计的局部 App 适配修复，不引入新架构/依赖/API/解码策略。依据来自固定 MPV 的 `player/command.c` / `player/playloop.c` / `player/discnav.c` 和同机日志，无需重复外网研究。回滚为同一 P9 原子单元。
+- 本轮目标：北京时间 07:24 起约 30 分钟，目标 07:54；定位 5 分钟、修复构建 10 分钟、真机与记录 15 分钟。仅执行必要测试/构建；尚未通过菜单进入正片和关闭菜单历史复播，不能提交/tag。
+- 单独临时 logcat 标签已经按 `candidate-log-tags-before.txt` 恢复；继续读取 App 文件日志，不清日志/数据、不改用户 mpv.conf/偏好。
+- 唯一下一动作：运行 EOF 策略定向测试和 Mobile APK/Leanback 编译，然后安装并在同机验证两个失败路径。
+- 07:33 EOF 策略定向测试、Mobile APK 和 Leanback Java 编译已通过（`menu-eof-apk-build.log`，29s）。安装前用户报告当前《豪斯医生 第一季》ISO 错误，先保存 `current-iso-error-0733.log/.png/.xml`，暂停安装。该盘连续 3 次在正常 HTTP 206 读取后得到 unknown_format(-17)，与菜单 EOF 不同；现有 App 日志过滤掉了部分 Blu-ray 识别/加密诊断，不能仅凭缺失日志断言 native 从未尝试 libbluray。仅补 ISO 路由选项及 Blu-ray 诊断记录，再做同盘菜单开/关对照；不改网络超时或硬解策略。
+
+## Checkpoint 15：2026-09-08 08:12 《豪斯医生》FIRST PLAY 初始化被跳过
+
+- Checkpoint 14 APK SHA-256 `ea5cb16eadd9626a571a3ad6e7fad1cda3dd0ad35703d0951531e00364d2eb07` 已经安装成功（`menu-eof-install.log`）。EOF 策略 JUnit 13 项全部通过；Mobile APK/Leanback Java 编译通过，新增诊断后的二次编译 22s。二次编译对应新增诊断代码，并非重复成功验证。
+- `house-diagnostic-failure.log` 08:03:13–18 确认 `raw=true disc-menu=yes access-references=yes`，`ISO detected as Blu-ray`，`hdmv_mode=1`，随后初始 TITLE=65535 被 TOP MENU=0 覆盖，连续数百次 BD_EVENT_TITLE(5)=0、无 PLAYLIST(6)，最终 demux unknown_format(-17)。此前“未交到光盘入口”的初步判断已被完整日志推翻，实际是导航启动失败，不是网络或解码器失败。用户无需继续重复打开同一个候选。
+- 固定 libbluray 1.4.1 `bluray.c::bd_play()` 仅排入 FIRST PLAY；VM 真正运行在 `_read_ext()`。当前 `stream_bluray.c::bluray_stream_open_internal()` 紧接 `bd_play()` 调用 `bd_play_title(TOP_MENU)` 会替换尚未执行的初始化程序。`bluray.c::_read_ext()` 自带注释明确描述：越过菜单系统初始化，可能在 root menu 中无限循环（示例 Butterfly on a Wheel）。本机 TITLE=0 循环与该机制一致。
+- 最小修正只移除首次打开时强制 TOP MENU，保留 overlay 注册、bd_play 失败回退、BD-J top menu/无菜单默认最长标题。让光盘自行进行语言选择/片头/菜单初始化，用户后续 Menu/Popup 命令不变。不整体升级、不改网络、硬解或用户配置。
+- 实际启动代码块提取回归 `test_disc_navigation_start.sh` 通过：FIRST PLAY 未被顶层菜单覆盖；bd_play 失败注销 overlay/销锁并回退主标题；关闭菜单/BD-J 回退不启动 VM。上个源码 `/tmp/p9-still-pid-apply.U9bsDe` 同一测试在 first_play_pending/top_menu_calls 断言失败（`old-disc-start-regression.log`），明确证伪旧行为。持久 patch 已机械同步。
+- 诊断过滤收窄到 Blu-ray 识别/启动关键消息，不长期记录每个 bdnav event，避免静止页日志刷屏。两 ABI 构建日志为 `first-play-arm64-build.log` / `first-play-armv7-build.log`；JNI 无改动不重编。
+- 原 07:54 目标因新增同盘故障取证及安装等待超出，已向用户说明并停止额外探索，只完成启动修复和菜单/普通续播验收。仍为同一已授权 P9 guard 与原回滚锚点，不提交不推送。
+- 唯一下一动作：收取当前两 ABI 增量构建结果，stage/验证/手机打包安装，再复验《豪斯医生》和《幽灵公主》。
+
+## Checkpoint 16：2026-09-08 10:56 《豪斯医生》菜单背景卡顿诊断（只读）
+
+- 用户本轮要求先打 tag，然后判断菜单背景卡顿是否正常、是否网络或解码渲染问题。10:22:00 创建本地注释 tag `recovery/P9-MPV-BLURAY-MENU-FIX/20260908-102200`，指向已提交基线 `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`；已明确告知不含工作区未验收修复、不推送。没有把用户的“好像可以播放”扩大为整个 P9 验收通过。
+- Checkpoint 15 产物：patch SHA-256 `fe616538bf8cdc0ed28908daad4f837c3eb452884eea034cd1d0c338d68f44ce`；arm64 libmpv `c8d0b81213be59bf887a887e6b1f1277e3e1baf4ec3b856bf0b93bef9e62643d`；armv7 `3e354633b6b6e6262c611625b3e79b7e34291a189a00eb8e1fbb0ed2b92c9e51`；手机 APK `46784d51c224dbe66e69abe76edbe1aad7345bb62b390c49b24a27c5edcbfa1b`。双 ABI 仅编译 `stream_bluray.c`，ELF/资产验证通过，Mobile APK/Leanback Java 26s 通过；当前补丁反向 apply --check 通过。`first-play-install.log` 安装成功，设备 lastUpdateTime=08:29:31。未重复构建。
+- 真机恢复：ADB 曾断开，用户重新连接后仍为 vivo V2453A / Android15 / serial `10CF6H1D2L0009S`。`menu-stutter-current.png/.xml` 确认《豪斯医生》实际 HDMV 菜单与手机白色退出全屏图标。`first-play-reconnected.log` 08:33 的同盘启动已有 H.264 MediaCodec READY；当前卡顿会话 `p-x1v96g-1` 的 `menu-stutter-1022.log` 覆盖约 10:13:55–10:28:48。
+- 观察：H.264 1920×1080 / 23.976fps，观察到 hwdec=mediacodec、vo=gpu-next、GPU 渲染路径非 Surface direct。10:14:00.125 `dec=0 out=813`，10:14:30.357 `dec=0 out=916`；10:28:46.749 `dec=0 out=2983`。该窗口共新增 2170 输出丢帧、decoder drop 保持 0；不能把输出丢帧直接等同于 GPU 性能不足。MediaCodec port 等待多为微秒至个位毫秒，所取日志没有 >50ms port 等待证据。温度状态 nominal，重缓冲计数为 0。
+- 观察：窗口内 511 次 Range start 全为 4MiB 页面，仅 3 次来自 iso-prefetch 线程，其余来自播放读取线程；510 次完成请求中位 697ms、P90 967ms、最长 9214ms。199 个遥测样本的可播放缓冲中位 210ms、P10 为 0。10:20:42.954–10:20:52.167 一次页面请求独占约9.2秒，无需把这种停顿当成原盘正常动画。请求均正常 206 并不表示供数实时性足够，也不能据重缓冲计数0排除网络等待（导航路径 file-local cache-pause=no）。
+- 本地确切路径：`demux/demux.c` 在 nav_active 时禁用媒体 read-ahead，避免提前推动光盘 VM；`IsoPageCache.readAt()` 只有消费完当前4MiB页才调用 `prefetch(next)`，通常下一次播放读取已立即需要该页。本盘画面循环时仍反复重取已读页，与8页/32MiB LRU未覆盖背景及相关文件工作集相符。日志中极少的后台预读与该代码行为一致。
+- 结论分级：已证实存在真实输出丢帧与同步远程读取停顿，不属于纯静止菜单或主观低帧率；最高可信主因是原始 ISO 预读/缓存对导航按需读取适配不足，叠加来源/本地代理/网络请求延迟。不能仅从手机日志分解远端服务、代理、Wi-Fi各自贡献；也尚未做同片本地/暖缓存对照，不能声称彻底排除输出调度问题。现有证据不支持“设备不能硬解”或直接换渲染器。
+- 推荐后续：先在原始字节层更早预取有限页面、保留取消/跳转及内存边界；不要直接恢复 MPV 媒体大幅 read-ahead 以免推进 VM。应对比同菜单固定窗口的 Range 等待、缓冲低水位、decoder/output drop，并保持按钮跳转正确。本轮是诊断授权，不实现该优化、不调整用户设置或超时。
+- 本轮唯一编辑为该任务文档，保护 `app/.cxx/` 和所有既有 P9 改动。关闭菜单的历史复播、《幽灵公主》完整菜单→硬解正片、《超脱》以及 Surface direct 边界尚未全部验收，不能提交工作区或给未提交修复打“通过”标签。
+- 唯一下一动作：交付上述诊断并等待用户是否继续优化原始 ISO 页预读的决定。
+
+## Checkpoint 17：2026-09-08 11:16 确认菜单循环缓存淘汰，久等不会缓存完整
+
+- 用户质疑停留菜单半小时仍卡顿，要求确认根因。本轮只读诊断，不实现优化、不修改设置；唯一仓库编辑为本任务文档，所有已有 P9 代码/产物和 `app/.cxx/` 保留。11:11 开始，预计 5–8 分钟；不重启网络研究或构建。
+- ADB 当前无设备，最新采集没有成功，不将 `menu-cache-root-1111.log` 当作新证据。使用已保存的 `menu-stutter-1022.log`（同一会话 `p-x1v96g-1`，10:13:55–10:28:48）解析真实 Range 地址序列，未重跑播放。
+- 决定性证据：从10:14:37.024至10:28:37.804，可分出连续16个完整循环，每个循环都是30次请求、30个不同的4MiB页，共120MiB；整个窗口也只有这同一组30个唯一页。总共511次请求，其中481次重复请求已有地址，总请求量2044MiB。这不是“菜单还没读完”或猜测工作集大小，是已有页面在每轮再次下载的直接记录（120MiB是按页触达量，包含菜单相关读取，不等同于单一视频文件的精确大小）。
+- 代码对应：`IsoPlaybackSession` 始终用默认 `new IsoPageCache(new HttpRangeIsoSource(...))`；`IsoPageCache.java:15–16` 固定4MiB×8页=32MiB，`:37–40` access-order LRU在第9页插入时淘汰旧页。这个已命中的真实调用路径没有持久保存整轮页面的逻辑；日志同样长期 `pages=8`。30页循环超过8页容量，下一轮读回开头时，之前的开头页已被后面的页逐出。等待时间不会增加缓存上限，因此半小时、甚至更久都不会自然变成全缓存播放。
+- 放大因素：`IsoPageCache.java:67` 当前页消费完才排队预读下一页，数据需求线程常先于预读线程发起实际请求。导航期间 MPV 媒体级read-ahead又为保护VM而禁用，故无法靠普通媒体缓存掩盖每次原始页重取的延迟。上一轮已测可播放缓冲中位210ms、小于页面请求中位697ms，与持续取数等待和输出掉帧相符。
+- 根因分级更新：**确定存在的实现根因是菜单循环数据不能保留、反复淘汰重取，加上过迟的原始页预读。** 不能再将长期卡顿笼统归因于用户网速。解码器为MediaCodec，解码丢帧0、输出丢帧持续增长；尚未完成缓存修复后同场景对照，故不声称这是每一帧卡顿的唯一原因，也不据输出丢帧认定GPU算力不足。
+- 最小修复方向应同时覆盖循环数据保留与提前原始页预读，而不是仅延长超时、只等待“缓存够了”、只换渲染器或盲目增大媒体read-ahead。本轮未设计/实施新磁盘或内存策略；后续必须保留低内存设备、取消、跳转、源校验及VM边界。
+- 唯一下一动作：向用户说明上述已证实根因及仍待修复对照的渲染边界，等待缓存修复授权。
+
+## Checkpoint 18：2026-09-08 原始 ISO 循环缓存修复（已授权，实施中）
+
+- 用户明确“修复一下”，随后“继续”。沿用 `P9-MPV-BLURAY-MENU-FIX` guard、既有 P9 修改及回滚锚点；保护 `app/.cxx/`。本轮仅编辑 `app/src/main/java/com/fongmi/android/tv/player/iso/`、`third_party/mpv-player-jni/tests/` 和本文件。新 Java 回归放在既有 JNI 测试目录，通过该目录的 Gradle init script 编入定向单测，不覆盖 guard、不扩大其 scope。
+- 本地开始执行约 11:49 Asia/Shanghai，目标 12:19 前完成 Java 实现、定向回归与 debug 打包；手机连接和实测等待另计。无设备时不得宣称流畅度或整项 P9 已验收。
+
+### 决定性问题与最佳实践核对
+
+问题：不增加 32MiB 内存上限、不提前推进光盘 VM，怎样保留已读完的一轮菜单并掩盖下一页网络延迟？
+
+| 证据（2026-09-08 查阅） | 等级、支持结论及适用边界 |
+| --- | --- |
+| Checkpoint 17 原始日志 `menu-stutter-1022.log`，会话 `p-x1v96g-1` | A：30 个唯一4MiB页连续16轮重复下载；页0及连续29个视频页，120MiB工作集。不能将长期卡顿仅归因于网络速度。 |
+| 本仓库 `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4` 的 `IsoPageCache` / `IsoPlaybackSession` / `HttpRangeIsoSource` | A：内存LRU仅8页、页尾才预读；单个 activeCall 在收到响应头后清空，不能覆盖响应体读取与并发取消。属于 WebHTV 本地缺陷，不引入新上游 commit。 |
+| 同一基线 `MpvHlsCacheCoordinator`、`DiskCacheCapacityPolicy` 与既有 coordinator 测试 | A/B：已有跨客户端容量、读租约、写预约、临时文件原子提交、LRU、低空间熔断；复用该实现比新造磁盘缓存管理器窄。保留 `max(512MiB, 总空间10%)` 空间底线。 |
+| [Android app-specific cache 文档](https://developer.android.com/training/data-storage/app-specific#internal-create-cache)，正文已读取 | A：缓存必须允许被系统删除、应用负责清理、使用私有 cache 目录。磁盘失效只导致 miss/网络回退，不使 ISO 播放失败。 |
+| [OkHttp 5.4.0 Call.kt](https://github.com/square/okhttp/blob/parent-5.4.0/okhttp/src/commonJvmAndroid/kotlin/okhttp3/Call.kt)，与版本目录一致，正文已读取 | A：Call 覆盖响应体的完整生命周期，cancel 针对整个请求；必须到响应体关闭才注销，并在 close 时取消全部在途 Call。 |
+| PR/issues/reverts、论文/博文类别 | 本次不移植上游缓存算法或依赖版本，没有适用的上游提交/revert待决；真实故障属于本地调用与生命周期。保留既有LRU与容量策略，无新算法优越性主张，论文/泛缓存帖子不能改变已有源码、官方契约与可复现日志共同决定的窄方案，故不展开。 |
+
+### 方案比较与实施决定
+
+- **不改**：重复下载120MiB/轮不会随等待消失，不接受。
+- **直接恢复上游 MPV 媒体 read-ahead 或单纯扩容内存**：前者会提前驱动菜单 VM，后者增加低内存设备风险，均拒绝。
+- **WebHTV 窄适配（采用）**：菜单设置开启时，为 ISO 会话增加原始字节磁盘页层，复用 `mpv_hls` 目录与 `MpvHlsCacheCoordinator` 的现有共享预算，容量取当前 MPV 播放缓存设置（默认128MiB），不修改用户设置；内存仍4MiB×8。会话使用随机隔离键，不保存 URL/凭据，不跨会话复用；close 删除自身缓存，崩溃残留仍受原有全局LRU约束。关闭菜单时不启用此磁盘层，BD-J无提示回退及DVD菜单边界不变。
+- 预读只在连续原始字节读取时提早请求下一页；最多一项在途预读及一项最新候选，随机跳转丢弃旧排队候选，最多容许已经在途的一页结束，不让其阻塞新的前台页。close 取消所有HTTP读取并唤醒同页等待者。预读不调用 libbluray、不改变 demux/nav_active。
+- 磁盘缓存只有完整页原子提交；截断或文件消失回退网络；源长度/validator变化必须拒绝后续陈旧缓存，不混用新旧ISO。日志仅记录页数、命中/磁盘命中/网络页/预读计数，不输出URL。
+- 兼容/性能/生命周期边界：无 JNI/API/ABI/原生库变更；磁盘读写引入有限I/O，容量不足保留内存及网络播放。顺序正片与元数据读取仍使用同一源校验；Exo不接入此缓存。修复后仍需实测确认是否有独立输出调度问题。
+
+### 验收与回滚
+
+- 最便宜决定性回归：30页循环大于8页内存，第二轮及以后所需页面不新增网络读取；内存上限不变；只读部分页时下一页已开始预取；随机跳转不执行积压预读。
+- 同一组回归覆盖：共享磁盘预算/容量淘汰、失效文件/写失败回退、短读/EOF、同页并发去重、关闭与在途HTTP响应体取消、源变化拒绝缓存、会话隔离和关闭清理。
+- 然后仅构建 Mobile arm64 debug 和 Leanback Java；现有两ABI native产物不变，无理由重跑成功的原生验证。
+- 真机验收：同《豪斯医生》菜单，至少3个暖循环窗口对照 Range/磁盘命中及 output/decoder drop；目标暖循环不重取完整同段视频，不能以build或缓存单测替代流畅度。仍需保留菜单按钮→正片、关闭菜单复播及先前未验收边界。
+- 回滚只撤销本Checkpoint新增的ISO Java改动与其接线，保留此前FIRST PLAY等修复；整项P9仍以已提交基线和既有恢复tag为成套回滚锚点。所有必要真机验收未完成前不提交/tag为通过，不push。
+
+### Checkpoint 18 本地验证结果（13:12完成）
+
+- 已修改 `IsoPageCache` / `IsoPlaybackSession` / `HttpRangeIsoSource`，新增 `IsoDiskPageStore`；测试及Gradle init script位于既有 `third_party/mpv-player-jni/tests/` guard范围内。未修改native源码/产物，未覆盖保护路径。
+- 一次Gradle组合运行成功，耗时1m44s：11项 `IsoPageCacheTest`、3项 `HttpRangeIsoSourceTest` 全部通过；30个真实4MiB页面循环4轮，每页源读取计数为1，内存map仍8页；两并发HTTP响应体在close后及时结束。源变更拒绝缓存、磁盘丢失/截断/空间不可用回退、共享预算/会话隔离、页尾前预读、跳转去旧候选、同页去重、关闭等待者等已验证。
+- 命令：`JAVA_HOME=/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home LC_ALL=C bash ./gradlew --offline --init-script /tmp/p9-menu-gradle-staging.gradle --init-script third_party/mpv-player-jni/tests/iso_cache_tests.gradle :app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.iso.IsoPageCacheTest --tests com.fongmi.android.tv.player.iso.HttpRangeIsoSourceTest :app:assembleMobileArm64_v8aDebug :app:compileLeanbackArm64_v8aDebugJavaWithJavac`。
+- 日志 `/tmp/p9-menu-device-20260907.Vq7vyl/iso-cache-build.log`；JUnit XML在 `app/build/test-results/testMobileArm64_v8aDebugUnitTest/`。Mobile APK SHA-256 `5aeecdddb7274c29d95356d8f4e13d202627dc2d820b86e1977a7c5ebcc4cf47`，路径 `app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk`。
+- guard `check`通过：branch/HEAD、scope、protected dirty paths和staging安全。未finish/commit/tag；真机对照未通过。12:19本地目标超出，已向用户说明共享缓存与生命周期核对耗时并停止额外研究；不重复成功构建。
+
+## Checkpoint 19：2026-09-08 13:32–13:48 正片卡顿与CPU取证（只读诊断）
+
+- 用户手机重连，报告“老版本”《豪斯医生》菜单及正片均持续卡顿掉帧、App CPU约100%。本轮先保留现场，不安装候选、不改mpv.conf/播放器设置、不暂停/重启当前播放、不清日志。仓库只更新本文件，所有既有代码/产物与 `app/.cxx/`保持不变。
+- 真机：vivo V2453A / Android15 / `10CF6H1D2L0009S`；package `com.fongmi.android.tv` versionName5.6.0/versionCode560，`lastUpdateTime=2026-09-08 08:29:31`，pid29642。因此“老版本”是当前缓存修复前的Checkpoint15，并非已证实为菜单功能之前的更早历史版本。
+- 证据目录 `/tmp/p9-menu-device-20260907.Vq7vyl/`：`feature-stutter-baseline-1332.log`、`feature-stutter-baseline-1340.log`、`feature-stutter-baseline-1332.png`、`feature-cpu-baseline-1332.txt`、`feature-cpu-baseline-1345.txt`、`feature-audioflinger-baseline.txt`、`feature-audioflinger-baseline-1345.txt`、`feature-thermal-baseline-1332.txt`、`feature-audio-sched-baseline.txt`。手机日志时钟与主机约差6分钟，所有播放时序比较在手机日志内部进行，不混用采样文件名时间。
+
+### 已证实的观察
+
+1. 当前正片会话 `p-x91tog-3`，H.264 1920×1080/23.976fps，实际 `h264_mediacodec` 硬解、`vo=gpu`/OpenGL（不是上午菜单会话的gpu-next）；DTS 5.1软解为PCM5.1/48kHz，`ao=audiotrack`。13:37:12输出掉帧226，13:43:55为554，decoder drop始终0。不能把输出掉帧等同于手机无法硬解或GPU能力不足。
+2. 手机13:36–13:37窗口内61次完整ISO Range读取，中位1231ms、P90=1942ms、最长3517ms；同窗口13个telemetry采样的可播放缓冲中位156ms、P90=586ms，多个点为0。页地址正向递增，这次不是菜单反复循环；同步下一页读取依然会使正片供数中断。导航保护禁用媒体read-ahead时，正片也依赖及时的原始字节预读，不能以菜单循环修复概括全部正片问题。
+3. CPU口径：`PlaybackPanelResourceMonitor.publishCpuLocked()`=`Process.getElapsedCpuTime()`增量/墙钟增量×100，100%代表约一个逻辑CPU的时间，并非8核整机满载。第一组top去除首个无完整间隔样本后14点，App平均77.7%，其中 `ao/audiotrack` tid20315为44.57%、主线程11.43%、MediaCodec_loop3.14%；第二组10点App88.1%、同音频线程53.20%、MediaCodec_loop2.80%。第一组整机平均608.9%idle/800%，没有整机CPU满载证据。
+4. AudioFlinger pid29642/track6226是48000Hz/6声道PCM，`FrmRdy=0`，反复AT::remove/AT::add，Underruns持续累计；支持音频供数断续。该计数并非“丢了几帧视频”，不拿它代替视频掉帧指标。
+5. 热状态 `MODERATE(2)`，skin约42°C，具体CPU/GPU温度项未报告节流状态；温控可能是干扰因素，不能仅此认定是卡顿根因。
+
+### 音频零样本忙循环源码复现
+
+- 实际native源 `build/mpv-native/mpv-android/buildscripts/deps/mpv/audio/out/ao_audiotrack.c` SHA-256 `076f3bd56f98a05154736678512cfb2340011486127ae6ee1256158db78fa86c`。`ao_thread()` PCM分支调用 `ao_read_data(..., pad_silence=false, blocking=false)`；返回0时仍执行 `AudioTrack_write(...,0)`，随后立即下一轮播放状态/时间戳查询，无条件等待。相比之下现有compressed分支无帧时会等待20ms。
+- `audio/out/buffer.c::ao_read_data()` / `ao_read_data_locked()`明确允许锁暂不可得、音频断粮、EOF等情形返回0；实际PCM循环必须处理“暂时无数据”，不能假定WRITE_BLOCKING的零字节写入会形成背压。
+- 只在临时目录 `/tmp/p9-audio-empty-repro.4x5JS9/` 写入host复现桩，自动提取上述真实完整 `ao_thread()`，没有编辑生产源码。`cc -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-variable`编译并一次运行通过：`reads=10000 writes=10000 zeroWrites=10000 waits=0 latencyQueries=10000`，确认当前实现存在可达的无等待空转路径。
+- 原生现场采样限制：`simpleperf record`因`security.perf_harden`拒绝，`debuggerd -b`要求root；不修改系统安全属性、不反复重试。故**源码忙循环是已复现缺陷，现场音频高CPU/underrun是实测；二者高度一致，但没有宣称拿到了该设备函数级CPU采样**。
+
+### 结论、权限边界与下一步
+
+- 可确认不是正常蓝光动画，也不是单凭“CPU100%”得出的猜测。当前证据支持两个相互放大的实现问题：原始ISO供数/预读过迟造成正片断粮；PCM AudioTrack无数据时忙循环浪费CPU。前者可导致输出停顿，后者增加CPU/发热；尚不能把全部输出掉帧唯一归因于音频空转。
+- 已构建的Checkpoint18 Java包尚未安装，不包含新发现的原生PCM忙循环修复。应先明确该新原生修改范围（有限等待/唤醒、正常PCM/压缩音频不回退、退出/暂停及时、零/短写及死对象恢复），再做最小回归、两ABI相关增量与同场景对照；不能只把Java候选宣称最终修复。
+- 本轮完成的是诊断。无新增生产代码/原生库修改、未安装、未commit/tag/push。预计8–12分钟的诊断用了约16分钟，原因是权限阻止函数级采样，切换到已在树上的真实源码最小复现后停止扩展。
+- 本文件 `git diff --check` 通过。整仓checkpoint脚本仍报既有 `third_party/patches/mpv-discnav.patch` 的空白context行（例如593/772/788）为trailing whitespace，并提示未提交的dependency/binary路径；日志 `checkpoint19-verification.log`。本轮没有修改该补丁，不做无关清理，不把整仓检查说成通过；这不是本轮诊断或此前Java回归失败。
+- 唯一下一动作：交付上述证据并确认原生音频零样本等待修复范围，然后继续候选真机对照。
+
+## Checkpoint 20：2026-09-08 音频空读等待修复（已授权）
+
+- 用户明确“先打个tag，然后继续修复”，后续多次“继续”。首先已成功创建本地注释tag `recovery/P9-MPV-BLURAY-MENU-FIX/pre-audio-underrun-20260908`，指向已提交基线 `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`；不含工作区未提交修复，未push，不重复创建。
+- 完成目标：PCM无样本时不空转，正常输出与暂停/退出行为保持，再对照手机CPU、正片掉帧及菜单缓存。本轮路径限 `third_party/mpv-player-jni/patches/mpv-audiotrack-underrun.patch`（P9独立小补丁）、同目录tests、`scripts/build_mpv_native.sh`、`build/mpv-native`、两ABI `libmpv.so`及本文件；均在既有guard内，无需改guard元数据。保护 `app/.cxx/`及所有前序P9改动。
+- 14:24 Asia/Shanghai给出代码回归8–12分钟、构建打包5–8分钟、真机10–15分钟估计，预计14:55–15:00；多次用户继续/中断后仍执行同一方案，不重新研究或创建tag。
+
+### 最小设计与证据
+
+- A级现场/源码证据沿用Checkpoint19：原始ISO取数中断、AudioTrack线程45–53% CPU；实际 `ao_thread()` 空读10000次无等待。无需重新取证。
+- 上游对照：2026-09-08已读取 [mpv master ao_audiotrack.c](https://github.com/mpv-player/mpv/blob/master/audio/out/ao_audiotrack.c)，保存 `/tmp/p9-mpv-upstream-audiotrack.c`，同样直接把 `ao_read_data` 的0样本交给写入，因此整体更新上游不能解决该边界。固定本地mpv基线仍为 `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`，不引入上游新提交。
+- A级平台证据：[Android15 AudioTrack.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-15.0.0_r1/media/java/android/media/AudioTrack.java)，已读 `write(ByteBuffer,int,int)` 与WRITE_BLOCKING说明；size=0是有效请求，blocking只针对所写数据，不保证零字节请求等待。保存 `/tmp/p9-aosp15-AudioTrack.java`。
+- B级成熟本地实现：现有compressed音频分支无帧时 `mp_cond_timedwait(...,20ms)`；同一 `p->wakeup` 被start/uninit唤醒，cond等待释放mutex，适用于PCM的暂时无数据。`buffer.c::ao_read_data`可能因断粮/EOF/锁竞争返回0，不采用不可中断sleep或持锁阻塞读。
+- 上游issues精准搜索 `repo:mpv-player/mpv audiotrack cpu`，仅找到不适用于本边界的AAudio新后端PR12261和scaletempo默认值issue8376；不采用换后端/时间伸缩算法。论文/泛博客不适用：这是已复现空读条件遗漏而非新调度算法，不做性能理论优越性主张。
+- 比较：不改=持续空转；原样上游=同缺陷；窄适配=PCM样本数<=0时等待最多20ms并继续，复用现有唤醒/退出条件。正常PCM写入、短写/死对象恢复、压缩直通、时间戳、JNI/ABI、VM/渲染完全不变。不存在音质/声道/解码降级。
+- 验收：提取实际函数验证空读零次写入且每轮有等待、空读后恢复、暂停/退出、正常完整/短写及dead-object旧路径；旧源码同一门槛失败。两ABI只增量编译该C文件与链接，不重编FFmpeg/JNI；资产校验、手机打包安装；真机至少3个短窗口检查AudioTrack CPU不再45–53%空转及缓存预读/掉帧。失败则保留日志并继续窄修，不宣布全P9通过。
+- 回滚：撤销本小补丁及构建接线并恢复两ABI匹配libmpv；保留之前Java缓存/FIRST PLAY修复。整体恢复锚点为上述tag。无新用户设置、安全权限、协议/依赖升级；不push。
+
+### Checkpoint 20 验证与用户要求的恢复点（2026-09-08 15:16 Asia/Shanghai）
+
+- 实际提取的完整 `ao_thread()` host桩回归7项通过，覆盖空读等待/恢复、暂停启动/退出、正常写/短写/dead-object及compressed空帧分支；旧函数在 `zero_writes == 0` 断言失败。这不是设备生命周期的完整验收。
+- armv7增量构建成功；arm64直接ninja受pkg-config环境和残留armv7 iconv路径影响失败，改用项目 `buildall.sh -n --arch arm64 mpv` 后成功。未重编FFmpeg/JNI，功能列表与FIRST PLAY基线一致；双ABI ELF/SONAME/依赖及资产规则检查通过。
+- Mobile arm64 debug构建成功，installer assist返回Success并启动App。安装日志：`/tmp/p9-menu-device-20260907.Vq7vyl/audio-underrun-install.log`。Java缓存14项回归与Leanback Java此前已通过，未重复运行。
+- APK SHA-256：`21e6b884c250c53d4c2e09472810e1441de3ec550219b8da7d8e823f8c388c59`。
+- arm64 libmpv SHA-256：`30c1ed7f3d516eb2e172b7f87f4e1b5ae6537dd7c759501de348adaba1ee667f`；armv7：`70852b751701decde812d8157d0bd2c34a282522b0037719dce56f34160f07e9`。
+- 新audio underrun patch SHA-256：`88e6eeb356adb64641177bfd83f2f60e994787a2cba346be78b2c86f451e95bf`；discnav patch未变。此前guard及scoped源码/文档diff检查通过；整仓checkpoint脚本的既有discnav patch空白context告警不能记为通过。
+- 用户先表示“视频肉眼可见的不卡顿了”，要求先tag；随后澄清“掉帧还是存在一点，不过好很多了”，CPU约60%。据此只记录显著改善，不把剩余掉帧视作正常，也不声称AudioTrack CPU已实测回归。
+- 已知待确认：稳定正片/菜单的剩余掉帧、音频线程占用、最近观看缺少《豪斯医生》；此前关闭菜单历史复播、《幽灵公主》完整流程、《超脱》和Surface direct边界未全部验收。恢复点是用户明确要求的已测试快照，不是发布/全功能通过标签。保持BD-J静默回退、DVD现状、用户配置和手机数据不变，不push。

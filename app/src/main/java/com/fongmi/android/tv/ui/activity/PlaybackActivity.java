@@ -14,6 +14,8 @@ import android.view.View;
 import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
@@ -23,6 +25,7 @@ import androidx.media3.common.Format;
 import androidx.media3.common.Player;
 import androidx.media3.common.VideoSize;
 import androidx.media3.mpvplayer.MpvPlayer;
+import androidx.media3.mpvplayer.MpvDiscMenuPolicy;
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm;
 import androidx.media3.session.MediaController;
 import androidx.media3.session.SessionToken;
@@ -42,6 +45,7 @@ import com.fongmi.android.tv.service.PlaybackService;
 import com.fongmi.android.tv.setting.PlaybackPerformanceSetting;
 import com.fongmi.android.tv.setting.PlayerSetting;
 import com.fongmi.android.tv.ui.base.BaseActivity;
+import com.fongmi.android.tv.ui.dialog.DiscMenuDialog;
 import com.fongmi.android.tv.ui.custom.CustomSeekView;
 import com.fongmi.android.tv.utils.ResUtil;
 import com.github.catvod.crawler.SpiderDebug;
@@ -175,22 +179,57 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
         return super.dispatchKeyEvent(event);
     }
 
-    private boolean dispatchDiscMenuKey(KeyEvent event) {
+    protected boolean dispatchDiscMenuKey(KeyEvent event) {
         if (mService == null || !isOwner() || event == null) return false;
         Player active = player().getPlayer();
-        if (!(active instanceof MpvPlayer mpv) || !mpv.isDiscMenuActive()) return false;
+        if (!(active instanceof MpvPlayer mpv)) return false;
+        String action = MpvDiscMenuPolicy.keyAction(event.getKeyCode());
+        if (action == null) return false;
+        if (!mpv.isDiscMenuActive()
+                && !(event.getKeyCode() == KeyEvent.KEYCODE_MENU && mpv.isDiscMenuAvailable())) return false;
         if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() > 0) return true;
-        String action = switch (event.getKeyCode()) {
-            case KeyEvent.KEYCODE_DPAD_UP -> "up";
-            case KeyEvent.KEYCODE_DPAD_DOWN -> "down";
-            case KeyEvent.KEYCODE_DPAD_LEFT -> "left";
-            case KeyEvent.KEYCODE_DPAD_RIGHT -> "right";
-            case KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> "select";
-            case KeyEvent.KEYCODE_BACK -> "prev";
-            case KeyEvent.KEYCODE_MENU -> "popup";
-            default -> null;
-        };
-        return action != null && mpv.sendDiscNav(action);
+        mpv.sendDiscNav(action);
+        return true;
+    }
+
+    protected boolean hasDiscMenu() {
+        return mService != null && isOwner() && player().getPlayer() instanceof MpvPlayer mpv
+                && mpv.isDiscMenuAvailable();
+    }
+
+    protected boolean hasDiscNavigationTimeline() {
+        return mService != null && isOwner() && player().getPlayer() instanceof MpvPlayer mpv
+                && mpv.hasDiscNavigationTimeline();
+    }
+
+    protected void showDiscMenuControls() {
+        if (hasDiscMenu()) DiscMenuDialog.show(this, (MpvPlayer) player().getPlayer());
+    }
+
+    protected void openDiscMenu() {
+        if (hasDiscMenu()) ((MpvPlayer) player().getPlayer()).sendDiscNav("menu");
+    }
+
+    protected boolean dispatchDiscMenuTouch(MotionEvent event) {
+        if (isLock() || mService == null || !isOwner()) return false;
+        Player active = player().getPlayer();
+        if (!(active instanceof MpvPlayer mpv) || !mpv.isDiscMenuActive()) return false;
+        View surface = getExoView().getVideoSurfaceView();
+        if (surface == null || event.getPointerCount() != 1) return false;
+        int[] origin = new int[2];
+        surface.getLocationOnScreen(origin);
+        int pointerX = Math.round(event.getRawX() - origin[0]);
+        int pointerY = Math.round(event.getRawY() - origin[1]);
+        if (pointerX < 0 || pointerY < 0 || pointerX >= surface.getWidth() || pointerY >= surface.getHeight()) return false;
+        if (event.getActionMasked() == MotionEvent.ACTION_UP
+                && event.getEventTime() - event.getDownTime() >= ViewConfiguration.getLongPressTimeout()) {
+            showDiscMenuControls();
+        } else if (event.getActionMasked() == MotionEvent.ACTION_DOWN
+                || event.getActionMasked() == MotionEvent.ACTION_MOVE
+                || event.getActionMasked() == MotionEvent.ACTION_UP) {
+            mpv.sendDiscNavPointer(pointerX, pointerY, event.getActionMasked() == MotionEvent.ACTION_UP);
+        }
+        return true;
     }
 
     protected void onServiceConnected() {

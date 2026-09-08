@@ -1,6 +1,8 @@
 package com.fongmi.android.tv.player.iso;
 
 import com.github.catvod.crawler.SpiderDebug;
+import com.github.catvod.utils.Path;
+import com.fongmi.android.tv.setting.PlayerSetting;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -24,7 +26,17 @@ final class IsoPlaybackSession {
 
     IsoPlaybackSession(long id, String url, Map<String, String> headers) {
         this.id = id;
-        this.source = new IsoPageCache(new HttpRangeIsoSource(url, headers));
+        this.source = new IsoPageCache(new HttpRangeIsoSource(url, headers), createDiskStore());
+    }
+
+    private static IsoDiskPageStore createDiskStore() {
+        if (!PlayerSetting.isBlurayMenu()) return null;
+        try {
+            return new IsoDiskPageStore(Path.cache("mpv_hls"), PlayerSetting.getPlayCacheSize(PlayerSetting.MPV));
+        } catch (RuntimeException error) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("iso-cache", "disk-init fallback=%s", error.getClass().getSimpleName());
+            return null;
+        }
     }
 
     long id() {
