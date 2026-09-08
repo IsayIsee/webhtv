@@ -112,6 +112,48 @@ public class IsoPageCacheTest {
     }
 
     @Test
+    public void navigationPrefetchHasTwoWorkersAndFourPageHorizon() throws Exception {
+        CountDownLatch started = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch horizon = new CountDownLatch(4);
+        FakeSource source = new FakeSource(1024, 30);
+        source.hook = page -> {
+            if (page == 1 || page == 2) { started.countDown(); await(release); }
+            if (page >= 1 && page <= 4) horizon.countDown();
+        };
+        IsoPageCache cache = cache(source, 1024, 8, disk(32 * 1024, true));
+        cache.readAt(0, new byte[1024], 0, 1024);
+        assertTrue("both Range reads must start without waiting for the other", started.await(3, TimeUnit.SECONDS));
+        assertEquals(0, source.count(3));
+        release.countDown();
+        assertTrue(horizon.await(3, TimeUnit.SECONDS));
+        cache.close();
+        assertEquals(0, source.count(5));
+        for (int page = 0; page <= 4; page++) assertEquals(1, source.count(page));
+    }
+
+    @Test
+    public void navigationSeekReplacesBothWorkersQueuedHorizon() throws Exception {
+        CountDownLatch started = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch latest = new CountDownLatch(2);
+        FakeSource source = new FakeSource(1024, 40);
+        source.hook = page -> {
+            if (page == 1 || page == 2) { started.countDown(); await(release); }
+            if (page == 21 || page == 22) latest.countDown();
+        };
+        IsoPageCache cache = cache(source, 1024, 8, disk(64 * 1024, true));
+        cache.readAt(0, new byte[1024], 0, 1024);
+        assertTrue(started.await(3, TimeUnit.SECONDS));
+        cache.readAt(20 * 1024L, new byte[1024], 0, 1024);
+        release.countDown();
+        assertTrue(latest.await(3, TimeUnit.SECONDS));
+        cache.close();
+        assertEquals(0, source.count(3));
+        assertEquals(0, source.count(4));
+    }
+
+    @Test
     public void closeUnblocksOwnersAndWaitersAndRejectsCacheHits() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);

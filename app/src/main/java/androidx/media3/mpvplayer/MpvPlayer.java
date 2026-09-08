@@ -162,6 +162,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private final Map<String, Integer> cachedVideoIntProperties;
     private final Runnable coalescedPropertyDrainRunnable;
     private final Runnable stateRefreshRunnable;
+    private final Runnable discRebufferRunnable = this::sampleDiscRebuffer;
+    private final MpvDiscRebufferTracker discRebufferTracker = new MpvDiscRebufferTracker();
+    private long discInputQuietUntilMs;
     private final Runnable mainThreadHeartbeatRunnable;
     private final Runnable mainThreadWatchdogRunnable;
     private final AtomicBoolean mainThreadHeartbeatPending;
@@ -2640,8 +2643,26 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 currentIsoUri, fileLoaded, discNavigationActive);
     }
 
+    public boolean hasStartedDiscNavigation() {
+        return discNavigationActive && fileLoaded && playbackRestarted;
+    }
+
+    public int getDiscRebufferCount() {
+        return discRebufferTracker.count();
+    }
+
+    public long getDiscRebufferTotalMs(long nowMs) {
+        return discRebufferTracker.totalMs(nowMs);
+    }
+
     public boolean sendDiscNav(String action) {
         if (!initialized || TextUtils.isEmpty(action)) return false;
+        if (!action.equals("mouse-move") && !action.equals("up") && !action.equals("down")
+                && !action.equals("left") && !action.equals("right")) {
+            long now = SystemClock.elapsedRealtime();
+            discRebufferTracker.interrupt(now);
+            discInputQuietUntilMs = now + 1000;
+        }
         try {
             int result = mpvCommand(new String[]{"discnav", action});
             Log.d(TAG, "disc navigation action=" + action + " result=" + result);
@@ -3404,10 +3425,34 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private void startStateRefresh() {
         mainHandler.removeCallbacks(stateRefreshRunnable);
         mainHandler.postDelayed(stateRefreshRunnable, STATE_REFRESH_INTERVAL_MS);
+        mainHandler.removeCallbacks(discRebufferRunnable);
+        if (discNavigationActive) mainHandler.postDelayed(discRebufferRunnable, 100);
     }
 
     private void stopStateRefresh() {
         mainHandler.removeCallbacks(stateRefreshRunnable);
+        mainHandler.removeCallbacks(discRebufferRunnable);
+        discRebufferTracker.interrupt(SystemClock.elapsedRealtime());
+    }
+
+    private void sampleDiscRebuffer() {
+        long now = SystemClock.elapsedRealtime();
+        boolean running = initialized && !released && !stopping && discNavigationActive
+                && playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED
+                && playerError == null;
+        boolean eligible = running && fileLoaded && playbackRestarted && playWhenReady
+                && playbackState == Player.STATE_READY && !initialTrackSelectionGateActive
+                && !seekPositionState.hasTarget() && now >= discInputQuietUntilMs;
+        boolean wasActive = discRebufferTracker.active();
+        long demandWait = running ? IsoSessionManager.demandWaitMs(currentIsoUri) : 0;
+        discRebufferTracker.update(now, eligible, cachedPositionMs, cachedCacheDurationMs, demandWait);
+        if (wasActive != discRebufferTracker.active()) {
+            PlaybackTrace.log("mpv-disc-buffer", playbackTraceId,
+                    "event=%s count=%d totalMs=%d positionMs=%d bufferedMs=%d demandWaitMs=%d",
+                    discRebufferTracker.active() ? "start" : "end", discRebufferTracker.count(),
+                    discRebufferTracker.totalMs(now), cachedPositionMs, cachedCacheDurationMs, demandWait);
+        }
+        if (running) mainHandler.postDelayed(discRebufferRunnable, 100);
     }
 
     private void startMainThreadWatchdog() {
@@ -5521,6 +5566,9 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         currentIsoUri = null;
         discMenuAvailable = false;
         discNavigationActive = false;
+        mainHandler.removeCallbacks(discRebufferRunnable);
+        discRebufferTracker.reset();
+        discInputQuietUntilMs = 0;
         setDiscMenuActive(false);
         isoTrackListDumped = false;
     }

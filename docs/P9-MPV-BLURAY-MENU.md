@@ -6,14 +6,14 @@
 - 接受标准：HDMV 菜单从远程/本地 Range ISO 入口可达并可操作；菜单跳转后音视频轨和时间线重建；普通 Blu-ray 最长标题、DVD、非 ISO、双 Surface OSD、硬解/软解和现有 Range 行为不回退。
 - BD-J 产品边界：不启动 BD-J runtime，不处理 BD-J ARGB 菜单，不新增提示；遇到 BD-J 菜单时继续按现状选择最长标题播放。
 - 用户决定：2026-09-06 明确“实现；遇到 BD-J 菜单时不用提示，就不处理菜单，跟现在一样即可”。
-- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU-FIX`。
-- 分支/HEAD：`feature-menu` / `831b70433e3dbdfd6f119c6036a3c8cf22d85ae4`。
+- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU-FOLLOWUP`。
+- 分支/HEAD：`feature-menu` / `55a6365a9ff8c1a096ceb4275d50b95c1ed5f488`。
 - 当前修复保护路径：未跟踪 `app/.cxx/`；延续现有任务源码修改，不接管其它工作。
 - MPV 固定基线：`cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`；构建框架 `99a60ad2141d5ace94453590903c2c6b9a0a2443`；libbluray 1.4.1 tarball SHA-256 `76b5dc40097f28dca4ebb009c98ed51321b2927453f75cc72cf74acd09b9f449`。
-- 当前状态：Checkpoint 18/20 的 Java 缓存与原生音频空读等待修复已通过定向测试、两ABI构建及资产检查，Mobile debug已成功安装。2026-09-08用户确认肉眼流畅度明显改善，并明确要求先打tag；随后补充仍有少量掉帧、CPU约60%、最近观看缺少《豪斯医生》。本次按用户请求保存已测试版本的阶段性恢复点，**不等于P9全部验收通过**；剩余音频/掉帧与历史问题继续只读确认。
+- 当前状态：Checkpoint 21 的历史访问记录、有界双路原始页预读与导航停顿计数已实现，37项定向Java测试、Mobile debug打包与Leanback Java编译通过；安装脚本确认包指纹变化并启动App。2026-09-08 17:54用户再次明确要求“先打个tag”，本次保存已通过上述检查的阶段性恢复点，**不等于P9全部验收通过**。新包真机开场/计数/历史效果和预览选集页退出仍待验证；这轮未改原生库，也未宣称菜单退出已修复。
 - 本轮补充修复：ISO 探测返回 null 的异常、Leanback 抢先消费方向键、手机触屏/菜单控制入口、HDMV Top Menu 判别及菜单启动失败回退。设置默认关闭，DVD 不增加菜单能力。
 - 回滚锚点：`831b70433e3dbdfd6f119c6036a3c8cf22d85ae4` / 本地 tag `recovery/P9-MPV-BLURAY-MENU-FIX/20260908-071735`；tag 仅包含已提交基线，不包含当前修复。回滚需成套恢复 MPV patch、JNI、App 接线和双 ABI assets。
-- 唯一下一动作：完成用户要求的本地恢复提交/tag，然后采样当前手机《豪斯医生》的音频线程、稳定播放掉帧和历史保存链路；不重复已通过的测试和构建。
+- 唯一下一动作：用户继续时，在当前安装包上完成《豪斯医生》开场→菜单预览页→正片→最近观看的真机对照，采集实际停顿计数并定位有效退出命令；不重复已通过的测试和构建。
 
 ## 1. 授权、范围与排除项
 
@@ -475,3 +475,29 @@
 - 新audio underrun patch SHA-256：`88e6eeb356adb64641177bfd83f2f60e994787a2cba346be78b2c86f451e95bf`；discnav patch未变。此前guard及scoped源码/文档diff检查通过；整仓checkpoint脚本的既有discnav patch空白context告警不能记为通过。
 - 用户先表示“视频肉眼可见的不卡顿了”，要求先tag；随后澄清“掉帧还是存在一点，不过好很多了”，CPU约60%。据此只记录显著改善，不把剩余掉帧视作正常，也不声称AudioTrack CPU已实测回归。
 - 已知待确认：稳定正片/菜单的剩余掉帧、音频线程占用、最近观看缺少《豪斯医生》；此前关闭菜单历史复播、《幽灵公主》完整流程、《超脱》和Surface direct边界未全部验收。恢复点是用户明确要求的已测试快照，不是发布/全功能通过标签。保持BD-J静默回退、DVD现状、用户配置和手机数据不变，不push。
+
+## Checkpoint 21：2026-09-08 已测试恢复点与后续反馈修复
+
+- 用户明确要求先tag并继续解决音频/CPU、少量掉帧、开场卡顿、最近观看缺失、重缓冲始终0、预览章节页无法退出。已原子提交 `55a6365a9ff8c1a096ceb4275d50b95c1ed5f488`，本地注释tag `recovery/P9-MPV-BLURAY-MENU-FIX/20260908152234-55a6365a9ff8`，未push。保存的是用户测试后要求保留的阶段状态，不是全P9验收。guard原先被Git元数据权限和docs忽略规则阻挡；只对准确任务文档强制暂存，未修改守卫或忽略规则。
+- 本轮guard `P9-MPV-BLURAY-MENU-FOLLOWUP`，保护35个既有 `app/.cxx/`文件。允许路径见guard scope：P9 Java状态/缓存、PlayerManager、PlaybackActivity、Mobile/Leanback VideoActivity、DiscMenuDialog、定向测试、P9 native补丁/构建/双ABI资产及本文件；不改其它播放器或用户配置/数据。
+- 现场：`/tmp/p9-menu-device-20260907.Vq7vyl/submenu-current.log`、`submenu-audio-cpu.txt`、`audio-after-playback-1523.log`、`history-current.db`（本地只读快照）。最新菜单窗口15个1秒样本（排除首样本）：App线程合计52.07%，ao/audiotrack平均0.40%峰值1%，明显不同于原45–53%空转。该窗口不是正片完整性能验收。菜单暖播放decoder/output drop为0；开场约33Mbps、Range 4MiB约1.4秒，仍会供数不足，不能把开场掉帧称为正常。
+- 历史根因：`VideoActivity.onTimeChanged/updatePlaybackHistoryPosition` 为防菜单多playlist时间线污染而跳过位置更新；`History.canSave()`仅允许position>0，首次导航观看因此从未保存访问记录。修复必须保留旧正片进度，不写入假的1毫秒、不把菜单时间当正片续播。
+- 计数根因：`MpvPlayer FILE_LOADED` 在nav模式设置file-local cache-pause=no；`PlayerManager.recordBufferingState`只认STATE_BUFFERING，所以此模式的实际取数停顿未计入。不能重新启用依赖禁用read-ahead的cache-pause，也不能把每次低缓冲/掉帧/正常still计为重缓冲。
+- 菜单证据：用户澄清预览项可选择播放，只有退出/其它底部按钮失效；本机方向键能移动缩略图，popup键未关闭此HDMV页面。原生NAV_CMD忽略libbluray返回值并一律STREAM_OK，Java的result=0不能证明光盘接受了输入。尚需验证实际返回/主菜单分支；不篡改光盘GPR/UO或假造鼠标成功。
+
+### 最佳实践与最小决定（延续既有设计）
+
+- A级来源：当前提交的Java调用链及上述真机证据；锁定libbluray1.4.1 `bluray.c::_try_menu_call/bd_user_input/bd_mouse_select`、`graphics_controller.c::_user_input/_mouse_move`及`keys.h`，证明ROOT和POPUP是不同操作、按钮受当前page约束、没有通用HDMV BACK键。MPV `playloop.c::handle_update_cache`与本地FILE_LOADED的file-local override解释漏计。
+- B级交叉实现：2026-09-08经指定代理读取 [VLC bluray.c](https://github.com/videolan/vlc/blob/master/modules/access/bluray.c) `DEMUX_NAV_MENU/POPUP`，root失败才fallback popup；[Kodi DVDInputStreamBluray.cpp](https://github.com/xbmc/xbmc/blob/master/xbmc/cores/VideoPlayer/DVDInputStreams/DVDInputStreamBluray.cpp) `MouseClick/OnMenu`检查实际返回值并作popup/root fallback。下载快照位于上述证据目录；不是引入这些浮动master提交。
+- 对预读，沿用Checkpoint18的原始字节缓存/取消/容量设计及测试，不改变VM媒体read-ahead。比较：不改=33Mbps开场被单请求约24Mbps限制；整体升级上游=不解决Java raw-source调度；窄适配=仅现有导航磁盘缓存路径使用最多2个预读worker、最多4页前视，仍8页内存及既有共享磁盘预算，跳转替换排队范围。实测是否改善需装机对照，不能声称突破总带宽限制。
+- 对计数，采用“已开始播放、未用户暂停/seek、输出位置持续不前、无可播数据且原始ISO需求读取在等待”的联合条件，独立计数后与既有面板/telemetry统一；只观察，不改变MPV暂停或VM行为。普通媒体仍保留既有STATE_BUFFERING统计。用纯Java时间序列测试排除启动/暂停/still/仅低缓冲/短暂等待，覆盖持续停顿一次计数、恢复再停及重置。
+- 官方API证据来自锁定源的公开头文件/实现；上游提交/issue沿用Checkpoint18–20对该固定基线的结论，这轮不引入上游候选。论文/泛博客不适用于页面命令/历史canSave/明确漏计条件；并行预读不主张新算法优越性，以有界并发、取消测试和同源真机性能为gate。
+- 验收：定向Java测试、Mobile构建与共享调用点Leanback编译；同ISO开场→菜单→预览页退出/选择正片→最近观看；音频/掉帧至少三个短窗口。若确需native改动才运行实际函数host测试及双ABI增量构建/资产校验。当前改动未经验证前不得提交；回滚锚点为本Checkpoint的已测试tag，保留此前音频修复与FIRST PLAY接线。
+
+### Checkpoint 21 阶段性保存（用户明确要求先tag，2026-09-08 17:54 Asia/Shanghai）
+
+- 已实现：Mobile/Leanback允许已启动HDMV导航保存首次访问记录，仍不把菜单时间当作可续播的正片进度；导航磁盘缓存路径最多2个预读worker、4页前视，保留8页内存和跳转/关闭边界；`MpvDiscRebufferTracker`只在已开始且未暂停/seek的播放中，联合判断位置不前、可播缓冲不足、原始需求读取等待，统一接入面板与telemetry计数，不重新开启导航cache-pause。
+- 验证：`MpvDiscMenuPolicyTest`14项、`MpvDiscRebufferTrackerTest`7项、`IsoPageCacheTest`13项、`HttpRangeIsoSourceTest`3项，共37项，failures/errors均为0；Leanback Java同次构建通过。日志 `followup-java-tests-jdk21.log`。首次命令因不存在的IDE内置JDK路径未启动，改用现有独立JDK21后成功，未安装新工具链。
+- 手机APK构建通过，日志 `followup-java-apk.log`；SHA-256 `a40ea5f45bcd4ed9c975cd412002c6fbd70e6f85ff0b4776db98c5873fa28aa3`。`followup-java-install.log`记录包指纹已改变、终止陈旧adb安装等待并成功启动App，脚本exit=0。以上日志均位于 `/tmp/p9-menu-device-20260907.Vq7vyl/`。
+- 未验证/未解决：新包开场供数、实际重缓冲计数、最近观看显示及正片连续播放；预览选集页可以移动/选择项目，但有效退出路径未确定，也未提交“菜单退出已修复”的代码。旧包菜单采样ao/audiotrack平均0.40%/峰值1%仅证明该窗口空转改善，不替代新包完整性能验收。
+- 用户要求立即保存本轮状态，因此不重跑测试、不继续操作手机、不把更广的P9验收写成通过。guard只提交本轮task-owned文件，保护 `app/.cxx/`；恢复tag由本次finish创建，未push。后续以这份文档为唯一记录继续真机验证及菜单退出修复。

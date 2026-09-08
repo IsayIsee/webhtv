@@ -23,6 +23,8 @@ final class IsoPlaybackSession {
     private volatile IsoTrackMetadataResolver.Snapshot trackMetadata = IsoTrackMetadataResolver.Snapshot.EMPTY;
     private volatile boolean trackMetadataReady;
     private boolean metadataPreparing;
+    private int demandReaders;
+    private long demandStartedNs;
 
     IsoPlaybackSession(long id, String url, Map<String, String> headers) {
         this.id = id;
@@ -52,9 +54,22 @@ final class IsoPlaybackSession {
         ensureOpen();
         int wanted = Math.min(length, target.remaining());
         byte[] data = new byte[wanted];
-        int read = source.readAt(offset, data, 0, wanted);
-        if (read > 0) target.put(data, 0, read);
-        return read;
+        synchronized (this) {
+            if (demandReaders++ == 0) demandStartedNs = System.nanoTime();
+        }
+        try {
+            int read = source.readAt(offset, data, 0, wanted);
+            if (read > 0) target.put(data, 0, read);
+            return read;
+        } finally {
+            synchronized (this) {
+                if (--demandReaders == 0) demandStartedNs = 0;
+            }
+        }
+    }
+
+    synchronized long demandWaitMs() {
+        return demandReaders == 0 ? 0 : Math.max(0, (System.nanoTime() - demandStartedNs) / 1_000_000);
     }
 
     boolean hasDiscImageSignature() throws IOException {

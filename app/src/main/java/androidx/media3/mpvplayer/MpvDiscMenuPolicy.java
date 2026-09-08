@@ -25,6 +25,12 @@ public final class MpvDiscMenuPolicy {
         return eofReached && !navigationActive;
     }
 
+    public static boolean canSaveHistory(boolean hasProgress, boolean navigationStarted) {
+        // A visit is worth keeping even when no single resumable timeline exists.
+        // Do not invent a position or overwrite an earlier ordinary-title resume.
+        return hasProgress || navigationStarted;
+    }
+
     public static String isoUri(String uri, boolean enabled) {
         if (!enabled || uri == null || !uri.startsWith("webhtv-dvdiso://")
                 || !uri.endsWith("/longest")) return uri;

@@ -12,6 +12,16 @@ import static org.junit.Assert.assertTrue;
 public class MpvDiscMenuPolicyTest {
 
     @Test
+    public void startedNavigationSavesVisitWithoutInventingMovieProgress() {
+        assertTrue(MpvDiscMenuPolicy.canSaveHistory(false, true));
+        assertTrue(MpvDiscMenuPolicy.canSaveHistory(true, true));
+        assertTrue(MpvDiscMenuPolicy.canSaveHistory(true, false));
+        assertFalse(MpvDiscMenuPolicy.canSaveHistory(false, false));
+        assertFalse(MpvDiscMenuPolicy.hasSinglePlaybackTimeline(
+                "webhtv-dvdiso://1005/raw", true, true));
+    }
+
+    @Test
     public void rawIsoDefersHistoryUntilNativeModeIsKnown() {
         assertTrue(MpvDiscMenuPolicy.usesRawIso("webhtv-dvdiso://1005/raw"));
         assertFalse(MpvDiscMenuPolicy.hasSinglePlaybackTimeline(

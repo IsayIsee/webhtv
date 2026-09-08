@@ -704,11 +704,17 @@ public class PlayerManager implements ParseCallback {
     }
 
     public int getRebufferCount() {
-        return playbackBufferingTracker.getRebufferCount();
+        long discCount = player instanceof MpvPlayer mpv ? mpv.getDiscRebufferCount() : 0;
+        return (int) Math.min(Integer.MAX_VALUE, playbackBufferingTracker.getRebufferCount() + discCount);
     }
 
     public long getRebufferTotalMs() {
-        return playbackBufferingTracker.getRebufferTotalMs();
+        return getRebufferTotalMs(SystemClock.elapsedRealtime());
+    }
+
+    private long getRebufferTotalMs(long nowMs) {
+        long discMs = player instanceof MpvPlayer mpv ? mpv.getDiscRebufferTotalMs(nowMs) : 0;
+        return playbackBufferingTracker.getRebufferTotalMs(nowMs) + discMs;
     }
 
     public boolean supportsSubtitleStyle() {
@@ -3187,7 +3193,7 @@ public class PlayerManager implements ParseCallback {
         int rebufferCount = observation != null
                 && observation.rebufferCount().known()
                 ? Math.max(0, observation.rebufferCount().value())
-                : playbackBufferingTracker.getRebufferCount();
+                : getRebufferCount();
         boolean droppedFramesUsable = observation != null
                 && observation.droppedFrames().known();
         long droppedFrames = droppedFramesUsable
@@ -6406,7 +6412,7 @@ public class PlayerManager implements ParseCallback {
                         runtime.underrunCount(),
                         rebufferMetric.known()
                                 ? Math.max(0, rebufferMetric.value())
-                                : playbackBufferingTracker.getRebufferCount(),
+                                : getRebufferCount(),
                         buffering,
                         bufferedMetric.known(),
                         bufferedMetric.known()
@@ -6740,9 +6746,9 @@ public class PlayerManager implements ParseCallback {
                 mediaBitrate,
                 renderedFrameRate,
                 droppedFrames,
-                PlaybackTelemetry.Metric.of(playbackBufferingTracker.getRebufferCount(),
+                PlaybackTelemetry.Metric.of(getRebufferCount(),
                         PlaybackAutoContext.ValueSource.PLAYER_MANAGER, PlaybackAutoContext.Confidence.HIGH),
-                PlaybackTelemetry.Metric.of(playbackBufferingTracker.getRebufferTotalMs(now),
+                PlaybackTelemetry.Metric.of(getRebufferTotalMs(now),
                         PlaybackAutoContext.ValueSource.PLAYER_MANAGER, PlaybackAutoContext.Confidence.HIGH),
                 firstFrame,
                 liveLag);

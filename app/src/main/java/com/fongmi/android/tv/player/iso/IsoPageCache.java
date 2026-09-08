@@ -25,11 +25,14 @@ public final class IsoPageCache implements RemoteIsoSource {
     private final IsoDiskPageStore disk;
     private final int maxPages;
     private final int pageSize;
+    private final int prefetchParallelism;
+    private final int prefetchDistance;
     private volatile boolean closed;
     private volatile IOException sourceFailure;
     private long lastReadEnd = -1;
     private long nextPrefetch = -1;
-    private boolean prefetchRunning;
+    private long lastPrefetch = -1;
+    private int prefetchWorkers;
     private long hits;
     private long misses;
     private long diskHits;
@@ -54,7 +57,12 @@ public final class IsoPageCache implements RemoteIsoSource {
         this.disk = disk;
         this.pageSize = pageSize;
         this.maxPages = maxPages;
-        this.prefetch = Executors.newSingleThreadExecutor(r -> new Thread(r, "iso-prefetch"));
+        // Interactive ISO playback cannot use demuxer read-ahead. Keep a small
+        // raw-byte horizon instead, without advancing libbluray's VM.
+        this.prefetchParallelism = disk == null ? 1 : 2;
+        this.prefetchDistance = disk == null ? 1 : Math.min(4, Math.max(1, maxPages - 1));
+        this.prefetch = Executors.newFixedThreadPool(prefetchParallelism,
+                r -> new Thread(r, "iso-prefetch"));
         this.pages = new LinkedHashMap<>(maxPages, 0.75f, true) {
             @Override
             protected boolean removeEldestEntry(Map.Entry<Long, byte[]> eldest) {
@@ -82,7 +90,7 @@ public final class IsoPageCache implements RemoteIsoSource {
             sequential = offset == lastReadEnd;
             // A seek replaces the queued hint. An already running raw-page read may finish,
             // but never queues more work or advances the disc VM.
-            if (!sequential) nextPrefetch = -1;
+            if (!sequential) nextPrefetch = lastPrefetch = -1;
         }
         int remaining = (int) Math.min(length, total - offset);
         int written = 0;
@@ -198,14 +206,20 @@ public final class IsoPageCache implements RemoteIsoSource {
     }
 
     private synchronized void prefetch(long index, long total) {
-        if (closed || index > (total - 1) / pageSize || pages.containsKey(index) || pending.containsKey(index)) return;
+        if (closed || index > (total - 1) / pageSize) return;
         nextPrefetch = index;
-        if (prefetchRunning) return;
-        prefetchRunning = true;
-        try {
-            prefetch.execute(this::runPrefetch);
-        } catch (RejectedExecutionException ignored) {
-            prefetchRunning = false;
+        lastPrefetch = Math.min((total - 1) / pageSize, index + prefetchDistance - 1);
+        while (nextPrefetch <= lastPrefetch
+                && (pages.containsKey(nextPrefetch) || pending.containsKey(nextPrefetch))) nextPrefetch++;
+        if (nextPrefetch > lastPrefetch) return;
+        while (prefetchWorkers < prefetchParallelism) {
+            prefetchWorkers++;
+            try {
+                prefetch.execute(this::runPrefetch);
+            } catch (RejectedExecutionException ignored) {
+                prefetchWorkers--;
+                break;
+            }
         }
     }
 
@@ -213,12 +227,15 @@ public final class IsoPageCache implements RemoteIsoSource {
         while (true) {
             long index;
             synchronized (IsoPageCache.this) {
-                index = nextPrefetch;
-                nextPrefetch = -1;
-                if (closed || index < 0) {
-                    prefetchRunning = false;
+                while (nextPrefetch >= 0 && nextPrefetch <= lastPrefetch
+                        && (pages.containsKey(nextPrefetch) || pending.containsKey(nextPrefetch))) {
+                    nextPrefetch++;
+                }
+                if (closed || nextPrefetch < 0 || nextPrefetch > lastPrefetch) {
+                    prefetchWorkers--;
                     return;
                 }
+                index = nextPrefetch++;
             }
             try {
                 page(index, true);
@@ -250,7 +267,7 @@ public final class IsoPageCache implements RemoteIsoSource {
         synchronized (this) {
             if (closed) return;
             closed = true;
-            nextPrefetch = -1;
+            nextPrefetch = lastPrefetch = -1;
             waiters = new ArrayList<>(pending.values());
             pages.clear();
             pending.clear();

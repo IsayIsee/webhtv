@@ -4450,7 +4450,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             mHistory.setCreateTime(System.currentTimeMillis());
         }
         if (exit && service() != null) PlaybackEventCollector.get().onStop(player());
-        if (!mHistory.canSave()) return;
+        if (!canSavePlaybackHistory(mHistory)) return;
         History history = mHistory.copy();
         Task.execute(() -> {
             if (history.getDuration() > 0) history.merge().save();
@@ -5882,7 +5882,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         long position, duration;
         mHistory.setCreateTime(time);
         if (hasDiscNavigationTimeline()) {
-            if (mHistory.canSave() && mHistory.canSync()) syncHistory();
+            if (canSavePlaybackHistory(mHistory) && mHistory.canSync()) syncHistory();
             return;
         }
         updatePlaybackHistoryPosition();

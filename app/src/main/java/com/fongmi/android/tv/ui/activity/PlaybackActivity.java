@@ -33,6 +33,7 @@ import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.bean.History;
 import com.fongmi.android.tv.bean.Result;
 import com.fongmi.android.tv.player.PlaybackAutoContext;
 import com.fongmi.android.tv.player.PlaybackTelemetry;
@@ -200,6 +201,14 @@ public abstract class PlaybackActivity extends BaseActivity implements MediaCont
     protected boolean hasDiscNavigationTimeline() {
         return mService != null && isOwner() && player().getPlayer() instanceof MpvPlayer mpv
                 && mpv.hasDiscNavigationTimeline();
+    }
+
+    protected boolean canSavePlaybackHistory(History history) {
+        if (history == null) return false;
+        boolean navigationStarted = mService != null && isOwner()
+                && player().getPlayer() instanceof MpvPlayer mpv
+                && mpv.hasStartedDiscNavigation();
+        return MpvDiscMenuPolicy.canSaveHistory(history.canSave(), navigationStarted);
     }
 
     protected void showDiscMenuControls() {
