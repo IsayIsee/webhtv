@@ -18,6 +18,7 @@ struct graphics_controller_s {
     PG_DISPLAY_SET *igs;
     struct { unsigned enabled_button; } bog_data[MAX_NUM_BOGS];
     unsigned ig_open, ig_drawn, valid_mouse_position, mouse_button_id, popup_visible;
+    uint16_t mouse_x, mouse_y;
     unsigned button_effect_running, pointer_route_pending, pointer_target_page;
     unsigned pointer_target_button, pointer_route_steps;
     uint64_t pointer_route_deadline;
@@ -56,10 +57,12 @@ static int _render_page(GRAPHICS_CONTROLLER *gc, unsigned activated, GC_NAV_CMDS
     return 1;
 }
 static void _reset_user_timeout(GRAPHICS_CONTROLLER *gc) { (void)gc; }
-static BD_PG_OBJECT *_find_object_for_button(PG_DISPLAY_SET *set, BD_IG_BUTTON *button, int state, void *unused)
+static BD_PG_OBJECT *_find_object_for_button(PG_DISPLAY_SET *set, const BD_IG_BUTTON *button, int state, void *unused)
 {
     (void)set; (void)state; (void)unused;
     static BD_PG_OBJECT object = {.width = 50, .height = 50};
+    static BD_PG_OBJECT background = {.width = 400, .height = 80};
+    if (button->selected_start_object_id_ref == 83) return &background;
     return button->selected_start_object_id_ref == 0xffff ? NULL : &object;
 }
 #include "menu_route_under_test.h"
@@ -72,7 +75,7 @@ struct fixture {
     BD_IG_PAGE pages[3];
     BD_IG_BOG bogs[3][8];
     BD_IG_BUTTON buttons[3][8];
-    MOBJ_CMD action, back, other_back, transport[2];
+    MOBJ_CMD action, back, other_back, transport[2], register_back[4], nop;
 };
 static MOBJ_CMD set_page(unsigned page, unsigned button)
 {
@@ -142,11 +145,90 @@ static void add_transport(struct fixture *f)
     for (unsigned i = 4; i < 6; i++) f->bogs[1][i].default_valid_button_id_ref = f->buttons[1][i].id;
     enter_page(f, 1, 8);
 }
-int main(void)
+static void add_background_return(struct fixture *f)
+{
+    /* Same structure as the House disc, deliberately different page/GPR IDs. */
+    f->register_back[0] = (MOBJ_CMD){.insn = {.grp = INSN_GROUP_SET, .sub_grp = SET_SET,
+        .set_opt = INSN_MOVE, .op_cnt = 2, .imm_op2 = 1}, .dst = 17, .src = 100};
+    f->register_back[1] = f->register_back[0];
+    f->register_back[1].dst = 29;
+    f->register_back[1].src = 41;
+    f->register_back[2] = set_page(29, 17);
+    f->register_back[2].insn.imm_op1 = f->register_back[2].insn.imm_op2 = 0;
+    f->buttons[1][3].nav_cmds = f->register_back;
+    f->buttons[1][3].num_nav_cmds = 4;
+    f->buttons[1][1] = make_button(7, 80, 90, 83, &f->nop, 0);
+    f->buttons[1][1].upper_button_id_ref = f->buttons[1][1].lower_button_id_ref = 8;
+    f->buttons[1][1].left_button_id_ref = f->buttons[1][1].right_button_id_ref = 8;
+    f->bogs[1][1].default_valid_button_id_ref = 7;
+    f->bogs[1][2].default_valid_button_id_ref = 0xffff; /* no individual toolbar copies */
+    f->pages[1].default_selected_button_id_ref = 0xffff;
+    enter_page(f, 1, 8);
+}
+static void test_background_return(void)
 {
     struct fixture f;
     GC_NAV_CMDS cmds = {0};
+    init(&f); add_background_return(&f);
+    assert(_authored_return_page(&f.buttons[1][3]) == 41);
+    assert(find(&f, NULL) == &f.buttons[1][3]); /* Back does not need a pointer */
+    assert(_mouse_move(&f.gc, 260, 110, &cmds) == 1 && f.regs[PSR_SELECTED_BUTTON_ID] == 8);
+    assert(_user_input(&f.gc, BD_VK_MOUSE_ACTIVATE, &cmds) == 1 && cmds.nav_cmds == f.register_back);
+    assert(f.gc.pointer_target_button == 101);
+    enter_page(&f, 0, 100); cmds = (GC_NAV_CMDS){0};
+    assert(_complete_pointer_route(&f.gc, &cmds) && cmds.nav_cmds == &f.action);
+    init(&f); add_background_return(&f); cmds = (GC_NAV_CMDS){0};
+    assert(_mouse_move(&f.gc, 110, 110, &cmds) == 1);
+    assert(_user_input(&f.gc, BD_VK_MOUSE_ACTIVATE, &cmds) == 1);
+    enter_page(&f, 0, 100); cmds = (GC_NAV_CMDS){0};
+    assert(_complete_pointer_route(&f.gc, &cmds) && !cmds.num_nav_cmds); /* same icon closes */
+    init(&f); add_background_return(&f); f.regs[PSR_SELECTED_BUTTON_ID] = 7;
+    assert(find(&f, NULL) == &f.buttons[1][3]); /* previously trapped background focus */
+    init(&f); add_background_return(&f); cmds = (GC_NAV_CMDS){0};
+    assert(_mouse_move(&f.gc, 200, 110, &cmds) == 1); /* gap between the parent icons */
+    assert(!_user_input(&f.gc, BD_VK_MOUSE_ACTIVATE, &cmds) && !cmds.num_nav_cmds);
+    init(&f); add_background_return(&f); cmds = (GC_NAV_CMDS){0};
+    f.buttons[0][1].x_pos = f.buttons[0][0].x_pos;
+    assert(_mouse_move(&f.gc, 110, 110, &cmds) == 1);
+    assert(!_user_input(&f.gc, BD_VK_MOUSE_ACTIVATE, &cmds)); /* ambiguous hit */
+    init(&f); add_background_return(&f); f.buttons[1][1].x_pos = 150;
+    assert(!find(&f, NULL)); /* one contained parent button center is insufficient */
+    init(&f); add_background_return(&f); cmds = (GC_NAV_CMDS){0};
+    f.buttons[0][0].y_pos = f.buttons[0][1].y_pos = 125; /* edges extend below the cropped backdrop */
+    assert(_mouse_move(&f.gc, 260, 150, &cmds) == 1 && f.regs[PSR_SELECTED_BUTTON_ID] == 8);
+    assert(_user_input(&f.gc, BD_VK_MOUSE_ACTIVATE, &cmds) == 1 && f.gc.pointer_target_button == 101);
+    init(&f); add_background_return(&f); f.buttons[0][0].y_pos = f.buttons[0][1].y_pos = 165;
+    assert(!find(&f, NULL)); /* a slight edge overlap without matching centers is not a toolbar */
+    init(&f); add_background_return(&f); f.gc.bog_data[3].enabled_button = 0xffff;
+    assert(!find(&f, NULL));
+    init(&f); add_background_return(&f); f.register_back[2].src = 0x80000000 | 30;
+    assert(!find(&f, NULL)); /* unknown GPR, never read speculative VM state */
+    init(&f); add_background_return(&f); f.register_back[0].insn.imm_op2 = 0;
+    assert(!find(&f, NULL)); /* nonconstant assignment */
+    init(&f); add_background_return(&f); f.register_back[0].dst = 18;
+    assert(!find(&f, NULL)); /* missing button operand and unrelated write */
+    init(&f); add_background_return(&f); f.register_back[3] = f.register_back[0];
+    assert(!find(&f, NULL)); /* only NOP may follow the terminating menu command */
+    init(&f); add_background_return(&f); f.register_back[0].insn.grp = INSN_GROUP_BRANCH;
+    f.register_back[0].insn.sub_grp = BRANCH_JUMP; f.register_back[0].insn.branch_opt = INSN_JUMP_TITLE;
+    assert(!find(&f, NULL));
+}
+int main(void)
+{
+    test_background_return();
+    struct fixture f;
+    GC_NAV_CMDS cmds = {0};
     init(&f);
+    MOBJ_CMD nop[2] = {0};
+    BD_IG_BUTTON no_action = make_button(7, 0, 792, 83, nop, 0);
+    assert(_button_has_no_action(&no_action));
+    no_action.num_nav_cmds = 2;
+    assert(_button_has_no_action(&no_action));
+    nop[1] = f.action;
+    assert(!_button_has_no_action(&no_action));
+    no_action.nav_cmds = NULL;
+    assert(!_button_has_no_action(&no_action));
+    assert(!_button_has_no_action(NULL));
     assert(_inert_pointer_button(&f.buttons[1][2]));
     assert(find(&f, &f.buttons[1][2]) == &f.buttons[1][3]);
     assert(_mouse_move(&f.gc, 260, 110, &cmds) == 1 && f.regs[PSR_SELECTED_BUTTON_ID] == 8);
@@ -200,6 +282,6 @@ int main(void)
     assert(_mouse_move(&f.gc, 1900, 1000, &cmds) == 0 && !f.gc.pointer_route_pending);
     init(&f); f.gc.button_effect_running = 1;
     assert(_user_input(&f.gc, BD_VK_MENU_BACK, &cmds) == -1);
-    puts("PASS: authored parent graph / inert pointer selection / sibling activation / toggle close / multi-step VM transport / disabled & visible auto rejection / ambiguous & register target rejection / timeout / newer-input cancellation / effect deferral");
+    puts("PASS: authored parent graph / inert & merged-background pointer selection / constant GPR return / sibling activation / toggle close / multi-step VM transport / disabled & visible auto rejection / ambiguous & unknown register rejection / timeout / newer-input cancellation / effect deferral");
     return 0;
 }

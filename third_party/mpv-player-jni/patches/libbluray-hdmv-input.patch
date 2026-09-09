@@ -1,19 +1,20 @@
 --- a/src/libbluray/decoders/graphics_controller.c
 +++ b/src/libbluray/decoders/graphics_controller.c
 @@ -39,6 +39,8 @@
- 
+
  #include "../register.h"
  #include "../keys.h"
 +#include "../hdmv/mobj_data.h"
 +#include "../hdmv/hdmv_insn.h"
- 
+
  #ifdef _WIN32
  /* mingw: PRId64 seems to expands to %d without stdio.h ... */
-@@ -82,6 +84,12 @@
+@@ -82,6 +84,13 @@
      unsigned        pg_dirty;
      unsigned        popup_visible;
      unsigned        valid_mouse_position;
 +    uint16_t        mouse_button_id;
++    uint16_t        mouse_x, mouse_y;
 +    unsigned        pointer_route_pending;
 +    uint16_t        pointer_target_page;
 +    uint16_t        pointer_target_button;
@@ -22,18 +23,38 @@
      unsigned        auto_action_triggered;
      BOG_DATA        bog_data[MAX_NUM_BOGS];
      BOG_DATA       *saved_bog_data;
-@@ -739,6 +747,7 @@
- 
+@@ -193,7 +202,7 @@
+ enum { BTN_NORMAL, BTN_SELECTED, BTN_ACTIVATED };
+
+ static BD_PG_OBJECT *_find_object_for_button(PG_DISPLAY_SET *s,
+-                                             BD_IG_BUTTON *button, int state,
++                                             const BD_IG_BUTTON *button, int state,
+                                              BOG_DATA *bog_data)
+ {
+     BD_PG_OBJECT *object   = NULL;
+@@ -739,6 +748,7 @@
+
      gc->popup_visible = 0;
      gc->valid_mouse_position = 0;
 +    gc->pointer_route_pending = 0;
      gc->page_uo_mask = uo_mask_get_empty();
- 
+
      graphics_processor_free(&gc->igp);
-@@ -1523,7 +1532,228 @@
+@@ -1523,6 +1533,307 @@
  #define VK_IS_NUMERIC(vk) (/*vk >= BD_VK_0  &&*/ vk <= BD_VK_9)
  #define VK_IS_CURSOR(vk)  (vk >= BD_VK_UP && vk <= BD_VK_RIGHT)
  #define VK_TO_NUMBER(vk)  ((vk) - BD_VK_0)
++
++static int _button_has_no_action(const BD_IG_BUTTON *button)
++{
++    if (!button || (button->num_nav_cmds && !button->nav_cmds)) return 0;
++    for (unsigned i = 0; i < button->num_nav_cmds; i++) {
++        const HDMV_INSN *insn = &button->nav_cmds[i].insn;
++        if (insn->grp != INSN_GROUP_BRANCH || insn->sub_grp != BRANCH_GOTO ||
++            insn->branch_opt != INSN_NOP) return 0;
++    }
++    return 1;
++}
 +
 +static void _trace_input_button(const BD_IG_PAGE *page, const BD_IG_BUTTON *button,
 +                                const char *phase)
@@ -47,11 +68,12 @@
 +                 button->left_button_id_ref, button->right_button_id_ref,
 +                 button->normal_start_object_id_ref, button->selected_start_object_id_ref,
 +                 button->activated_start_object_id_ref);
-+        if (button->num_nav_cmds == 1) {
-+            const MOBJ_CMD *cmd = button->nav_cmds;
-+            GC_TRACE("_user_input command: button=%u group=%u sub=%u set=%u imm=%u/%u dst=%08x src=%08x\n",
-+                     button->id, cmd->insn.grp, cmd->insn.sub_grp, cmd->insn.set_opt,
-+                     cmd->insn.imm_op1, cmd->insn.imm_op2, cmd->dst, cmd->src);
++        for (unsigned i = 0; button->nav_cmds && i < button->num_nav_cmds; i++) {
++            if (i >= 8 && i + 2 < button->num_nav_cmds) continue;
++            const MOBJ_CMD *cmd = &button->nav_cmds[i];
++            GC_TRACE("_user_input command: button=%u index=%u group=%u sub=%u branch=%u set=%u cmp=%u imm=%u/%u dst=%08x src=%08x\n",
++                     button->id, i, cmd->insn.grp, cmd->insn.sub_grp, cmd->insn.branch_opt, cmd->insn.set_opt,
++                     cmd->insn.cmp_opt, cmd->insn.imm_op1, cmd->insn.imm_op2, cmd->dst, cmd->src);
 +        }
 +    }
 +}
@@ -59,7 +81,7 @@
 +/* WebHTV authored-menu routing. Never synthesize a page/register write. */
 +static int _inert_pointer_button(const BD_IG_BUTTON *button)
 +{
-+    if (!button || button->num_nav_cmds || button->auto_action_flag) return 0;
++    if (!_button_has_no_action(button) || button->auto_action_flag) return 0;
 +    uint16_t refs[] = {button->upper_button_id_ref, button->lower_button_id_ref,
 +                       button->left_button_id_ref, button->right_button_id_ref};
 +    for (unsigned i = 0; i < 4; i++) {
@@ -81,17 +103,82 @@
 +    return NULL;
 +}
 +
++/* Some discs flatten the parent toolbar into an inert, cropped bitmap. Match
++ * multiple parent button centers, not their padded image edges. Both the actual
++ * pointer and target center must lie in the backdrop; ambiguous hits fail. */
++static unsigned _parent_buttons_in_background(GRAPHICS_CONTROLLER *gc, BD_IG_PAGE *parent,
++                                               const BD_IG_BUTTON *background, BD_IG_BUTTON **target)
++{
++    *target = NULL;
++    if (!_button_has_no_action(background) || background->auto_action_flag) return 0;
++    BD_PG_OBJECT *area = _find_object_for_button(gc->igs, background, BTN_SELECTED, NULL);
++    if (!area) return 0;
++    unsigned count = 0, hits = 0;
++    for (unsigned i = 0; i < parent->num_bogs; i++) {
++        BD_IG_BUTTON *button = _find_button_bog(&parent->bog[i], parent->bog[i].default_valid_button_id_ref);
++        if (!button || !button->nav_cmds || _button_has_no_action(button) || button->auto_action_flag) continue;
++        BD_PG_OBJECT *object = _find_object_for_button(gc->igs, button, BTN_SELECTED, NULL);
++        if (!object || !object->width || !object->height) continue;
++        unsigned cx = button->x_pos + object->width / 2;
++        unsigned cy = button->y_pos + object->height / 2;
++        if (cx < background->x_pos || cy < background->y_pos ||
++            cx >= background->x_pos + area->width || cy >= background->y_pos + area->height) continue;
++        count++;
++        if (gc->mouse_x >= button->x_pos && gc->mouse_y >= button->y_pos &&
++            gc->mouse_x < button->x_pos + object->width && gc->mouse_y < button->y_pos + object->height) {
++            hits++;
++            *target = button;
++        }
++    }
++    if (count < 2 || hits != 1) *target = NULL;
++    return count;
++}
++
++/* Resolve only constant GPR preparation inside this button's own straight-line
++ * program. Preserve SetButtonPage flag bits exactly as the real HDMV VM does. */
++static int _menu_constant_operand(const MOBJ_CMD *commands, unsigned end, uint32_t operand,
++                                  int immediate, uint32_t *value)
++{
++    if (immediate) { *value = operand; return 1; }
++    while (end) {
++        const MOBJ_CMD *cmd = &commands[--end];
++        if (cmd->insn.grp == INSN_GROUP_SET && cmd->insn.sub_grp == SET_SET &&
++            cmd->insn.set_opt == INSN_MOVE && cmd->dst == (operand & 0xfff)) {
++            *value = (operand & 0xc0000000) | (cmd->src & 0x3fffffff);
++            return 1;
++        }
++    }
++    return 0;
++}
++
 +static int _authored_return_page(const BD_IG_BUTTON *button)
 +{
-+    if (!button || !button->auto_action_flag || button->num_nav_cmds != 1 || !button->nav_cmds ||
++    if (!button || !button->auto_action_flag || !button->num_nav_cmds || button->num_nav_cmds > 16 || !button->nav_cmds ||
 +        button->normal_start_object_id_ref != 0xffff ||
 +        button->selected_start_object_id_ref != 0xffff ||
 +        button->activated_start_object_id_ref != 0xffff) return -1;
-+    const MOBJ_CMD *cmd = button->nav_cmds;
-+    if (cmd->insn.grp != INSN_GROUP_SET || cmd->insn.sub_grp != SET_SETSYSTEM ||
-+        cmd->insn.set_opt != INSN_SET_BUTTON_PAGE || cmd->insn.op_cnt != 2 ||
-+        !cmd->insn.imm_op1 || !cmd->insn.imm_op2 || !(cmd->src & 0x80000000)) return -1;
-+    return cmd->src & 0xff;
++    int page = -1;
++    for (unsigned i = 0; i < button->num_nav_cmds; i++) {
++        const MOBJ_CMD *cmd = &button->nav_cmds[i];
++        const HDMV_INSN *insn = &cmd->insn;
++        if (insn->grp == INSN_GROUP_BRANCH && insn->sub_grp == BRANCH_GOTO && insn->branch_opt == INSN_NOP) continue;
++        if (page >= 0 || insn->grp != INSN_GROUP_SET || insn->op_cnt != 2) return -1;
++        if (insn->sub_grp == SET_SET && insn->set_opt == INSN_MOVE &&
++            !insn->imm_op1 && insn->imm_op2 && cmd->dst <= 0xfff) continue;
++        uint32_t dst, src;
++        if (insn->sub_grp != SET_SETSYSTEM || insn->set_opt != INSN_SET_BUTTON_PAGE ||
++            !_menu_constant_operand(button->nav_cmds, i, cmd->dst, insn->imm_op1, &dst) ||
++            !_menu_constant_operand(button->nav_cmds, i, cmd->src, insn->imm_op2, &src) || !(src & 0x80000000)) return -1;
++        /* Reject unrelated register writes, even if the page itself is known. */
++        for (unsigned j = 0; j < i; j++) {
++            const MOBJ_CMD *move = &button->nav_cmds[j];
++            if (move->insn.grp == INSN_GROUP_SET &&
++                (insn->imm_op1 || move->dst != (cmd->dst & 0xfff)) &&
++                (insn->imm_op2 || move->dst != (cmd->src & 0xfff))) return -1;
++        }
++        page = src & 0xff;
++    }
++    return page;
 +}
 +
 +static int _menu_only_auto(const BD_IG_BUTTON *button, unsigned page_id)
@@ -153,11 +240,14 @@
 +        BD_IG_PAGE *candidate = page_id >= 0 ? _find_page(&gc->igs->ics->interactive_composition, page_id) : NULL;
 +        if (candidate && candidate != page && candidate->num_bogs <= MAX_NUM_BOGS) {
 +            BD_IG_BUTTON *match = copy ? _matching_parent_button(candidate, copy) : NULL;
++            if (copy && !match) _parent_buttons_in_background(gc, candidate, copy, &match);
 +            unsigned copies = 0;
 +            if (!copy) {
 +                for (unsigned i = 0; i < page->num_bogs; i++) {
 +                    BD_IG_BUTTON *b = _find_button_bog(&page->bog[i], gc->bog_data[i].enabled_button);
 +                    copies += _matching_parent_button(candidate, b) != NULL;
++                    BD_IG_BUTTON *unused;
++                    if (_parent_buttons_in_background(gc, candidate, b, &unused) >= 2) copies += 2;
 +                }
 +            }
 +            if (match || copies >= 2) {
@@ -190,7 +280,7 @@
 +    }
 +    return found;
 +}
- 
++
 +static int _request_authored_return(GRAPHICS_CONTROLLER *gc, BD_IG_PAGE *page,
 +                                    const BD_IG_BUTTON *copy, GC_NAV_CMDS *cmds)
 +{
@@ -255,41 +345,40 @@
 +    return 1;
 +}
 +/* End WebHTV authored-menu routing. */
-+
+
  static int _user_input(GRAPHICS_CONTROLLER *gc, uint32_t key, GC_NAV_CMDS *cmds)
  {
-     PG_DISPLAY_SET *s          = gc->igs;
-@@ -1534,6 +1764,8 @@
+@@ -1534,6 +1845,8 @@
      unsigned        ii;
      int             activated_btn_id = -1;
- 
+
 +    gc->pointer_route_pending = 0;
 +
      if (s->ics->interactive_composition.ui_model == IG_UI_MODEL_POPUP && !gc->popup_visible) {
          GC_TRACE("_user_input(): popup menu not visible\n");
          return -1;
-@@ -1545,14 +1777,14 @@
- 
+@@ -1545,14 +1858,14 @@
+
      if (!gc->ig_drawn) {
          GC_ERROR("_user_input(): menu not visible\n");
 -        return 0;
 +        return key == BD_VK_MENU_BACK ? -1 : 0;
      }
- 
+
      _reset_user_timeout(gc);
- 
+
 -    if (gc->button_effect_running) {
 +    if (gc->button_effect_running || (key == BD_VK_MENU_BACK && (gc->in_effects || gc->out_effects))) {
          GC_ERROR("_user_input(): button_effect_running\n");
 -        return 0;
 +        return key == BD_VK_MENU_BACK ? -1 : 0;
      }
- 
+
      GC_TRACE("_user_input(%d)\n", key);
-@@ -1564,11 +1796,19 @@
+@@ -1564,11 +1877,19 @@
          return -1;
      }
- 
+
 +    if (key == BD_VK_MENU_BACK) {
 +        BD_IG_BUTTON *selected = _find_button_page(page, cur_btn_id, NULL);
 +        if (selected && selected->auto_action_flag) return -1;
@@ -302,11 +391,11 @@
              return -1;
          }
 +        BD_IG_BUTTON *hit = _find_button_page(page, gc->mouse_button_id, NULL);
-+        if (_inert_pointer_button(hit)) return _request_authored_return(gc, page, hit, cmds);
++        if (_button_has_no_action(hit) && !hit->auto_action_flag) return _request_authored_return(gc, page, hit, cmds);
          key = BD_VK_ENTER;
      }
- 
-@@ -1590,6 +1830,7 @@
+
+@@ -1590,6 +1911,7 @@
          /* cursor keys */
          else if (VK_IS_CURSOR(key) || key == BD_VK_ENTER) {
              if (button->id == cur_btn_id) {
@@ -314,72 +403,78 @@
                  switch(key) {
                      case BD_VK_UP:
                          new_btn_id = button->upper_button_id_ref;
-@@ -1632,7 +1873,11 @@
- 
+@@ -1632,7 +1954,11 @@
+
          _select_button(gc, new_btn_id);
- 
+
 +        int before_cmds = cmds ? cmds->num_nav_cmds : -1;
          _render_page(gc, activated_btn_id, cmds);
 +        GC_TRACE("_user_input result: page=%u key=%u from=%u to=%u activated=%d cmds=%d->%d\n",
 +                 page_id, key, cur_btn_id, new_btn_id, activated_btn_id,
 +                 before_cmds, cmds ? cmds->num_nav_cmds : -1);
- 
+
          /* found one*/
          return 1;
-@@ -1795,6 +2040,7 @@
+@@ -1795,6 +2121,7 @@
      unsigned        ii;
- 
+
      gc->valid_mouse_position = 0;
 +    gc->pointer_route_pending = 0;
- 
+
      if (!gc->ig_drawn) {
          GC_TRACE("_mouse_move(): menu not visible\n");
-@@ -1834,7 +2080,19 @@
- 
+@@ -1834,6 +2161,25 @@
+
          /* mouse is over button */
          gc->valid_mouse_position = 1;
 +        gc->mouse_button_id = button->id;
++        gc->mouse_x = x;
++        gc->mouse_y = y;
 +        _trace_input_button(page, button, "mouse-hit");
-+        if (!button->num_nav_cmds) {
++        if (_button_has_no_action(button)) {
 +            GC_TRACE("_user_input graph: current=%u bogs=%u\n", cur_btn_id, page->num_bogs);
 +            for (unsigned jj = 0; jj < page->num_bogs && jj < 64; jj++) {
 +                _trace_input_button(page, _find_button_bog(&page->bog[jj],
 +                                   gc->bog_data[jj].enabled_button), "graph");
 +            }
 +        }
- 
++
 +        /* Decorative copies must not trap keyboard selection in a self-loop. */
 +        if (_inert_pointer_button(button)) return 1;
-+
++        if (_button_has_no_action(button) && !button->auto_action_flag) {
++            BD_IG_PAGE *parent;
++            BD_IG_BUTTON *target;
++            if (_find_authored_return(gc, page, button, &parent, &target)) return 1;
++        }
+
          /* is button already selected? */
          if (button->id == cur_btn_id) {
-             return 1;
-@@ -2020,6 +2278,7 @@
+@@ -2020,6 +2366,7 @@
              /* fall thru */
- 
+
          case GC_CTRL_POPUP:
 +            gc->pointer_route_pending = 0;
              if (gc->igs->ics->interactive_composition.ui_model != IG_UI_MODEL_POPUP) {
                  /* not pop-up menu */
                  break;
-@@ -2040,6 +2299,7 @@
+@@ -2040,6 +2387,7 @@
              break;
- 
+
          case GC_CTRL_INIT_MENU:
 +            gc->pointer_route_pending = 0;
              _select_page(gc, 0, 0);
              _render_page(gc, 0xffff, cmds);
              break;
-@@ -2075,6 +2335,8 @@
+@@ -2075,6 +2423,8 @@
  #endif
      }
- 
+
 +    if ((ctrl == GC_CTRL_NOP || ctrl == GC_CTRL_IG_END) && _complete_pointer_route(gc, cmds)) result = 1;
 +
      if (cmds) {
          if (gc->igs->ics->interactive_composition.ui_model == IG_UI_MODEL_POPUP) {
              cmds->status |= GC_STATUS_POPUP;
-@@ -2082,7 +2344,7 @@
+@@ -2082,7 +2432,7 @@
          if (gc->ig_drawn) {
              cmds->status |= GC_STATUS_MENU_OPEN;
          }
@@ -404,19 +499,19 @@
      uint8_t         hdmv_num_invalid_pl;
 +    uint8_t         user_menu_root_pending;
 +    uint64_t        user_menu_root_deadline;
- 
+
      /* BD-J */
      BDJAVA         *bdjava;
 @@ -946,10 +949,17 @@
          GC_NAV_CMDS cmds = {-1, NULL, -1, 0, 0, EMPTY_UO_MASK};
- 
+
          result = gc_run(bd->graphics_controller, msg, param, &cmds);
 +
 +        if (msg == GC_CTRL_VK_KEY || msg == GC_CTRL_MOUSE_MOVE || cmds.num_nav_cmds > 0) {
 +            BD_DEBUG(DBG_GC, "HDMV input GC: msg=%d param=%u result=%d cmds=%d status=%u\n",
 +                     msg, param, result, cmds.num_nav_cmds, cmds.status);
 +        }
- 
+
          if (cmds.num_nav_cmds > 0) {
 -            hdmv_vm_set_object(bd->hdmv_vm, cmds.num_nav_cmds, cmds.nav_cmds);
 +            int vm_result = hdmv_vm_set_object(bd->hdmv_vm, cmds.num_nav_cmds, cmds.nav_cmds);
@@ -424,12 +519,12 @@
 +            BD_DEBUG(DBG_GC, "HDMV input VM: cmds=%d result=%d running=%d\n",
 +                     cmds.num_nav_cmds, vm_result, !bd->hdmv_suspended);
          }
- 
+
          if (cmds.status != bd->gc_status) {
 @@ -3685,7 +3695,14 @@
          }
      }
- 
+
 -    return _play_title(bd, BLURAY_TITLE_TOP_MENU);
 +    int result = _play_title(bd, BLURAY_TITLE_TOP_MENU);
 +    if (result && bd->title_type == title_hdmv) {
@@ -440,10 +535,10 @@
 +    }
 +    return result;
  }
- 
+
  int bd_menu_call(BLURAY *bd, int64_t pts)
 @@ -3843,6 +3860,18 @@
- 
+
          if (bd->gc_status & GC_STATUS_ANIMATE) {
              _run_gc(bd, GC_CTRL_NOP, 0);
 +        }
@@ -460,11 +555,11 @@
 +            }
          }
      }
- 
+
 @@ -4068,6 +4097,7 @@
- 
+
      bd_mutex_lock(&bd->mutex);
- 
+
 +    bd->user_menu_root_pending = 0; /* a newer real input supersedes root normalization */
      _set_scr(bd, pts);
      if (_get_key_uo_index(bd, BD_VK_KEY(key), &uo_mask_idx)) {
@@ -474,7 +569,7 @@
 @@ -57,6 +57,9 @@
      /** Mouse click. Translated to BD_VK_ENTER if mouse is over a valid button. */
      BD_VK_MOUSE_ACTIVATE = 17,
- 
+
 +    /* WebHTV: follow an authored HDMV parent-menu route when available. */
 +    BD_VK_MENU_BACK = 18,
 +
