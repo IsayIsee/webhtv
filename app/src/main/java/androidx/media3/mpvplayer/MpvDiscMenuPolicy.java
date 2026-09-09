@@ -49,4 +49,12 @@ public final class MpvDiscMenuPolicy {
             default -> null;
         };
     }
+
+    public static String[] pointerCommand(int x, int y, boolean activate) {
+        // The native command converts the current window point using the same
+        // rectangle as the overlay. A separate "mouse" command only enqueues
+        // the position and can leave discnav reading the previous input point.
+        return new String[]{"discnav", activate ? "mouse-click" : "mouse-move",
+                Integer.toString(x), Integer.toString(y), "window"};
+    }
 }

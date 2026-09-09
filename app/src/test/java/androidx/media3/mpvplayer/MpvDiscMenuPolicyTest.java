@@ -4,12 +4,29 @@ import android.view.KeyEvent;
 
 import org.junit.Test;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class MpvDiscMenuPolicyTest {
+
+    @Test
+    public void touchCarriesCurrentWindowPositionInOneCommand() {
+        assertArrayEquals(new String[]{"discnav", "mouse-click", "1200", "640", "window"},
+                MpvDiscMenuPolicy.pointerCommand(1200, 640, true));
+        assertArrayEquals(new String[]{"discnav", "mouse-move", "75", "300", "window"},
+                MpvDiscMenuPolicy.pointerCommand(75, 300, false));
+    }
+
+    @Test
+    public void pointerCoordinatesAreNotNormalizedOrClampedBeforeNativeTransform() {
+        assertArrayEquals(new String[]{"discnav", "mouse-click", "0", "0", "window"},
+                MpvDiscMenuPolicy.pointerCommand(0, 0, true));
+        assertArrayEquals(new String[]{"discnav", "mouse-click", "-1", "2160", "window"},
+                MpvDiscMenuPolicy.pointerCommand(-1, 2160, true));
+    }
 
     @Test
     public void startedNavigationSavesVisitWithoutInventingMovieProgress() {

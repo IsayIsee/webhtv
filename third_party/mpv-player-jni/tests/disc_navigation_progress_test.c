@@ -9,6 +9,7 @@ typedef struct { int event; } BD_EVENT;
 struct bluray_priv_s {
     void *bd;
     bool hdmv_mode, still_active, data_delivered;
+    int overlay_lock;
     uint32_t discontinuity_id;
 };
 typedef struct { struct bluray_priv_s *priv; void *cancel; } stream_t;
@@ -16,6 +17,8 @@ struct sh_stream { int demuxer_id, type; };
 struct priv { bool is_bd; };
 static bool pending_command, cancelled, io_error;
 static int poll_reads, data_reads, legacy_reads;
+static void mp_mutex_lock(int *lock) { assert(!*lock); *lock = 1; }
+static void mp_mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
 
 #define MP_VERBOSE(ctx, ...) do { if (false) fprintf(stderr, __VA_ARGS__); } while (0)
 #define MP_TIME_MS_TO_NS(ms) (ms)
@@ -36,6 +39,10 @@ static int bd_read_ext(void *bd, void *buffer, int len, BD_EVENT *event)
     }
     data_reads++;
     return len;
+}
+static int bluray_read_ext(stream_t *s, void *buffer, int len, BD_EVENT *event)
+{
+    return bd_read_ext(s->priv->bd, buffer, len, event);
 }
 static int bd_get_event(void *bd, BD_EVENT *event)
 {

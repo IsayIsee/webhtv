@@ -6,6 +6,7 @@ test_work="$(mktemp -d /tmp/p9-disc-progress.XXXXXX)"
 awk '
     /^static int bluray_poll_hdmv_events\(/ { emit = 1 }
     /^static int bluray_stream_fill_buffer\(/ { emit = 1 }
+    /^static int bluray_call_user_menu\(/ { exit }
     /^static int bluray_stream_control\(/ { exit }
     emit { print }
 ' "$mpv_source/stream/stream_bluray.c" > "$test_work/disc_progress_under_test.h"

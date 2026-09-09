@@ -6,18 +6,36 @@
 - 接受标准：HDMV 菜单从远程/本地 Range ISO 入口可达并可操作；菜单跳转后音视频轨和时间线重建；普通 Blu-ray 最长标题、DVD、非 ISO、双 Surface OSD、硬解/软解和现有 Range 行为不回退。
 - BD-J 产品边界：不启动 BD-J runtime，不处理 BD-J ARGB 菜单，不新增提示；遇到 BD-J 菜单时继续按现状选择最长标题播放。
 - 用户决定：2026-09-06 明确“实现；遇到 BD-J 菜单时不用提示，就不处理菜单，跟现在一样即可”。
-- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU-FOLLOWUP`。
-- 分支/HEAD：`feature-menu` / `55a6365a9ff8c1a096ceb4275d50b95c1ed5f488`。
+- Lane / task guard：`upstream` / `P9-MPV-BLURAY-MENU-INPUT`。
+- 分支/HEAD：`feature-menu` / `f4e4f9e16fb6b99bf72f8a19a5cb184a488e0580`。
 - 当前修复保护路径：未跟踪 `app/.cxx/`；延续现有任务源码修改，不接管其它工作。
 - MPV 固定基线：`cca559b41ceb0bb7731cf6ef2e1f33276cd30c42`；构建框架 `99a60ad2141d5ace94453590903c2c6b9a0a2443`；libbluray 1.4.1 tarball SHA-256 `76b5dc40097f28dca4ebb009c98ed51321b2927453f75cc72cf74acd09b9f449`。
 - 当前状态：Checkpoint 21 的历史访问记录、有界双路原始页预读与导航停顿计数已实现，37项定向Java测试、Mobile debug打包与Leanback Java编译通过；安装脚本确认包指纹变化并启动App。2026-09-08 17:54用户再次明确要求“先打个tag”，本次保存已通过上述检查的阶段性恢复点，**不等于P9全部验收通过**。新包真机开场/计数/历史效果和预览选集页退出仍待验证；这轮未改原生库，也未宣称菜单退出已修复。
 - 本轮补充修复：ISO 探测返回 null 的异常、Leanback 抢先消费方向键、手机触屏/菜单控制入口、HDMV Top Menu 判别及菜单启动失败回退。设置默认关闭，DVD 不增加菜单能力。
 - 回滚锚点：`831b70433e3dbdfd6f119c6036a3c8cf22d85ae4` / 本地 tag `recovery/P9-MPV-BLURAY-MENU-FIX/20260908-071735`；tag 仅包含已提交基线，不包含当前修复。回滚需成套恢复 MPV patch、JNI、App 接线和双 ABI assets。
-- 唯一下一动作：用户继续时，在当前安装包上完成《豪斯医生》开场→菜单预览页→正片→最近观看的真机对照，采集实际停顿计数并定位有效退出命令；不重复已通过的测试和构建。
+- 本轮实证：手机已连接，trace包记录《倩女幽魂》章节页点击设置时按钮 #29 被激活但没有VM切页指令；从章节有效选择经向下，光盘的不可见自动按钮 #33 执行 `SET_BUTTON_PAGE` 返回主页面。**尚未读取按钮29的实际num_nav_cmds，不得仅据缺少执行日志断言它是装饰按钮或一定零指令**。当前候选未验收、未commit/tag，`app/.cxx/`仍保护。
+- 最新用户结论（2026-09-09 10:17）：用户再次确认“几个需求全都没解决”，要求增加详细debug日志；上一轮仅《倩女幽魂》一次 `prev` 成功截图不代表功能通过。本任务仍未验收，未commit/tag。
+- 已部署非trace候选：双ABI构建/资源验证/手机debug打包安装通过；arm64 libmpv SHA-256 `81b2816bb1212680a980b8b4fa4b7a877c786e63b39daa54b311ad17249ca4ea`，armv7 `2633e8decd8b8b2d7f3238fd11155a9af1911b83974af2d4afb12bfd51bad98a`，APK `dd83551c41f82a8bd8c055aa039b78879a43d7fc8396b337e74e5e9de39f7b50`。临时写文件trace已移除。设备曾断开，短片段验证未完成。
+- 诊断候选已完成：新增仅debug的Java命令/耗时/1秒状态快照；MPV按线程上下文转发现有HDMV/GC日志（每API96行、每线程每秒600行上限），输入/事件/pump记录代数及状态。过滤/限额/线程隔离/关闭上下文的host测试、输入测试、still/clip边界测试均通过；双ABI构建/ELF检查、Mobile debug和Leanback Java编译通过。2026-09-09新候选APK SHA-256 `2b3d681103d9ddc65aec7e366ac2908d7f1267caa9707ce17cbcd1ace2f24ae0`。
+- 设备诊断已经完成：安装成功且手机加载arm64指纹与本次构建一致。`debug-chain-setup-app.log`含完整章节成功/设置失败链路；`debug-chain-trailer-menu.log`含短片TITLE2→菜单TITLE0→光盘主动恢复第12页的指令，`debug-chain-menu-return.log`含原章节子页调用ROOT后进入第2页。底栏触发时横竖屏变化导致控件未命中，本项不算通过；菜单键结果不能代替底栏验收。
+- 最新授权（2026-09-09 14:33恢复）：用户明确“继续，解决bug，直到实现我之前提的所有需求”，批准继续在libbluray内部定位和修复。当前guard精确新增 `third_party/mpv-player-jni/patches/libbluray-hdmv-input.patch`；不变更受保护的 `app/.cxx/`，不改解码/渲染/网络。14:35 ADB未发现设备，本地工作继续，真机验收待重新连接。
+- 最新决定性证据：同一ISO远程Range仍有效；用固定libbluray 1.4.1在host只读取约12MiB菜单所需数据，复现章节→设置失败。`gc-boundary-host-session.log`证明第4页按钮29实际 `cmds=0, auto=0, up=down=left=right=29`，`_user_input`前后命令数均0，GC不向VM提交；主页面2章节按钮1为cmds=1，GC→VM接收返回0且正常切页。不是VM拒绝或渲染覆盖，是真正没有动作的主导航副本被触摸直接选中，使方向也困在自身。
+- 已实现未真机验收（2026-09-09 16:23）：`libbluray-hdmv-input.patch`加入可达作者返回图、无动作副本不抢焦点、限时/限步的跨VM菜单切换、再次点击收起、HDMV Back及显式ROOT后沿作者路径退出恢复子页。设置页还含按PSR选择按钮的纯菜单auto节点，因此逐段执行原VM并重算路径，不直接跳过。MPV优先尝试作者Back，缓存包期间以最多约30Hz推进可见菜单动画，普通播放不新增轮询；新增键只用于HDMV，不改BD-J。
+- 本地验证：`author-route-final-host.log`记录同ISO章节→设置(4→2→9→10)、设置再次点击经36→37→42的作者auto回主页面2、章节Back、特别收录预告TITLE2/PLAYLIST2无菜单播放后一次ROOT回TITLE0、作者恢复12后自动返回主页面2。`test_bluray_menu_routing.sh`通过真实源码抽取测试（副本不困焦点、切换/收起、多段VM、禁用/可见auto/未知寄存器/歧义拒绝、超时、新输入取消、动画等待）；`test_disc_navigation_input.sh`通过更新后的菜单命令/缓存30Hz节流测试。未等同于解码渲染或手机底栏验收。
+- 设备/产物：16:17仍无ADB设备；手机仍是之前诊断包，新作者路径候选尚未双ABI打包安装。保护 `app/.cxx/`，现有guard不重启、不commit/tag。已从保存日志定位豪斯医生同资源，但尚未取其菜单定义。
+- 阶段验收/保存授权（2026-09-09）：双ABI增量构建、ELF检查、Mobile debug APK构建通过，安装助手已在手机10CF6H1D2L0009S完成安装和启动。用户实测明确“我播放倩女幽魂是正常的”，并要求“先打个tag”；按此确认关闭该场景的可选验证，保存当前已验证的阶段性源码/补丁/双ABI产物。**用户同时确认豪斯医生菜单按钮仍不能关闭弹窗/切换，因此本恢复点不是P9全部完成，不代表豪斯医生通过。**
+- 唯一下一动作：阶段提交/tag完成后，继续定位豪斯医生真实菜单按钮及作者返回路径；保留当前倩女幽魂已正常的行为，不重复已完成的构建和该场景验证。
 
 ## 1. 授权、范围与排除项
 
 这是已批准的实施阶段，不再等待设计授权。
+
+### 2026-09-09 子菜单输入适配决定
+
+- 证据：固定libbluray源码（`graphics_controller.c::_mouse_move/_user_input`、`hdmv_vm.c::_set_button_page`，A级）及同ISO host重现（`gc-boundary-host-graph.log`，A级）；成熟Kodi输入对照沿用本文件已有源码研究，不重复网络检索。已读取光盘真实定义：章节页有不可见自动返回按钮，单条立即数 `SET_BUTTON_PAGE` 返回包含真实主导航按钮的页面；普通下一页自动按钮有可见图形，与返回节点可区分。无动作副本的位置和selected图形与主菜单真实按钮一致。
+- 不改：继续选中self-loop零指令副本，三个交互要求失败；原样上游鼠标：同样直接选择副本，不能满足触屏；采用窄适配：仅对零指令、非auto、无外向方向引用的副本寻找**当前启用按钮图上可达**的不可见自动返回节点，只接受单条立即数切页命令和可验证的主导航图形对应。执行作者原有指令，不直接改页/寄存器。返回稳定页面后重新验证目标按钮；若作者已选中该按钮，则仅收起，否则激活另一个主导航按钮。
+- Back复用作者返回路径，找不到可证明路径则保留原ROOT回退。显式ROOT后光盘若主动恢复子页，再沿作者返回路径退出；不重复ROOT，不影响FIRST PLAY、BD-J或全局UO策略。指针意图限时且在新输入/重置时取消，不能覆盖尚在运行的VM命令。
+- 验证/回滚：host真实ISO章节→设置/收录/关闭、输入图夹具（自环、禁用、可见auto、歧义/损坏、延迟和取消）、短片ROOT、双ABI/ELF/App编译，随后真机底栏/豪斯医生验收。保持本任务原子可回滚；未通过真实交互不commit/tag。没有算法性能论文适用的新算法主张，不新增依赖/ABI命名空间或BD-J能力。
 
 范围：
 
@@ -501,3 +519,83 @@
 - 手机APK构建通过，日志 `followup-java-apk.log`；SHA-256 `a40ea5f45bcd4ed9c975cd412002c6fbd70e6f85ff0b4776db98c5873fa28aa3`。`followup-java-install.log`记录包指纹已改变、终止陈旧adb安装等待并成功启动App，脚本exit=0。以上日志均位于 `/tmp/p9-menu-device-20260907.Vq7vyl/`。
 - 未验证/未解决：新包开场供数、实际重缓冲计数、最近观看显示及正片连续播放；预览选集页可以移动/选择项目，但有效退出路径未确定，也未提交“菜单退出已修复”的代码。旧包菜单采样ao/audiotrack平均0.40%/峰值1%仅证明该窗口空转改善，不替代新包完整性能验收。
 - 用户要求立即保存本轮状态，因此不重跑测试、不继续操作手机、不把更广的P9验收写成通过。guard只提交本轮task-owned文件，保护 `app/.cxx/`；恢复tag由本次finish创建，未push。后续以这份文档为唯一记录继续真机验证及菜单退出修复。
+
+## Checkpoint 22：2026-09-08 Kodi对照，菜单输入与退出修复
+
+- 前轮已提交 `f4e4f9e16fb6b99bf72f8a19a5cb184a488e0580` / 本地注释tag `recovery/P9-MPV-BLURAY-MENU-FOLLOWUP/20260908181013-f4e4f9e16fb6`，未push。用户继续授权修复，明确要求参考Kodi。当前工作区仅既有 `app/.cxx/`脏，保护35个文件；guard已重新建立为 `P9-MPV-BLURAY-MENU-INPUT`。
+- 20:57 Asia/Shanghai计划：修复与回归10–15分钟、双ABI增量及APK8–12分钟、设备约10分钟，目标21:30左右。范围仅菜单输入Java接线/测试、独立native补丁及build接线/两ABI产物、本文件；不重做音频/缓存设计。
+
+### 决定性问题与证据
+
+- 观察：用户在《豪斯医生》《倩女幽魂》等HDMV主菜单展开章节/设置子页后，仍可点子页项目播放，但不能通过其它主菜单按钮切换或返回；短片段期间原盘主菜单有时无反应。之前日志仅有Java `disc navigation ... result=0`，此值由底层无条件STREAM_OK转换而来，不证明光盘接受操作。截图/日志沿用 `menu-exit-latest.*`、`ghost-down.png`。
+- A级固定源：MPV `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42` 加已提交P9补丁。`MpvPlayer.sendDiscNavPointer`调用两次命令：先`mouse x y`再`discnav mouse-click`；`player/command.c::cmd_mouse`只将位置更新入input队列，`input/input.c::mp_input_read_cmd`取出该事件后才更新`mouse_x/y`。同步client命令在另一dispatch链执行，因此第一命令返回不保证第二命令读到新坐标。可证伪假设：旧输入队列未消费时，导航命令会使用旧坐标；单次命令直接携带当前窗口坐标可消除该时序依赖。
+- A级固定源：libbluray1.4.1 `bluray.c::bd_mouse_select/bd_user_input/_try_menu_call`、`graphics_controller.c::_mouse_move/_user_input/gc_run`及`keys.h`。鼠标必须命中当前页可选择按钮；root返回1成功/0失败；popup与root不同，HDMV没有通用BACK键。`BLURAY_PLAYER_SETTING_UO_RESTRICTION_DISABLED`公开注释明确可能破坏播放，因此本轮不关闭UO或修改光盘寄存器。能否中断受限短片段仍需实际命令结果判定。
+- B级对照：[Kodi DVDInputStreamBluray.cpp](https://github.com/xbmc/xbmc/blob/b2637ca499afe69f9d15c928809ffd6c42144250/xbmc/cores/VideoPlayer/DVDInputStreams/DVDInputStreamBluray.cpp)，该文件最后变更commit `b2637ca499afe69f9d15c928809ffd6c42144250`（2026-09-08 API读取）。已读MouseMove/MouseClick/UserInput/OnMenu；[VideoPlayer.cpp](https://github.com/xbmc/xbmc/blob/master/xbmc/cores/VideoPlayer/VideoPlayer.cpp)将当次窗口坐标变换后直接传给输入流；头文件OnBack调用OnMenu。OnMenu先popup失败再root，MouseClick检查选择结果。下载快照 `kodi-bluray.cpp/.h`、`kodi-videoplayer-menu.cpp`及`kodi-bluray-source-revision.json`。仅行为对照，不引入Kodi源码或新依赖commit。
+- B级补充：已读VLC `DEMUX_NAV_MENU/POPUP`，明确root调用失败才fallback popup；Kodi libbluray依赖patch目录只有平台构建/加载兼容补丁，不据“完美支持”假定其绕过所有光盘UO限制。
+- 证据类别范围：这是已实现菜单设计内的输入时序/结果遗漏修复，官方公开API及实际源已能决定方案；不新增上游候选。此前P9记录涵盖上游实现/讨论，本次不再泛搜论文/帖子（没有新导航算法或性能理论主张）。下载均使用用户指定代理。
+
+### 决定、验证与回滚
+
+- 不改：两条命令间坐标时序及“成功”假象仍在。照搬Kodi：它不经libmpv输入队列，不能原样移植。窄适配：为已有discnav命令追加可选窗口坐标模式，Java只发一次携带点位的命令；保留原归一化坐标和无坐标键盘/鼠标兼容。native只对有效命中激活，记录真实结果；root失败才试可用popup，返回根据真实popup支持使用popup/root。不硬编码影片按钮/页号、不强制toggle作者未定义的菜单。
+- 新native改动用独立 `third_party/mpv-player-jni/patches/mpv-discnav-input.patch`，紧随原discnav补丁，不改固定锁、不重编FFmpeg/JNI；正常播放、BD-J静默最长标题回退、DVD现状、原始页缓存及音频等待保持。
+- 最小验证：实际cmd_discnav与坐标转换host测试，覆盖旧队列位置不影响直接点位、归一化旧调用、边界/黑边/缩放、无效点不激活；libbluray返回失败不伪成功、popup/root回退。Java命令形状定向测试；两ABI一致源构建及资产验证；Mobile打包安装后以主菜单→章节→设置/退出→短片段菜单的实际状态为验收。不用host测试替代真机。
+- 回滚：移除独立输入补丁及构建接线，恢复前轮tag的Java命令和成套libmpv资产；保留其它已提交P9修复。下一步只做上述定向实施/验证，不追加播放器升级或广泛研究。
+
+### 输入修复实施状态（2026-09-08 22:02 Asia/Shanghai）
+
+- 已实现：Java单条`discnav mouse-click/mouse-move x y window`；native新增可选坐标空间，保留归一化及无坐标调用。转换反算`push_bd_overlay`实际使用的`osd_get_vo_res`矩形（带锁快照），不在core线程调用仅限VO线程的`vo_get_src_dst_rects`；负边距保留放大裁剪映射，黑边及画面外点拒绝。
+- 已实现：`bd_mouse_select`必须返回1才激活；root的0失败与`bd_user_input`的0非错误分别处理，后者仍可能没有界面变化，日志明确记录hit/root/input/accepted/popup，不把0推断为已切页。Popup支持状态在overlay锁内取快照，调用libbluray前释放，避免overlay回调死锁。root失败才试可用popup；prev/popup按实际支持选择popup或root，不改UO。
+- 新增独立`mpv-discnav-input.patch`，接在既有discnav补丁之后；未改锁、JNI、FFmpeg、音频和缓存。`MpvPlayer.sendDiscNavCommand`保留输入后的停顿计数抑制策略。
+- 定向host测试已通过：直接提取实际坐标函数、`cmd_discnav`、Blu-ray控制分支和激活分类函数，覆盖旧input队列位置、归一化边界/兼容、NaN/画面外点、黑边/缩放/裁剪、未命中不激活、错误不触发demux drive、key返回0合法、root/popup/prev回退及非HDMV拒绝。测试脚本`third_party/mpv-player-jni/tests/test_disc_navigation_input.sh`。
+- 当前进行双ABI增量及Java定向测试；原21:55目标已延后，时间消耗主要为原生转换/返回契约和回归测试实现，不再扩展研究。ADB无设备，构建通过也不代表用户反馈已真机验收。
+
+### 候选实测失败与恢复点（2026-09-09 Asia/Shanghai）
+
+- 构建/静态结果：两ABI增量构建成功（`input-arm64-native.log` / `input-armv7-native.log`）；stage和`--require-elf`成功（`input-stage-assets.log` / `input-verify-assets.log`）；16项`MpvDiscMenuPolicyTest`及Mobile/Leanback Java编译成功（`input-java-tests-authorized.log`）。独立patch按锁定MPV + disc-controls + discnav顺序应用校验、对真实build源码reverse校验通过。新patch空白context已规范化并重新确认可应用；未修改旧大patch。
+- 产物：arm64 `libmpv.so` SHA-256 `2298a4e860e10f5af6a96d8853157a6cfdcc19b07195c0be0822af4ade07b069`；armv7 `b3377c17b1f113305e40d9d97ddaff6098aa8a77492ea7d01488724271cab0db`。仅libmpv资产变化，JNI/FFmpeg资产未变。首个候选APK SHA-256 `ec88362ed19c7c8b7508159a3a75b0219261e47b9ba0918c92302fdb3b18a458`，zip内libmpv与arm64资产hash相同。
+- **用户否定验收**：2026-09-08 22:23已成功安装首个候选（`input-debug-install-reconnected.log`），用户随后明确反馈仍不能退出/切换子页，短片段中仍不能强制打开菜单。本轮坐标/结果检查修正不是用户问题的完整解决，不得标为通过，不commit/tag。
+- 实际证据：`input-user-failure.log`中22:23:57–22:24:14的8次`menu`都返回`-12`，并非成功但画面没响应；章节子页大部分mouse-click返回0（libmpv命令成功），部分返回-12。代理在诊断包亲自复现《倩女幽魂》主菜单→章节页→点设置，高亮变到设置但章节页仍在（`input-ghost-chapters.png` / `input-ghost-setup-click.png`），不能解释成点位整体失效。
+- 已核实设备实际加载的`app_mpv-libs/arm64-v8a/libmpv.so` SHA-256与候选相同；不是旧native资产残留。
+- 诊断遗漏及修正：`MpvPlayer.shouldDebugLogMpvLine`原过滤掉新的native `discnav action=`，已补白名单并构建安装（`input-diagnostic-apk.log` / `input-diagnostic-install.log`）；随后发现`MpvPlayerEngine`默认`all=warn`还会屏蔽native INFO。在允许路径`MpvPlayer`里追加`bd=info,bdmv/bluray=info`仅放开蓝光流结果，不开启全局verbose。该最后一版已成功构建（`input-diagnostic-level-apk.log`），安装时设备断开（`input-diagnostic-level-install.log`：device not found），**尚未部署**。
+- 未决原因：root请求实际失败（UO/状态/其它原因仍需区分）；子页按钮高亮成功但导航命令执行/页面转换未完成。不得直接认定UO是全部原因，不关闭UO、不硬编码影片页号、不继续重复坐标假设。`demux_drive_nav`目前仅强制读一个packet；slave自身缓存是否使VM pump延迟是待证伪问题，尚未实施新改动。
+- Git/保护状态：仍在`feature-menu`、guard `P9-MPV-BLURAY-MENU-INPUT`，基线`f4e4f9e16fb6b99bf72f8a19a5cb184a488e0580`；本轮task-owned源码/patch/测试/双ABI资产/文档均未提交，既有`app/.cxx/`保持保护。所有上述日志/截图目录均为`/tmp/p9-menu-device-20260907.Vq7vyl/`。
+- 唯一下一步：连接手机后安装已构建的最终诊断包，在同一章节页采集一组`mouse-click`、`prev`、`menu`的实际native结果与前后截图，以此选择下一处窄修复；不重做已完成Kodi调查或双ABI构建。
+
+### 2026-09-09 设备输入结果与导航pump窄修复
+
+- 已取得完整输入结果（`iso-level-chapter.log`/`iso-level-setup.log`）：当前窗口坐标命中，`hit=1 input=1 accepted=1 popup=0`，章节页→设置只有按钮高亮变化；`iso-level-popup.log`中root=0。ISO入口复用了`iso`日志前缀，Java已仅对iso/bd/bdmv开启info并保留discnav白名单。
+- 当前证据决定先修导航pump缺口，不推断root失败一定由UO造成。现有`demux_drive_nav`只迫使外层读一个packet，而`d_read_packet`可以一直取slave缓存，不保证调用`bd_read_ext`；libbluray只在`bd_read_ext`执行挂起的菜单指令。旧host测试只测fill_buffer，未覆盖缓存不触达底层的条件。
+- 设计比较：不改会保留输入执行依赖媒体供数；直接在core线程调用libbluray事件pump会与demux/stream的状态变更交错；窄适配新增内部`STREAM_CTRL_NAV_POLL`，输入成功仅设置锁保护pending，外层demux每次取packet前消费pending并执行既有零字节pump，之后再检查真实discontinuity并重建slave。方向/hover也可能由作者定义自动动作，因此成功输入均唤醒pump。不增加媒体预读，不改光盘寄存器/UO，不模拟菜单弹窗。
+- 范围仍是已声明的独立MPV输入patch、build源码、定向测试、双ABI产物/Java日志接线及本文件，不新增上游依赖或JNI API。接受标准：缓存中已有packet时点击仍推进VM；仅页面变化不flush解码；真实播放列表跳转仍按既有代数重建。Rollback为移除独立patch/成套libmpv与对应Java参数恢复f4e4恢复点。
+- 用户持续授权修复此功能；本次为已确证输入接线后的执行契约补全。必须host故障用例和同一真机章节→设置/返回结果验证，不能以编译替代。
+
+- pump候选两ABI编译、资产校验与新增缓存packet回归通过，已安装；`pump-setup.log`明确`input=1`后`pump change=23->23`，仍未切页。因此pump缺口确实补齐但不是此盘子页问题的完整根因。`uo=3`=MENU_CALL|TITLE_SEARCH，已确认root调用被光盘限制，不再猜测坐标或漏pump。
+- 当前临时诊断：仅build目录`stream_bluray.c`加无owner指针的Android日志回调并开启GC/HDMV trace；原始pump源码保存`/tmp/p9-input-native.gZWNU6/stream_bluray-pump.c`。此临时改动未进入独立patch，arm64诊断产物与armv7暂不同，**严禁commit/tag这个临时状态**；取证后必须移除临时hook并恢复双ABI一致构建。下一步仅安装trace包，读取同一按钮的实际导航bytecode/VM结果。
+
+### 2026-09-09 VM取证与显式菜单请求的窄适配
+
+- 设备 `10CF6H1D2L0009S` / vivo V2453A / Android 15；证据目录 `/tmp/p9-menu-device-20260907.Vq7vyl/`。`vm-setup-after.log`显示章节页4的按钮29确实激活，之后没有新的HDMV命令；`vm-panel-down.log`显示从章节预览选中项按下后自动激活不可见按钮33，执行 `SET_BUTTON_PAGE 0x80000001,0x80000002` 回到主页面2。不能再以点击成功或overlay变化作为切换通过。
+- 这说明该盘章节页的底部按钮并不是主页面按钮的通用副本，物理遥控器是通过作者提供的方向图返回。Kodi同样调用 `bd_user_input`/`bd_mouse_select`，并没有通用HDMV BACK API（`keys.h`仅有ROOT/POPUP/方向/ENTER）。不采用全盘固定DOWN、不写寄存器或页号、不在无可验证动作时强制重播原点位；触摸适配需要libbluray可验证的菜单关系，另行请求新增一份依赖补丁的范围授权。
+- 短片段返回菜单的已证实失败独立处理：libbluray 1.4.1 `bluray.c::_try_menu_call`在默认RELAXED级别仍拒绝 `uo_mask.menu_call`，与手机 `root=0 uo=3`一致；`bluray.h`公开 `BLURAY_PLAYER_SETTING_UO_RESTRICTION_LEVEL`，关闭限制可能绕过盘的初始化。上述锁定源码为A级证据；此前保存的Kodi `OnMenu`参考revision `b2637ca499afe69f9d15c928809ffd6c42144250`为B级证据；访问日期2026-09-09。
+- 比较：不改/照搬Kodi都保留被UO拒绝的调用；全局关UO会改变所有导航且可能破坏FIRST PLAY；采用最窄适配：用户明确点击ROOT/TITLE或非Popup返回时，先正常调用，仅当失败且MENU_CALL被屏蔽、已向播放器供过媒体字节时，对这一次 `bd_menu_call`临时使用DISABLED，之后无论结果如何立即恢复库默认RELAXED。自动开盘仍只 `bd_play`，不自动强跳；无菜单盘、BD-J、未开始供数、非UO错误均不放开。
+- 用户已反复明确要求短片段中“强制弹出菜单”，本次属于已批准行为；不扩大音频、缓存、解码或其它UO策略。风险：个别盘可能在片头结束后才完成其它寄存器设置，故不能宣称所有盘都可强跳；需要同盘片段和菜单/正片回跳真机检查。验收：正常菜单先走原调用，受限调用仅一次放开且恢复限制，初始化/其它错误不越过，静态host覆盖及真机真实主菜单画面。Rollback：移除此窄helper及对应测试，成套恢复原独立输入patch/双ABIlibmpv。
+
+### 2026-09-09 10:17 用户否定候选，补充有界debug
+
+- 最新证据 `user-failure-1018-logcat.log`：10:03:11/15 的root override返回1，但后续多次点击只有高亮，pump代数不变；其中一次主线程同步discnav达3056ms，ANR诊断记录1717ms native等待。`user-failure-1018.png`仍停留章节弹窗。不能把返回值1等同完成切页。
+- 日志方案：仅debug App放开蓝光模块debug等级；MPV接入libbluray公开的 `bd_set_debug_handler` 与 `DBG_HDMV|DBG_GC|DBG_CRIT`，通过调用线程的临时上下文把指令输出送入现有MPV/App日志。只捕获菜单相关源行，限制每次/每秒数量；不写额外无限增长的手机文件，不记录媒体地址，不引用释放后的stream。普通/release配置不开启详细跟踪。
+- 记录Java命令/坐标、初始化/菜单可用性/Surface状态、同步耗时与延迟状态快照；native记录输入序号、点击命中/激活/UO重试分段耗时、VM指令、菜单事件、page/按钮信息及generation。此处统计的是执行跟踪，不臆测按钮定义中的指令数量。
+- 保持已有菜单语义不变；源依据为锁定libbluray 1.4.1 `util/log_control.h`/`logging.c`（公开无owner的进程级日志回调）及现有GC/HDMV日志，MPV `osdep/threads`线程局部与once机制；这是局部诊断扩充，不引入新的导航设计或依赖版本。验证重点是过滤/限额/上下文释放、两ABI可构建、日志实际可达及相同失败的完整操作链。范围沿用当前guard，新增测试仅在已允许tests目录。
+- 静态验证：`test_disc_navigation_trace.sh`通过正常/禁用/过滤/每次96行/每秒600行/线程隔离/调用后无owner；`test_disc_navigation_input.sh`及`test_disc_navigation_progress.sh`通过。第一次input测试与arm64编译都暴露同一个新增计时变量 `started` 和旧bool重名，已改为 `call_started`，重跑相关测试及arm64构建成功；未重复无关已通过测试。
+- 产物及构建记录：`debug-chain-arm64-fixed.log`、`debug-chain-armv7-native.log`、`debug-chain-stage.log`、`debug-chain-verify.log`均成功；`debug-chain-apk.log` Mobile debug与Leanback Java编译成功。arm64 libmpv `a8e3938d49010f1f67e293a547367712ab490b4af57fbe9b0c160ada220ec3fc`，armv7 `251e24a586a5e822ee703060a32c102acbd083f1966d6dae726df4d4b4b82288`，独立patch `867b3e726f541a08182f37277b362a2aee26c547ddda3bb43a9f6515aa19bbae`；实际build源reverse校验通过，未改libbluray源码。
+- 检查点脚本 `debug-chain-checkpoint.log`：0 errors，1 warning仅提示本任务拥有的双ABI修改，已与guard scope核对；既有 `app/.cxx/`未接管。本轮源码和产物继续未提交，因为整个菜单修复单元仍有真实功能失败，不能安全声明完成并tag。
+
+### 2026-09-09 诊断包真机结果（继续取证，非修复验收）
+
+- `debug-chain-install.log`安装成功；手机运行中 `app_mpv-libs/arm64-v8a/libmpv.so` SHA-256为 `a8e3938d49010f1f67e293a547367712ab490b4af57fbe9b0c160ada220ec3fc`，与仓库产物一致。无需重装或重建来证明同一版本。
+- 12:33:59 `request=2/seq=2`：点击章节正确激活主页面2的按钮1，随后 `SET_BUTTON_PAGE` 2→3→4，章节页实际出现。
+- 12:34:04 `request=4/seq=4`：点击设置坐标由窗口 `(1350,982)` 映射到盘 `(1110,982)`，第4页按钮29激活，`user-input=1`仅3ms；pump完成0ms，change保持23，之后未执行任何切页指令；1秒后播放器仍active且章节弹窗保留。证据 `debug-chain-setup-app.log`、`debug-chain-setup-failed.png`。**“零指令按钮”仅为假设**：上游现有日志未打印 `num_nav_cmds`，还需在真实按钮/GC结果边界区分零指令、被覆盖、VM拒绝。
+- 12:41:12 `request=5/seq=5`菜单键：ROOT正常调用被UO拒绝，临时重试成功，VM重进object1，PLAY_PL0后page0→1→2；图像确认该场景回到主页面。证据 `debug-chain-menu-return.log/.png`。这不证明所有返回场景或用户的其它盘通过。
+- 13:26:03–06 `request=11/12`：启动预告后进入TITLE2/PLAY_PL2，当前菜单不可见、`uo=2`；约2.5秒后菜单键调用正常ROOT（无需UO重试）成功，pump114ms回TITLE0/PLAY_PL0。随后盘VM检查自己先前设置的r21=1，清为0，执行 `SET_BUTTON_PAGE` 到12，即特别收录子页。因此“返回后仍见同一弹窗”至少在这一场景是作者显式恢复路径，不是播放器没执行请求。证据 `debug-chain-trailer-menu.log` 与菜单后截图；切片前截图在黑场，不能据此确认完整预告画面，但后续 `debug-chain-trailer-visible.png`已捕获00:08/02:03实际预告画面。
+- 底栏入口尚无有效复现：`debug-chain-toolbar-attempt.log`对应尝试中屏幕横竖切换，预期 `discMenu`控件不存在，脚本按未命中停止。不得把菜单键路由当作底栏成功证据；需要下次用稳定同一屏幕在片段中读取底栏控件即时操作。
+- 诊断范围交付：有界详细日志已真实可达、关联到按钮/VM/事件/返回/耗时，用户反馈依然成立；源码/patch/双ABI产物和既有未验收修复处于同一guard，不能为了保存日志把整个候选提交成已验证修复。需扩展到libbluray内部只读取证/适配时，使用独立依赖patch并先取得明确范围授权。

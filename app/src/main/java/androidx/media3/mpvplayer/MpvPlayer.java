@@ -40,6 +40,7 @@ import androidx.media3.common.Tracks;
 import androidx.media3.common.VideoSize;
 import androidx.media3.common.util.UnstableApi;
 
+import com.fongmi.android.tv.BuildConfig;
 import com.fongmi.android.tv.player.AudioPlaybackDiagnostics;
 import com.fongmi.android.tv.player.PlaybackAutoContext;
 import com.fongmi.android.tv.player.PlaybackRoute;
@@ -165,6 +166,8 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     private final Runnable discRebufferRunnable = this::sampleDiscRebuffer;
     private final MpvDiscRebufferTracker discRebufferTracker = new MpvDiscRebufferTracker();
     private long discInputQuietUntilMs;
+    private long discDebugRequest;
+    private long discDebugLastHoverMs;
     private final Runnable mainThreadHeartbeatRunnable;
     private final Runnable mainThreadWatchdogRunnable;
     private final AtomicBoolean mainThreadHeartbeatPending;
@@ -1505,7 +1508,11 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
         setOption("sub-fix-timing", "yes");
         setOption("sub-use-margins", "yes");
         setOption("sub-font-provider", "fontconfig");
-        setOption("msg-level", config.logLevel());
+        // Keep disc input outcomes visible even when normal playback logging
+        // uses all=warn. This does not enable verbose decoder/network logs.
+        String discLogLevel = BuildConfig.DEBUG ? "debug" : "info";
+        setOption("msg-level", config.logLevel() + ",iso=" + discLogLevel
+                + ",bd=" + discLogLevel + ",bdmv/bluray=" + discLogLevel);
         for (Map.Entry<String, String> entry : config.extraOptions().entrySet()) setOption(entry.getKey(), entry.getValue());
     }
 
@@ -2656,7 +2663,31 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
     }
 
     public boolean sendDiscNav(String action) {
-        if (!initialized || TextUtils.isEmpty(action)) return false;
+        if (!initialized || TextUtils.isEmpty(action)) {
+            if (BuildConfig.DEBUG) PlaybackTrace.log("mpv", playbackTraceId,
+                    "disc-debug rejected action=%s initialized=%s", action, initialized);
+            return false;
+        }
+        return sendDiscNavCommand(new String[]{"discnav", action});
+    }
+
+    private boolean sendDiscNavCommand(String[] command) {
+        String action = command[1];
+        long debugStarted = SystemClock.elapsedRealtime();
+        long debugRequest = ++discDebugRequest;
+        boolean debug = BuildConfig.DEBUG && (!action.equals("mouse-move")
+                || debugStarted - discDebugLastHoverMs >= 250);
+        if (debug) {
+            if (action.equals("mouse-move")) discDebugLastHoverMs = debugStarted;
+            PlaybackTrace.log("mpv", playbackTraceId,
+                    "disc-debug request=%d phase=begin t_ms=%d command=%s initialized=%s "
+                            + "active=%s available=%s navigation=%s loaded=%s restarted=%s "
+                            + "positionMs=%d durationMs=%d video=%dx%d surface=%s attached=%s",
+                    debugRequest, debugStarted, String.join(" ", command), initialized,
+                    discMenuActive, discMenuAvailable, discNavigationActive, fileLoaded,
+                    playbackRestarted, cachedPositionMs, cachedDurationMs,
+                    videoSize.width, videoSize.height, surface != null && surface.isValid(), surfaceAttached);
+        }
         if (!action.equals("mouse-move") && !action.equals("up") && !action.equals("down")
                 && !action.equals("left") && !action.equals("right")) {
             long now = SystemClock.elapsedRealtime();
@@ -2664,20 +2695,43 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
             discInputQuietUntilMs = now + 1000;
         }
         try {
-            int result = mpvCommand(new String[]{"discnav", action});
+            int result = mpvCommand(command);
             Log.d(TAG, "disc navigation action=" + action + " result=" + result);
             PlaybackTrace.log("mpv", playbackTraceId, "disc navigation action=%s result=%d",
                     action, result);
+            if (debug) {
+                PlaybackTrace.log("mpv", playbackTraceId,
+                        "disc-debug request=%d phase=returned result=%d elapsedMs=%d active=%s",
+                        debugRequest, result, SystemClock.elapsedRealtime() - debugStarted, discMenuActive);
+                if (!action.equals("mouse-move")) {
+                    String debugTrace = playbackTraceId;
+                    mainHandler.postDelayed(() -> {
+                        if (released || !debugTrace.equals(playbackTraceId)) return;
+                        PlaybackTrace.log("mpv", debugTrace,
+                                "disc-debug request=%d phase=settled elapsedMs=%d active=%s "
+                                        + "available=%s positionMs=%d loaded=%s restarted=%s",
+                                debugRequest, SystemClock.elapsedRealtime() - debugStarted,
+                                discMenuActive, discMenuAvailable, cachedPositionMs, fileLoaded, playbackRestarted);
+                    }, 1000);
+                }
+            }
             return result >= MPVLib.MpvError.MPV_ERROR_SUCCESS;
-        } catch (Throwable ignored) {
+        } catch (Throwable error) {
+            if (debug) PlaybackTrace.log("mpv", playbackTraceId,
+                    "disc-debug request=%d phase=exception type=%s elapsedMs=%d",
+                    debugRequest, error.getClass().getSimpleName(), SystemClock.elapsedRealtime() - debugStarted);
             return false;
         }
     }
 
     public boolean sendDiscNavPointer(int pointerX, int pointerY, boolean activate) {
-        if (!initialized || !discMenuActive) return false;
-        if (mpvCommand(new String[]{"mouse", Integer.toString(pointerX), Integer.toString(pointerY)}) < 0) return false;
-        return sendDiscNav(activate ? "mouse-click" : "mouse-move");
+        if (!initialized || !discMenuActive) {
+            if (BuildConfig.DEBUG && activate) PlaybackTrace.log("mpv", playbackTraceId,
+                    "disc-debug pointer-rejected x=%d y=%d initialized=%s active=%s",
+                    pointerX, pointerY, initialized, discMenuActive);
+            return false;
+        }
+        return sendDiscNavCommand(MpvDiscMenuPolicy.pointerCommand(pointerX, pointerY, activate));
     }
 
     private String videoOutputVo() {
@@ -4090,6 +4144,10 @@ public final class MpvPlayer extends SimpleBasePlayer implements MPVLib.EventObs
                 || lower.contains("bdnav: cfg_title")
                 || lower.contains("bdnav: hdmv entered")
                 || lower.contains("bdnav: menu start")
+                || lower.contains("discnav action=")
+                || lower.contains("discnav pump")
+                || lower.contains("discnav explicit menu override")
+                || lower.contains("bdnav-debug")
                 || lower.contains("opening")
                 || lower.contains("lavf")
                 || lower.contains("demux")
