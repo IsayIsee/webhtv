@@ -99,6 +99,54 @@ public final class HttpRangeIsoSource implements RemoteIsoSource {
         throw new IsoSourceException(IsoSourceException.Reason.NETWORK, "ISO range request failed", failure);
     }
 
+    @Override
+    public int readAt(long offset, byte[] buffer, int bufferOffset, int length,
+                      ReadRequest request) throws IOException {
+        ensureOpen();
+        request.checkCancelled();
+        if (offset < 0 || bufferOffset < 0 || length < 0 || bufferOffset > buffer.length - length) throw new IndexOutOfBoundsException();
+        long total = length();
+        if (offset >= total || length == 0) return 0;
+        int requested = (int) Math.min(length, total - offset);
+        int read = 0;
+        IOException failure = null;
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            ensureOpen();
+            request.checkCancelled();
+            // A consumer may already be using this prefix. A retry must resume,
+            // not write the same array region again, even with identical bytes.
+            Call call = newCall(offset + read, requested - read);
+            request.attach(call::cancel);
+            try (Response response = execute(call)) {
+                int responseLength = validateResponse(response, offset + read, requested - read);
+                ResponseBody body = response.body();
+                if (body == null) throw new EOFException("Empty ISO range body");
+                int end = read + responseLength;
+                while (read < end) {
+                    ensureOpen();
+                    request.checkCancelled();
+                    int count = body.byteStream().read(buffer, bufferOffset + read, Math.min(64 * 1024, end - read));
+                    if (count < 0) throw new EOFException("Incomplete ISO range body");
+                    if (count == 0) continue;
+                    read += count;
+                    request.publish(read);
+                }
+                return read;
+            } catch (IsoSourceException e) {
+                throw e;
+            } catch (IOException e) {
+                request.checkCancelled();
+                failure = e;
+                if (attempt == MAX_RETRIES || closed) break;
+            } finally {
+                request.detach();
+                release(call);
+            }
+        }
+        ensureOpen();
+        throw new IsoSourceException(IsoSourceException.Reason.NETWORK, "ISO range request failed", failure);
+    }
+
     private Call newCall(long offset, int length) {
         Request.Builder builder = new Request.Builder().url(url)
                 .header("Range", "bytes=" + offset + "-" + (offset + length - 1))
@@ -124,7 +172,7 @@ public final class HttpRangeIsoSource implements RemoteIsoSource {
         }
     }
 
-    private synchronized void validateResponse(Response response, long offset, int requested) throws IOException {
+    private synchronized int validateResponse(Response response, long offset, int requested) throws IOException {
         int code = response.code();
         if (code == 401 || code == 403) throw new IsoSourceException(IsoSourceException.Reason.UNAUTHORIZED, code, "ISO link unauthorized or expired");
         if (code == 404) throw new IsoSourceException(IsoSourceException.Reason.NOT_FOUND, code, "ISO file not found");
@@ -137,7 +185,7 @@ public final class HttpRangeIsoSource implements RemoteIsoSource {
         long start = Long.parseLong(matcher.group(1));
         long end = Long.parseLong(matcher.group(2));
         long total = Long.parseLong(matcher.group(3));
-        if (start != offset || end < start || end - start + 1 > requested || total <= 0) {
+        if (start != offset || end < start || end >= total || end - start + 1 > requested || total <= 0) {
             throw new IsoSourceException(IsoSourceException.Reason.RANGE_INVALID, code, "Invalid ISO Content-Range");
         }
         if (sourceLength >= 0 && sourceLength != total) throw new IsoSourceException(IsoSourceException.Reason.SOURCE_CHANGED, "ISO length changed");
@@ -148,6 +196,7 @@ public final class HttpRangeIsoSource implements RemoteIsoSource {
         }
         if (isEmpty(validator)) validator = nextValidator;
         if (SpiderDebug.isEnabled()) SpiderDebug.log("iso-source", "range code=%d offset=%d length=%d total=%d validator=%s", code, offset, end - start + 1, total, isEmpty(validator) ? "none" : "present");
+        return (int) (end - start + 1);
     }
 
     private void ensureOpen() throws IsoSourceException {

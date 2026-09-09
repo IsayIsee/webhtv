@@ -18,7 +18,7 @@ final class IsoPlaybackSession {
 
     private final AtomicBoolean closed = new AtomicBoolean();
     private final CopyOnWriteArrayList<Runnable> metadataListeners = new CopyOnWriteArrayList<>();
-    private final IsoPageCache source;
+    private final RemoteIsoSource source;
     private final long id;
     private volatile IsoTrackMetadataResolver.Snapshot trackMetadata = IsoTrackMetadataResolver.Snapshot.EMPTY;
     private volatile boolean trackMetadataReady;
@@ -28,7 +28,9 @@ final class IsoPlaybackSession {
 
     IsoPlaybackSession(long id, String url, Map<String, String> headers) {
         this.id = id;
-        this.source = new IsoPageCache(new HttpRangeIsoSource(url, headers), createDiskStore());
+        HttpRangeIsoSource remote = new HttpRangeIsoSource(url, headers);
+        IsoDiskPageStore disk = createDiskStore();
+        this.source = disk == null ? new IsoPageCache(remote) : new ProgressiveIsoPageCache(remote, disk);
     }
 
     private static IsoDiskPageStore createDiskStore() {

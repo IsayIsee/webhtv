@@ -2,6 +2,11 @@
 
 ## Recovery anchor
 
+- 当前优化单元（2026-09-09 23:11 Asia/Shanghai）：用户在两片日志诊断后明确“优化”，批准原始 ISO 字节层渐进读取/需求优先；guard `P9-MPV-ISO-PROGRESSIVE`，基线 `310f8feef5c0a05e5dae6c0a063453113214ea2c`，已验收菜单恢复 tag `recovery/P9-MPV-HOUSE-MENU-RETURN/20260909193413-310f8feef5c0`。下列早期状态属于历史阶段，以本文末尾“原盘渐进读取优化”记录为准。
+- 本单元范围：`RemoteIsoSource.java`、`HttpRangeIsoSource.java`、`IsoPlaybackSession.java`、新增 `ProgressiveIsoPageCache.java`、对应 HTTP/渐进缓存测试及本文档；保护既有 `app/.cxx/` 35个文件。保持原生库、菜单交互、解码/渲染、BD-J静默回退和默认关闭不变。
+- 当前状态（2026-09-10用户确认）：渐进缓存/HTTP续读/取消已实现，34项定向测试通过（新缓存13、原缓存13、HTTP8）；Mobile debug和Leanback Java编译通过，构建2m16s。APK `fc0b397af908989bf7e4ed6cefac6bdea491770d900af48d402e618a45543885` 已由OEM安装助手成功安装并启动。用户明确“速度好像改善了，打个tag;稍后有新需求”，按此接受当前观察场景并立即关闭可选验证；没有完成严格三轮同源A/B，不宣称达到30%或其他量化收益。原生库和已验收菜单交互未修改。
+- 当前唯一下一动作：使用本guard原子提交并创建本地注释恢复tag，不push、不追加取证或构建；之后等待用户新需求。
+
 - 目标：在 WebHTV 的 MPV ISO 播放路径实现 HDMV Blu-ray 菜单画面、按钮高亮、方向键、确认、返回、Popup、章节/设置/特别收录跳转、discontinuity 和 still frame。
 - 接受标准：HDMV 菜单从远程/本地 Range ISO 入口可达并可操作；菜单跳转后音视频轨和时间线重建；普通 Blu-ray 最长标题、DVD、非 ISO、双 Surface OSD、硬解/软解和现有 Range 行为不回退。
 - BD-J 产品边界：不启动 BD-J runtime，不处理 BD-J ARGB 菜单，不新增提示；遇到 BD-J 菜单时继续按现状选择最长标题播放。
@@ -611,3 +616,56 @@
 - 13:26:03–06 `request=11/12`：启动预告后进入TITLE2/PLAY_PL2，当前菜单不可见、`uo=2`；约2.5秒后菜单键调用正常ROOT（无需UO重试）成功，pump114ms回TITLE0/PLAY_PL0。随后盘VM检查自己先前设置的r21=1，清为0，执行 `SET_BUTTON_PAGE` 到12，即特别收录子页。因此“返回后仍见同一弹窗”至少在这一场景是作者显式恢复路径，不是播放器没执行请求。证据 `debug-chain-trailer-menu.log` 与菜单后截图；切片前截图在黑场，不能据此确认完整预告画面，但后续 `debug-chain-trailer-visible.png`已捕获00:08/02:03实际预告画面。
 - 底栏入口尚无有效复现：`debug-chain-toolbar-attempt.log`对应尝试中屏幕横竖切换，预期 `discMenu`控件不存在，脚本按未命中停止。不得把菜单键路由当作底栏成功证据；需要下次用稳定同一屏幕在片段中读取底栏控件即时操作。
 - 诊断范围交付：有界详细日志已真实可达、关联到按钮/VM/事件/返回/耗时，用户反馈依然成立；源码/patch/双ABI产物和既有未验收修复处于同一guard，不能为了保存日志把整个候选提交成已验证修复。需扩展到libbluray内部只读取证/适配时，使用独立依赖patch并先取得明确范围授权。
+
+## Checkpoint 24：2026-09-09 原盘渐进读取优化（已批准）
+
+### 基线、问题与授权
+
+- 用户先要求分析《豪斯医生》《倩女幽魂》片头卡顿和底栏原盘菜单延迟，随后明确“优化”。已完成诊断保存在 `/tmp/p9-opening-latency-20260909.EiUyOp/diagnosis.md`，不重做通用菜单研究。原始日志含私有地址/请求头，只公开脱敏计时。
+- 基线 commit `310f8feef5c0a05e5dae6c0a063453113214ea2c`；APK SHA-256 `13a7dfb6faf4567cbd95a90096c78ab8157d0e98be9903f79b8c14640cf55ce7`。arm64/armv7 libmpv 分别为 `eddfed3df1e1cea3b263a42778088ba3cf70f94dde6f08839357957084723948` / `371303839f5a5bd0a3724bd4fb84449d4ebae62a38cda111682c694598b86370`，本单元不重建或修改它们。
+- 设备10CF6H1D2L0009S（vivo V2453A，Android15）已连接。豪斯医生 `p-z7gpfl-1` 点击到menu-active/restart为6.427/6.678秒，其中前台4MiB读3630ms、导航pump3682ms；倩女幽魂 `p-z7iyho-2` 为6.104/11.177秒，前台4MiB读2525ms，重探测又读4MiB耗4982ms。Java命令分别15/4ms返回、强制返回VM请求0ms成功，不是按钮不响应。
+- 豪斯医生片头约33Mb/s，出现584+1009ms供数停顿，硬解已启用、解码丢帧0；倩女幽魂补测前两段没有持续丢帧，等待集中于后续短片/菜单切换，共8289ms。不能把loopback代理Range计时当作独立线路测速，也不能保证冷远程菜单零等待。
+
+### 最佳实践审阅与本地调用链
+
+决策问题：不提前驱动光盘VM、不增加既有缓存预算，能否让当前所需数据早于整页完成而可用，并让跳读替换过时的预读？
+
+| 来源与查阅日期（均2026-09-09） | 等级、支持结论、适用边界与决策影响 |
+| --- | --- |
+| 本仓库基线 `310f8feef5c0a05e5dae6c0a063453113214ea2c`，`IsoPlaybackSession.readAt → IsoPageCache.readAt/page/load → HttpRangeIsoSource.readAt` 及对应测试 | A：整页4MiB完成并同步写盘后才发布future；需求命中pending也等整页；跳读只撤销排队提示。现有8页LRU、共享磁盘预算、长度/validator检查和close取消是必须保留的契约。 |
+| 固定MPV `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42` 加当前补丁后的 `demux.c` 导航预读限制、`stream_bluray.c::STREAM_CTRL_GET_NAV_STATE`、`demux_disc.c::reopen_slave` | A：整个导航会话都禁止普通解复用预读；菜单逻辑就绪不等于背景首帧。只优化原始字节，不移植新MPV提交或改变轨道重建。 |
+| [Kodi 21.2 FileCache.cpp](https://github.com/xbmc/xbmc/blob/d1a1d48c3cb3722d39264ffdd8132f755ffecd27/xbmc/filesystem/FileCache.cpp)，`d1a1d48c3cb3722d39264ffdd8132f755ffecd27`，已读 `Process/Read/Seek` | A/B：`Read` 有数据即可返回、仅等待必要数据；后台收到seek后以最新位置重置。参考生产者/消费者分离原则，不照搬Kodi有状态顺序文件源到本项目并发随机Range。 |
+| [OkHttp ResponseBody.kt](https://github.com/square/okhttp/blob/61423f472da24e0ccc42b6a2c0863fb27932fea5/okhttp/src/commonJvmAndroid/kotlin/okhttp3/ResponseBody.kt)，parent-5.4.0，commit `61423f472da24e0ccc42b6a2c0863fb27932fea5`，已读流式/关闭契约 | A：响应体是一遍消费的流，不要求整包缓冲；跨线程消费仍由消费线程关闭。使用同一Call渐进发布，取消具体请求，保留activeCalls直到body关闭。 |
+| [RFC9110 §14.4、§15.3.7.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4)，正文已读取 | A：严格限制Content-Range边界；续读从未发布字节开始，校验源长度/validator，不能重试覆盖已交付的数组区间；只完整页落盘。没有强validator时不能主张普适HTTP缓存一致性：继续现有会话内固定ISO假设，不跨会话/URL复用。 |
+| [Kodi PR29133](https://github.com/xbmc/xbmc/pull/29133)、[PR29038](https://github.com/xbmc/xbmc/pull/29038)，已读完整PR说明，未移植未发布实现 | B/C：seek后陈旧恢复不能覆盖新位置，网络停顿不能伪装EOF。作为并发/取消/截断测试的反例来源，不把待审PR或其性能报告当作本候选通过。 |
+| 现场报告/benchmark：前述两片日志及后续同机对照 | A/C：直接匹配本App、设备、代理和原盘；以保留原始计时和可控慢源测试验证收益，网络波动必须报告。 |
+| 学术论文/通用博客 | 不适用新的算法优越性判断：本单元保留LRU、已有磁盘协调器和有界预读，只拆分数据发布/完整缓存提交时机，不引入新的预测算法或码流处理。不会以论文中的不同负载吞吐替代这里的确定性测试与手机计时。 |
+
+研究到此收敛；OkHttp Relay旧目录两次404后已放弃，改以实际读取的Kodi生产代码验证同一设计问题；不将失败页面当作证据。本单元没有新增/合并上游commit，以上外部revision仅为参考。
+
+### 方案、边界与选择
+
+- 不改：仍以数秒整页读阻塞小范围菜单/索引需求，不能达到本轮目标。
+- 原样套用上游：MPV普通解复用预读会提前推进VM；Kodi顺序文件缓存不能直接代替并发Range和共享预算。均不采用。
+- 全局缩小页面：增加高码率媒体请求次数、影响关闭菜单路径，拒绝。
+- 采用WebHTV窄适配：只有原盘菜单设置开启且成功建立会话磁盘缓存时，通过 `IsoPlaybackSession` 使用新增 `ProgressiveIsoPageCache`；否则完全保留原 `IsoPageCache`。页面仍4MiB、LRU仍8页（32MiB），在途读取最多3个，与原两路预读加前台读数量相同；前向窗口最多4页，无无限线程/队列/VM预读。
+- 每页一个生产者，当前读点附近优先发Range。验证过的响应数据增量发布给等待者，不再等页尾或磁盘写入；页内已读区间有界保留，缺口续读，不覆盖已经交付的数组部分。同页去重，新需求优先于排队的预读；非连续读撤销不再需要且无等待者的任务，取消具体HTTP Call，不关闭整个ISO源。
+- 完整页面才交给原 `IsoDiskPageStore` 原子提交，继续同一128MiB默认/用户配置共享预算及低空间策略；磁盘异常只回退网络。取消、短读或网络错误不能把未写字节当作零数据/EOF/完整缓存；来源变更使所有本会话缓存失效。
+- 不变更JNI/API/ABI或依赖版本，不重建双ABI；不改变菜单按钮、音视频配置、BD-J回退、DVD菜单边界、播放历史与重缓冲定义。新增内部Java类只影响已启用原盘菜单的原始字节缓存接线。风险集中于并发、部分数据可见性、取消和I/O竞争，用对应测试处理。
+
+### 验收、对照与回滚
+
+- 最便宜决定性测试：可控慢源只交付所需前缀后阻塞剩余页，前台读取必须已返回；页尾小请求必须从附近发起，而不是等待前面数MiB。网络总请求/字节在完整顺序页面上不比整页基线增加；共享同页数据不能重复加载。
+- 必测：3读线程上限、旧预读取消/新需求优先、活跃等待者不误取消、close唤醒全部等待者、截断/短读/错误恢复、HTTP重试不覆盖已发布区间、validator变更拒绝、完整才落盘、超过8页循环后磁盘命中、缓存/存储失败和边界读取；旧 `IsoPageCacheTest` 保留，验证关闭菜单路径不变。
+- 构建一次定向Java测试+Mobile arm64 debug；公共Java接线同时做Leanback arm64 Java编译，不做native或全ABI矩阵。手机安装使用OEM安装助手。
+- 冻结基线APK；两片分别重复同一开场/底栏操作，记录缓存冷热、点击到menu-active/restart、停顿次数/时长、硬解和丢帧。存在网络噪声时至少3次候选和可比基线，报告中位数与范围，不只选最好一次。可控测试需消除整页尾部人为阻塞；真机目标菜单等待中位数改善至少30%、片头供数停顿不劣化，无法区分波动则不能宣称达到该幅度；保持收起/跨页切换回归通过。
+- 回滚：以 `310f8feef5c0a05e5dae6c0a063453113214ea2c` 及其恢复tag为锚，原子revert本轮Java/测试/文档提交即可恢复旧路径；原生资产未改，冻结旧APK可直接恢复。最终必须记录实测、原子提交并创建新的本地注释恢复tag，不push。
+- 证据目录：`/tmp/p9-iso-progressive-20260909.2zBuZ5/`。目前仅有设计/研究，未宣称实现或性能通过；下一动作是实现并运行定向测试。
+
+### 2026-09-10 用户确认与阶段收口
+
+- 已实现范围：新增菜单会话专用 `ProgressiveIsoPageCache`；HTTP请求增量发布、具体Call取消、断线从已发布前缀后续读；关闭菜单或无磁盘缓存时仍使用原 `IsoPageCache`。完整页面才写入既有磁盘协调器，不修改原生库、解码/渲染或菜单状态机。
+- 验证：`build-tests-approved.log` 记录34项定向Java测试全部通过（新缓存13、旧缓存13、HTTP8），包含慢响应提前返回、页尾需求、同页去重、旧预读取消、活跃读保护、截断/续读、源变化、完整落盘、30个4MiB页面循环及内存上限；Mobile arm64 debug打包和Leanback arm64 Java编译同次成功。先前sandbox锁文件权限失败在正确提权后解决，不属于代码失败。
+- 安装：`install.log` 记录OEM风险确认与继续安装均由助手处理，`Success`并启动 `com.fongmi.android.tv`；手机10CF6H1D2L0009S，APK SHA-256 `fc0b397af908989bf7e4ed6cefac6bdea491770d900af48d402e618a45543885`。冻结旧包 `baseline.apk` SHA-256 `13a7dfb6faf4567cbd95a90096c78ab8157d0e98be9903f79b8c14640cf55ce7`。
+- 用户实测反馈“速度好像改善了”，随后明确要求tag并稍后提出新需求。按明确收口规则停止额外真机/计时/构建，不把用户的主观改善扩大为所有原盘、所有网络或既定30%收益均验证通过；两片严格重复A/B尚未完成，量化幅度未定。
+- 本轮只提交guard所列源码、测试与本文档；既有 `app/.cxx/` 受保护，`/tmp`诊断/即时UI工具不进入提交。回滚锚点仍为 `310f8feef5c0a05e5dae6c0a063453113214ea2c`，原生资产不变。提交和tag由紧接本记录的guard finish创建，不push。
