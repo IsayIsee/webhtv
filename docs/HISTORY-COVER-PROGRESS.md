@@ -3,10 +3,10 @@
 ## Recovery anchor
 
 - 用户需求：在观看历史的封面显示上次观看时间，方便确认看到第几分钟。手机观看历史页与电视首页历史卡片同时覆盖。
-- 本轮纠正基线：`feature-menu` / `55612b3571222e7c5f91eb9713f5e98bc0dc173c`。guard `HISTORY-COVER-PROGRESS-ABOVE-NAME`，`quick-fix`；保护既有 `app/.cxx/` 35个文件。初始实现及其验证保留在下文。
-- 范围：仅两端`adapter_vod.xml`及本文。用户明确“放到文件名上面，不是卡片最上面”；上一轮顶部定位是误解，本轮只纠正这一点，不改绑定代码、文案、样式或播放/历史逻辑。
-- 完成条件：卡片下部从上到下为集数、已看时间、文件名；已看时间紧邻文件名上方，不在封面顶部。其他逻辑/样式不动；原子提交及本地恢复tag，不push。
-- 当前状态：两端已恢复上述布局，精确比较与已编译通过的`881c8bca2e6831d6a7d32f67c22c64ce37541e0b`两份XML完全相同。此次未重新打包、安装或进行真机视觉验收。
+- 本轮截图定位基线：`feature-menu` / `c4b042bc5441b9e168293f7cadae5798c4608da5`。guard `HISTORY-COVER-SWAP-REMARK`，`quick-fix`；保护既有 `app/.cxx/` 35个文件。初始实现及此前误解记录保留在下文。
+- 范围：仅两端`adapter_vod.xml`及本文。截图17:56:06红圈中的“[54.8GB][潘神…]”对应`remark`，不是底部“潘神的迷宫”对应的`name`。用户要求互换`remark`与`historyProgress`，底部`name`不动。
+- 完成条件：下部顺序为已看时间→圈出的文件名（remark）→底部片名（name）。只互换前两行，保留2dp行间距、现有样式和其他元素/逻辑；原子提交及本地恢复tag，不push。
+- 当前状态：两端已交换这两个子控件，行间距随时间标签从上边距转为下边距。XML解析及严格树比较两端PASS：还原两行顺序与间距边后，整棵布局树与基线完全一致。此次未重新打包、安装或进行真机视觉验收。
 - 唯一下一动作：紧接本记录由guard finish原子提交并创建本地恢复tag；之后等待用户的显示/实测反馈，不重复已通过的检查。
 
 ## 展示设计与证据（2026-09-10）
@@ -45,3 +45,9 @@
 
 - 用户澄清位置是文件名上方，上一轮将其移到封面顶部不符合要求。把时间标签放回下部容器，顺序为集数→已看时间→文件名，撤销顶部定位属性；其余内容/样式和Java代码不变。
 - `git diff --exit-code 881c8bca2e6831d6a7d32f67c22c64ce37541e0b -- app/src/mobile/res/layout/adapter_vod.xml app/src/leanback/res/layout/adapter_vod.xml`通过，两份文件与此前编译通过的版本完全一致。证据`/tmp/history-cover-progress-above-name-20260910.log`；不重复既有编译/格式化测试，不声称已安装或实机通过。
+
+### 2026-09-10 按圈图互换（取代此前对“文件名”的误识）
+
+- 已查看用户图片，明确红圈是封面内的文件名`remark`，底部`name`是影片标题。此前把两者混为一谈，不符合用户要交换的控件。
+- 仅将同一底部LinearLayout的子项从`remark, historyProgress`换为`historyProgress, remark`；时间标签的2dp上边距换为2dp下边距，保留原行间距。没有移动底部标题或改Java/文字/样式。
+- 定向XML检查Mobile/Leanback均PASS：先断言实际顺序已互换与间距仍2dp，再在内存中还原这两个变化，验证整个树的标签、属性、内容与顺序和基线完全相同。证据`/tmp/history-cover-swap-remark-20260910-check.log`。未打包/安装，不声称实机已更新。
