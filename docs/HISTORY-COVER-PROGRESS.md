@@ -3,10 +3,10 @@
 ## Recovery anchor
 
 - 用户需求：在观看历史的封面显示上次观看时间，方便确认看到第几分钟。手机观看历史页与电视首页历史卡片同时覆盖。
-- 本轮微调基线：`feature-menu` / `881c8bca2e6831d6a7d32f67c22c64ce37541e0b`。guard `HISTORY-COVER-PROGRESS-TOP`，`quick-fix`；保护既有 `app/.cxx/` 35个文件。初始实现及其验证保留在下文。
-- 范围：仅两端`adapter_vod.xml`及本文。用户最新要求“把已看时间放到上面，其他不要改”；不修改绑定代码、文案、样式、其他控件定义或播放/历史逻辑。
-- 完成条件：将时间标记移到封面上方，有站点标签时放在其下方避免重叠，站点隐藏时回落至封面顶部；标题仍在最下方，其余元素定义不变；原子提交及本地恢复tag，不push。
-- 当前状态：两端定位调整完成；XML语法/结构及与基线的逐元素对比通过，只有时间标记父节点和三个定位属性变化，其余属性及所有其他元素定义一致。此次未重新打包、安装或进行真机视觉验收。
+- 本轮纠正基线：`feature-menu` / `55612b3571222e7c5f91eb9713f5e98bc0dc173c`。guard `HISTORY-COVER-PROGRESS-ABOVE-NAME`，`quick-fix`；保护既有 `app/.cxx/` 35个文件。初始实现及其验证保留在下文。
+- 范围：仅两端`adapter_vod.xml`及本文。用户明确“放到文件名上面，不是卡片最上面”；上一轮顶部定位是误解，本轮只纠正这一点，不改绑定代码、文案、样式或播放/历史逻辑。
+- 完成条件：卡片下部从上到下为集数、已看时间、文件名；已看时间紧邻文件名上方，不在封面顶部。其他逻辑/样式不动；原子提交及本地恢复tag，不push。
+- 当前状态：两端已恢复上述布局，精确比较与已编译通过的`881c8bca2e6831d6a7d32f67c22c64ce37541e0b`两份XML完全相同。此次未重新打包、安装或进行真机视觉验收。
 - 唯一下一动作：紧接本记录由guard finish原子提交并创建本地恢复tag；之后等待用户的显示/实测反馈，不重复已通过的检查。
 
 ## 展示设计与证据（2026-09-10）
@@ -36,7 +36,12 @@
 - 证据目录 `/tmp/history-cover-progress-20260910.CMrH7W/`；日志 `tests-and-compile-jdk21.log`，原始环境失败保留在 `tests-and-compile.log`。设备列表为空，无截图/安装结果；此次不触发原生/CMake或APK打包，不把编译通过等同实机视觉通过。
 - 收口：只提交guard内本任务文件，保留35个预存dirty文件；本地注释恢复tag由guard finish在提交后立即生成，不push。
 
-### 2026-09-10 仅调整时间位置
+### 2026-09-10 顶部定位（已被下一记录纠正）
 
 - 将两端`historyProgress`从底部集数容器移到根RelativeLayout，使用`layout_below=site`、`layout_alignStart=image`与`layout_alignWithParentIfMissing=true`。字号、颜色、背景、间距、可见性、文案和Java逻辑均不变。
 - 定向XML检查两端均PASS：解析基线与候选，验证新父节点及定位属性；删除时间标签后，剩余树的标签/属性/内容/顺序完全一致。日志`/tmp/history-cover-progress-top-20260910-layout-check.log`；没有重跑未改动的时间格式化测试或构建。
+
+### 2026-09-10 纠正为文件名上方
+
+- 用户澄清位置是文件名上方，上一轮将其移到封面顶部不符合要求。把时间标签放回下部容器，顺序为集数→已看时间→文件名，撤销顶部定位属性；其余内容/样式和Java代码不变。
+- `git diff --exit-code 881c8bca2e6831d6a7d32f67c22c64ce37541e0b -- app/src/mobile/res/layout/adapter_vod.xml app/src/leanback/res/layout/adapter_vod.xml`通过，两份文件与此前编译通过的版本完全一致。证据`/tmp/history-cover-progress-above-name-20260910.log`；不重复既有编译/格式化测试，不声称已安装或实机通过。
