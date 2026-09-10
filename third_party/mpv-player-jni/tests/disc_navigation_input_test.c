@@ -37,7 +37,7 @@ struct bluray_priv_s {
 struct stream { struct bluray_priv_s *priv; struct stream_nav_state state; };
 typedef struct stream stream_t;
 struct priv { bool is_bd, nav_active; };
-struct demuxer { struct stream *stream; int drives; struct priv *priv; };
+struct demuxer { struct stream *stream; int drives; struct priv *priv; int event_polls; };
 struct demux_packet { int cached; };
 struct MPContext {
     struct vo *video_out;
@@ -147,6 +147,7 @@ static struct stream *disc_nav_get_stream(struct MPContext *mpctx)
     return mpctx->demuxer ? mpctx->demuxer->stream : NULL;
 }
 static void demux_drive_nav(struct demuxer *demux) { demux->drives++; }
+static void demux_poll_nav(struct demuxer *demux) { demux->event_polls++; }
 static void mp_wakeup_core(struct MPContext *mpctx) { mpctx->wakeups++; }
 static void mp_input_get_mouse_pos(struct input_ctx *input, int *x, int *y, int *hover)
 {
@@ -260,8 +261,10 @@ int main(void)
     select_result = 1;
     key_result = -1;
     int drives = demux.drives;
+    int event_polls = demux.event_polls;
     assert(!run(&mpctx, STREAM_NAV_MOUSE_CLICK, 320, 180, 1));
     assert(demux.drives == drives);
+    assert(demux.event_polls == event_polls + 1);
     key_result = 0; // API success without an activation change is not an error.
     assert(run(&mpctx, STREAM_NAV_SELECT, -1, -1, 0));
     assert(demux.drives == drives + 1);

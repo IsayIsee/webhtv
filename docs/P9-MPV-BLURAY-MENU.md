@@ -2,6 +2,12 @@
 
 ## Recovery anchor
 
+- 当前修复单元（2026-09-10 13:18 Asia/Shanghai）：用户在手机菜单卡住与电视黑底/入口遗漏/片头循环诊断后明确“修复”。guard `P9-MPV-MENU-LIVENESS-TV`；基线 `1ec569658157d1a9323b5c2ef00cb3468b876fca`，保护既有 `app/.cxx/` 35个文件。以下此前已验收状态是历史，不代表本次缺陷已修复。
+- 本轮目标：暂停时HDMV菜单仍完成动画并可切换/关闭；TV底栏有原盘菜单入口；同次播放直出失败不循环重入；修正已捕获的MediaCodec flush/旧帧释放竞态，保留硬解、直出及既有作者菜单返回语义。仅MPV链及对应App接线，不扩展Exo/BD-J/网络缓存。
+- 当前状态（2026-09-10 构建完成）：三处App/菜单缺陷及MediaCodec竞态修复代码已完成；菜单活性/原输入测试、480组并发释放/flush/close测试、19项Java输出策略测试通过。完整补丁链prepare、双ABI FFmpeg/MPV实际编译链接、ELF/资产校验通过；两个Debug包2m15s构建成功且包内三库逐项SHA一致。手机在构建期间断开，ADB设备列表持续为空，**未安装本候选、未完成真机验收，未提交/tag**。不能宣称两片实机已修好。原定时长超出后已停止研究/可选检查，当前剩余门槛是设备连接和实机。具体产物/命令/风险见下方本轮验证记录。
+- 当前文件：新`mpv-discnav-poll.patch`、`mpv-mediacodec-embed-reset.patch`、`ffmpeg-mediacodec-output-serialization.patch`；TV Activity/layout、PlayerManager/MpvAutoOutputPolicy及Java测试；native构建/验证脚本、liveness/serialization源码抽取测试。临时派生源码只在`build/mpv-native`，版本锁/JNI/Exo不变。
+- 唯一下一动作：手机重新连接后，用OEM安装助手安装下列Mobile arm64 Debug包，直接验证《倩女幽魂》暂停菜单切换；随后继续TV armv7两片跳转/背景回归，验收通过才guard finish提交/tag。不要重新研究或重跑已通过的构建。
+
 - 当前优化单元（2026-09-09 23:11 Asia/Shanghai）：用户在两片日志诊断后明确“优化”，批准原始 ISO 字节层渐进读取/需求优先；guard `P9-MPV-ISO-PROGRESSIVE`，基线 `310f8feef5c0a05e5dae6c0a063453113214ea2c`，已验收菜单恢复 tag `recovery/P9-MPV-HOUSE-MENU-RETURN/20260909193413-310f8feef5c0`。下列早期状态属于历史阶段，以本文末尾“原盘渐进读取优化”记录为准。
 - 本单元范围：`RemoteIsoSource.java`、`HttpRangeIsoSource.java`、`IsoPlaybackSession.java`、新增 `ProgressiveIsoPageCache.java`、对应 HTTP/渐进缓存测试及本文档；保护既有 `app/.cxx/` 35个文件。保持原生库、菜单交互、解码/渲染、BD-J静默回退和默认关闭不变。
 - 当前状态（2026-09-10用户确认）：渐进缓存/HTTP续读/取消已实现，34项定向测试通过（新缓存13、原缓存13、HTTP8）；Mobile debug和Leanback Java编译通过，构建2m16s。APK `fc0b397af908989bf7e4ed6cefac6bdea491770d900af48d402e618a45543885` 已由OEM安装助手成功安装并启动。用户明确“速度好像改善了，打个tag;稍后有新需求”，按此接受当前观察场景并立即关闭可选验证；没有完成严格三轮同源A/B，不宣称达到30%或其他量化收益。原生库和已验收菜单交互未修改。
@@ -39,6 +45,53 @@
 ## 1. 授权、范围与排除项
 
 这是已批准的实施阶段，不再等待设计授权。
+
+### 2026-09-10 菜单活性与电视直出修复设计
+
+- 用户授权：在上一轮明确说明三处缺陷、保留硬解/直出及初始flush异常验证边界后，用户明确“修复”。本轮沿用P9唯一文档；不重复此前HDMV总体调研，不引入新上游版本或合并候选。
+- 现场证据：`/tmp/webhtv-tv32-disc-menu-20260910.OTLNXh/diagnosis.md`及原始日志；Mobile补充位于`/tmp/webhtv-mobile-disc-freeze-20260910.R0dn4D/`。新验证目录`/tmp/p9-menu-liveness-20260910.sMRWiR/`。日志有私人媒体URL，不进入仓库或对外摘录。
+- Mobile `p-102igow-2`：OpenGL/GPU，12:48:51 noisy通知后暂停于7629ms；52.772最后一次成功切至page9，56.747起持续`button_effect_running`/`-12`，至13:05位置不变。首次49.940短暂动画拒绝早于暂停，不能倒置因果；无ANR、输入送达。TV `p-101lf66-3`/`p-101ok54-4`：MediaCodec在flush期间releaseOutputBuffer异常，回退GPU后8秒左右重新自动进入直出，再次重开ISO，repeat=false。
+- 源码/提交身份（A级）：MPV `cca559b41ceb0bb7731cf6ef2e1f33276cd30c42` + 当前P9/渲染补丁；FFmpeg `177f090e0503b7e013922ca903bde14b1c375f18` + 本地MediaCodec补丁；mpv-android框架 `99a60ad2141d5ace94453590903c2c6b9a0a2443`；libbluray1.4.1源包SHA-256 `76b5dc40097f28dca4ebb009c98ed51321b2927453f75cc72cf74acd09b9f449`。全部保留基线，仅窄适配，不升级/新增公开JNI API。
+- 确切调用链：`discnav.c::disc_nav_update`暂停时虽每50ms唤醒core，但仅在EOF/still请求一次媒体读包；`demux.c::read_packet`在导航中禁止预读，`nav_pump`只一次；`demux_disc.c::d_read_packet`才调用`STREAM_CTRL_NAV_POLL`；libbluray `_read_ext`的零字节读推进`GC_CTRL_NOP`/单调时钟动画。输入拒绝不调用demux_drive_nav，缓存状态查询不执行VM。33ms条件检查不是调度器。
+- FFmpeg证据：`av_mediacodec_release_buffer_status`、`av_mediacodec_render_buffer_at_time`和`mediacodec_buffer_release`对serial检查和平台释放不在同一临界区；`mediacodec_dec_flush_codec`可在检查后并发flush；close在count先递减时也可能提前stop。引用计数已保证ctx活到最后buffer，适合把锁生命周期与ctx统一。MPV `VOCTRL_RESET`需清待提交帧和旧PTS，不能仅靠忽略错误。
+- 官方契约（A级，2026-09-10经用户代理读取）：[Android 15 MediaCodec.java](https://android.googlesource.com/platform/frameworks/base/+/android-15.0.0_r1/media/java/android/media/MediaCodec.java)，`flush()`文档明确已发出的buffer index失效、ownership归还codec，不能继续释放旧index；快照`MediaCodec.java`。libbluray固定`bluray.h`及`bluray.c::_read_ext`零字节poll为事件/VM已有契约。
+- 成熟项目/维护讨论（B级）：沿用前述mpv PR #18080及已审阅菜单链，不重新抓取不变PR；复核缓存的[Kodi Bluray input](https://github.com/xbmc/xbmc/blob/b2637ca499afe69f9d15c928809ffd6c42144250/xbmc/cores/VideoPlayer/DVDInputStreams/DVDInputStreamBluray.cpp) `Read`/`BD_EVENT_IDLE`，由libbluray执行作者VM且保持导航循环。只作为分层对照，不能据此声称Kodi在所有暂停场景都有独立动画线程。此前VLC/Kodi输入及论坛类别研究仍有效。此次为已有状态机调度/互斥缺口，无新算法/性能提升主张；论文或重复博客不会决定下一动作，采用真实源码夹具与同设备复现作为独立验证。
+- 方案比较：不改继续卡住/循环；原样上游或强制预读仍把动画耦合到媒体并可能提前推进盘VM；全局关闭直出牺牲原有能力且不能修Mobile菜单；窄适配采用已有core导航节拍请求**仅零字节事件处理**，由同一demux线程在媒体需求之外执行，不增加每tick媒体包。成功输入保留必要的一次读包；拒绝输入仍可请求事件泵，不伪造成功、不清作者animation guard、不取消系统暂停。TV入口复用现有共享openDiscMenu和TV焦点样式。直出失败标记只在新item/明确runtime重置时清除，自动策略不可重入失败模式。MediaCodec用每context互斥串行化serial检查/释放/flush/stop，最后引用释放时销毁，MPV reset清待交付帧。
+- 兼容/性能：普通非导航文件不请求事件泵；20–30Hz仅可见HDMV菜单/既有idle场景，绝不busy-loop、主动恢复音频或打开预读。MediaCodec每帧增加短临界区，flush期间阻止旧索引调用；必须实测输出/CPU/前后台，无量化改善承诺。BD-J静默退回、开关默认关、原盘作者返回程序、双Surface和字幕/硬解选择不改变。
+- 封闭路径：guard所列TV Activity/layout、PlayerManager/MpvAutoOutputPolicy及对应Java测试；`third_party/patches`、`third_party/mpv-player-jni/patches/tests`中的本次相关文件；native构建/验证脚本与构建说明；双ABI MPV assets；本文与索引。`build/mpv-native`和临时目录仅派生源码/测试证据，不提交，保护`app/.cxx/`。不改库锁版本、Exo、IJK、网络、BD-J。
+- 验收：先源码抽取测试证明无媒体需求仍poll、拒绝输入可恢复、取消/非导航不poll；MediaCodec并发释放/flush/close夹具与旧serial/重复release；Java同项失败不可重入、新项恢复资格。双ABI重新编译受影响组件，完整ELF/命名空间检查，Mobile arm64与Leanback armv7 Debug。真机《倩女幽魂》《豪斯医生》菜单打开/关闭/切换、暂停切页与恢复、短片/正片返回；TV背景/底栏/遥控焦点、选正片持续播放和前后台，无自动片头循环。无候选通过记录前不宣称修复/提交完成。
+- 回滚：本轮源码、补丁、构建引用、资产、App接线原子回滚至 `1ec569658157d1a9323b5c2ef00cb3468b876fca`，保留既有P9功能；只创建本地恢复tag，不push。当前风险为设备flush实现及节目切换时的独立packet overflow，若仍复现必须沿具体日志继续，不以回退循环修复替代黑底验收。
+
+### 2026-09-10 本轮实现与验证记录（待设备验收）
+
+- 状态：本轮源码、测试、双ABI原生库和两个Debug包已完成；2026-09-10 15:46 Asia/Shanghai恢复检查时，分支/HEAD与guard仍一致，`adb devices -l`为空。没有安装本候选，没有候选真机通过记录；guard保持active，未commit/tag。已停止额外研究和重复构建，下一步依赖手机重新连接并解锁。
+- 实现：`mpv-discnav-poll.patch`在同一demux owner增加独立于媒体读包的事件处理请求，暂停/输入被动画暂拒时仍推进HDMV事件，不解除暂停、不打开预读；`ffmpeg-mediacodec-output-serialization.patch`串行化serial检查、输出释放、flush与stop；`mpv-mediacodec-embed-reset.patch`在VO reset清旧待交付帧/时序。TV补底栏入口、菜单状态监听及控制栏焦点保护；同item直出失败记忆跨rebuild保留，新item或显式设置变更才恢复资格。既有硬解、直出、BD-J静默回退和默认关闭保持。
+- 测试：`test_disc_navigation_liveness.sh`与原`test_disc_navigation_input.sh`通过，覆盖暂停/队列已满而无媒体读取的事件推进、请求合并、取消/blocked、非导航/DVD、EOF/still及失败输入唤醒；`test_mediacodec_output_serialization.sh`通过480组并发释放/flush/close、timed/immediate/final、旧serial/重复释放及错误解锁，日志`mediacodec-test.log`。这些是源码抽取夹具，不替代Android平台codec/菜单实测。
+- Java：`:app:testMobileArm64_v8aDebugUnitTest --tests com.fongmi.android.tv.player.mpv.MpvAutoOutputPolicyTest :app:compileLeanbackArmeabi_v7aDebugJavaWithJavac`通过，19项策略测试，`java-test-compile.log`记录`BUILD SUCCESSFUL in 3m 9s`；相关shell语法检查通过。首次Gradle缓存权限失败已按sandbox权限问题处理；未降低测试门槛。
+- 原生：保留上节固定源/版本锁，NDK `29.0.14206865`、API24；完整补丁链prepare成功。首次prepare遇到旧派生`player/discnav.c`残留，已移至证据目录`candidate-discnav-before-prepare.c`保留，再执行完整prepare成功（`native-prepare-resumed.log`）。在buildscripts以`WEBHTV_ANDROID_API_LEVEL=24 WEBHTV_MPV_LIBCURL=enabled cores=8 LC_ALL=C LC_CTYPE=C`分别运行`bash buildall.sh -n --arch arm64 ffmpeg`、`arm64 mpv`、`armv7l ffmpeg`、`armv7l mpv`，四份`native-<arch>-<component>.log`均记录实际编译/链接成功。三新补丁在最终源码反向apply检查通过；JNI/API不变，`libplayer.so`未重编。
+- 打包：`scripts/build_mpv_native.sh --stage-only --abi all --install`成功，`bash scripts/verify_mpv_native_assets.sh --require-elf`通过（`native-stage.log`、`native-verify.log`）；Mobile arm64与Leanback armv7 Debug同次构建成功，`apk-build.log`记录2m15s。两个APK内的`libmpv.so`、`libmvcodec.so`、`libplayer.so`分别解包SHA比对均与下表资产一致，不能把包内一致性表述成实机通过。
+- 32位伴随产物：`libmvformat.so`也因本次FFmpeg链接改变，前后同为4,231,080 bytes；日志明确重编`http.o`，当前`http.c`相对上游仍只有原有代理Range offset的8行适配，本轮未修改HTTP补丁。字符串对比可见编译文件路径由`src/libavformat/http.c`变成`./src/libavformat/http.c`，伴随布局/地址变化；没有证明每个二进制差异都只是元数据，不作此宣称。保留同一锁定源码/补丁完整重编的库组，不手工换回旧库；原库`baseline-libmvformat-armv7.so`与对比`libmvformat-armv7-string-diff.txt`保存在证据目录，设备回归需覆盖实际原盘读取。
+- 交接安全检查：checkpoint脚本通过（0 error；唯一warning为本任务已声明的原生资产/补丁变更）。首次guard检查发现32位APK构建新增34个未跟踪CMake文件不在源码范围内，未发现35个受保护初始文件内容漂移。核对`initial-dirty`及构建日志后，只把新增`app/.cxx/Debug/p104q5y4/armeabi-v7a`目录（含生成日志）和`tools/mobileArmeabi_v7aDebug/armeabi-v7a/compile_commands.json`移至证据目录的`cxx-generated-armv7`和`cxx-generated-armv7-compile_commands.json`，未删除数据、未扩展scope或放宽保护规则。因工作树已实际修正，接着只重试guard范围检查；不重复已通过的构建、测试或checkpoint检查。
+
+证据根目录：`/tmp/p9-menu-liveness-20260910.sMRWiR/`。原始设备日志含私人URL，不提交；`before-install.png`因设备断开未成功生成，不能当作截图证据。
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `app/build/outputs/apk/mobileArm64_v8a/debug/app-mobile-arm64_v8a-debug.apk` | `04935314d4497024ee0a3a25fa4f2a65e2a7869cdf1352b1649069e897e8d574` |
+| `app/build/outputs/apk/leanbackArmeabi_v7a/debug/app-leanback-armeabi_v7a-debug.apk` | `26e9cc8996a3987baf8c722e4b1ff96dbc23412c1081f6b162f5bff669117e02` |
+| arm64 `libmpv.so` | `4e27798c8846a0ed57e2e4ce67b9581511b9621cf4681d6ae6c8386ec0d0b74c` |
+| arm64 `libmvcodec.so` | `405e7d5530c3e61e68f36fd1e50a01db804d4464ac826e7cad22391f793b72ec` |
+| arm64 `libplayer.so`（不变） | `a63e7b34f5ccfdf00a5d8204401e57042f7f9366e4c1fd00538aafc84210c3a1` |
+| armv7 `libmpv.so` | `f228e330c0eb2cb270908756a765817ba9f3ad90e1c29e209c158bdc30c2ac93` |
+| armv7 `libmvcodec.so` | `42e8fd5cae02b1153390658a21fad1011552402005c6912e9567c08191ec98a2` |
+| armv7 `libplayer.so`（不变） | `60f058ff16d70eec42d4bb3acf31253d7f7e507853adebf9f70ca011ce958977` |
+| armv7 `libmvformat.so` | `5dc848be56424e03e87b4f968c8f3f458807c9ad76e3f5a3139741da4b3d9597` |
+| armv7 `libmvformat.so`（基线） | `c08e555baa180398b84a73eb1e30307aa646893e264bb7ed7a0d418c42ccf56f` |
+| `mpv-discnav-poll.patch` | `bff0e63e53d31cdf3a3995fd2540ae2c738b8baf6da76e90d7b7ee8e5a67dee8` |
+| `mpv-mediacodec-embed-reset.patch` | `910153408594804031222589cc3dcb4c93e5b2bfe52d2a0034527933c494d3fa` |
+| `ffmpeg-mediacodec-output-serialization.patch` | `b90680788e35741f12e261ff999eeb105f1c101b5c9655e3de78927d2b7cf3c2` |
+
+剩余验收：设备`10CF6H1D2L0009S`（vivo V2453A/Android15 API35）接回后，用OEM安装助手覆盖安装Mobile候选，先验证《倩女幽魂》暂停菜单切页/关闭/恢复和播放往返；再覆盖TV候选验证两片背景、底栏入口/DPAD焦点、短片打断、正片持续播放与返回菜单。结合新时间/trace的`cache/webhtv-debug-log.txt`排除flush释放异常、自动回退重入、packet overflow，最后恢复手机候选。安装保留应用数据；无实机证据前不提交/tag，也不把不同VO/ABI互相替代。回滚仍为上节基线，保护`app/.cxx/`35个预存文件。
 
 ### 2026-09-09 子菜单输入适配决定
 

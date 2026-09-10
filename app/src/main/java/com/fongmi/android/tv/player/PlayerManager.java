@@ -4608,6 +4608,7 @@ public class PlayerManager implements ParseCallback {
         }
         if (!isMpv() || spec == null || TextUtils.isEmpty(spec.getUrl()) || !(engine instanceof MpvPlayerEngine mpv)) return;
         resetMpvOutputEvaluationState();
+        mpvSurfaceFallbackTried = false; // An explicit settings change permits a fresh attempt.
         mpvAutoVulkanPinnedForItem = false;
         mpvAutoVulkanDisabledForItem = false;
         mpv.setSurfaceDirectOverride(null);
@@ -4654,7 +4655,7 @@ public class PlayerManager implements ParseCallback {
         App.removeCallbacks(runnable);
         Boolean effectiveSurfaceDirectOverride = surfaceDirectOverride;
         if (effectiveSurfaceDirectOverride == null
-                && mpvAutoGpuPinnedForSession
+                && (mpvAutoGpuPinnedForSession || mpvSurfaceFallbackTried)
                 && MpvPerformanceSetting.getOutputMode() == MpvPerformanceSetting.OUTPUT_AUTO) {
             effectiveSurfaceDirectOverride = false;
         }
@@ -4678,6 +4679,7 @@ public class PlayerManager implements ParseCallback {
 
     private void prepareMpvOutputForNewItem() {
         resetMpvOutputEvaluationState();
+        mpvSurfaceFallbackTried = false;
         List<Track> persistedTracks = Track.find(getKey());
         Track persistedSubtitle = findRequestedSubtitle(persistedTracks);
         mpvExplicitSubtitlePreference = persistedSubtitle != null;
@@ -4715,6 +4717,7 @@ public class PlayerManager implements ParseCallback {
 
     private void resetMpvOutputRuntime() {
         resetMpvOutputEvaluationState();
+        mpvSurfaceFallbackTried = false;
         mpvAutoGpuPinnedForSession = false;
         mpvAutoVulkanPinnedForItem = false;
         mpvAutoVulkanDisabledForItem = false;
@@ -4730,7 +4733,6 @@ public class PlayerManager implements ParseCallback {
         mpvAutoOutputFrameReady = false;
         mpvAutoOutputEvaluationScheduled = false;
         mpvAutoOutputProbeAttempts = 0;
-        mpvSurfaceFallbackTried = false;
         mpvVulkanFallbackTried = false;
         mpvOutputEvaluationSeq++;
     }
@@ -4818,6 +4820,7 @@ public class PlayerManager implements ParseCallback {
                 dolbyVision ? videoDetails.dolbyVisionProfile() : C.INDEX_UNSET,
                 dv7Hdr10FallbackEnabled,
                 hevcHdr10Support);
+        decision = MpvAutoOutputPolicy.afterSurfaceFailure(decision, mpvSurfaceFallbackTried);
         int dolbyVisionProfile = dolbyVision
                 ? videoDetails.dolbyVisionProfile() : C.INDEX_UNSET;
         boolean currentlyVulkan = mpv.isVulkanRenderer();

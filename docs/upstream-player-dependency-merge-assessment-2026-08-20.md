@@ -3,10 +3,10 @@
 ## Recovery anchor
 
 - 当前分支：`feature-menu`。
-- 当前基线：`966b3b6747ece447c2f34f7787df7c6af572baa0`。
+- 当前修复基线：`1ec569658157d1a9323b5c2ef00cb3468b876fca`（2026-09-10）。
 - 历史完整评估：仓库历史提交 `3b346c85d0a3fb8e6078e4dbe4511f3aa15795a0` 中的同名文件；主线提交 `784b90420d646eb6c7ddcc63ad622a92c65b02b4` 删除了根目录本地任务文档，因此本分支只恢复当前实施需要的稳定索引。
 - 当前任务：`P9-MPV-BLURAY-MENU`，已获用户明确实施授权。
-- 下一步：以 [P9-MPV-BLURAY-MENU.md](P9-MPV-BLURAY-MENU.md) 为唯一记录；源码补丁和 App 接线已完成，待 native 环境可用时做双 ABI 构建与资产验收。
+- 下一步：以 [P9-MPV-BLURAY-MENU.md](P9-MPV-BLURAY-MENU.md) 为唯一记录，待手机重新连接后安装本轮候选并验收暂停菜单、TV背景/入口及直出flush/片头循环；代码、定向测试、双ABI原生构建及两个Debug包已完成，未安装、未实机验收、未提交/tag。不重复已通过的构建或历史合并调研。
 
 ## 稳定任务 ID 与唯一文档索引
 
@@ -14,7 +14,7 @@
 
 | 顺序 | 任务 ID | 类别 | 功能/能力 | 状态 | 唯一文档 |
 | ---: | --- | --- | --- | --- | --- |
-| 38 | `P9-MPV-BLURAY-MENU` | MPV/native/App | HDMV Blu-ray 菜单画面、按钮高亮、方向/确认/返回/Popup、菜单跳转与 still frame；BD-J 无提示回退现状 | 实施中，native/设备验收待环境 | [P9-MPV-BLURAY-MENU.md](P9-MPV-BLURAY-MENU.md) |
+| 38 | `P9-MPV-BLURAY-MENU` | MPV/native/App | HDMV Blu-ray 菜单画面、按钮高亮、方向/确认/返回/Popup、菜单跳转与 still frame；BD-J 无提示回退现状 | 已有阶段验收；2026-09-10暂停菜单/TV直出候选构建通过，手机断开待实机验收 | [P9-MPV-BLURAY-MENU.md](P9-MPV-BLURAY-MENU.md) |
 
 ## Checkpoint 55：2026-09-06 P9 HDMV 菜单实施启动
 
