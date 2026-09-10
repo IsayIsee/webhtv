@@ -3,10 +3,10 @@
 ## Recovery anchor
 
 - 用户需求：在观看历史的封面显示上次观看时间，方便确认看到第几分钟。手机观看历史页与电视首页历史卡片同时覆盖。
-- 本轮基线：`feature-menu` / `d4657ae879c32f2f93f30dd832735a02d0999487`。guard `HISTORY-COVER-PROGRESS`，`standard`；保护既有 `app/.cxx/` 35个文件。
-- 范围：两端HistoryAdapter/HistoryPresenter与adapter_vod布局；共用HistoryProgressFormatter及测试；History内容比较及测试；默认英文/简中/繁中文案；本文。不改播放器、原生库、数据库schema、历史保存/同步、收藏行为或设置。
-- 完成条件：封面显示“已看 12:34”，超过一小时为“已看 1:02:34”；保留集数，未知/无效进度及删除状态隐藏；未知总时长仍显示有效时间，超出已知时长时只在展示层钳制；复用卡片不残留旧时间，单独进度变更会刷新；两端编译和定向测试通过，原子提交及本地恢复tag，不push。
-- 当前状态：显示及列表刷新已实现，14项定向测试通过，Mobile arm64与Leanback armv7 Java/资源编译通过；未改原生资产。设备未连接，未打新APK、未安装或完成实机视觉验收。
+- 本轮微调基线：`feature-menu` / `881c8bca2e6831d6a7d32f67c22c64ce37541e0b`。guard `HISTORY-COVER-PROGRESS-TOP`，`quick-fix`；保护既有 `app/.cxx/` 35个文件。初始实现及其验证保留在下文。
+- 范围：仅两端`adapter_vod.xml`及本文。用户最新要求“把已看时间放到上面，其他不要改”；不修改绑定代码、文案、样式、其他控件定义或播放/历史逻辑。
+- 完成条件：将时间标记移到封面上方，有站点标签时放在其下方避免重叠，站点隐藏时回落至封面顶部；标题仍在最下方，其余元素定义不变；原子提交及本地恢复tag，不push。
+- 当前状态：两端定位调整完成；XML语法/结构及与基线的逐元素对比通过，只有时间标记父节点和三个定位属性变化，其余属性及所有其他元素定义一致。此次未重新打包、安装或进行真机视觉验收。
 - 唯一下一动作：紧接本记录由guard finish原子提交并创建本地恢复tag；之后等待用户的显示/实测反馈，不重复已通过的检查。
 
 ## 展示设计与证据（2026-09-10）
@@ -35,3 +35,8 @@
 - 首次命令错误指定了不存在的Android Studio JDK目录，Gradle未开始编译；读取仓库已有命令后改用独立JDK21，一次完成实际测试/编译。不是代码回归，也未放宽验证。
 - 证据目录 `/tmp/history-cover-progress-20260910.CMrH7W/`；日志 `tests-and-compile-jdk21.log`，原始环境失败保留在 `tests-and-compile.log`。设备列表为空，无截图/安装结果；此次不触发原生/CMake或APK打包，不把编译通过等同实机视觉通过。
 - 收口：只提交guard内本任务文件，保留35个预存dirty文件；本地注释恢复tag由guard finish在提交后立即生成，不push。
+
+### 2026-09-10 仅调整时间位置
+
+- 将两端`historyProgress`从底部集数容器移到根RelativeLayout，使用`layout_below=site`、`layout_alignStart=image`与`layout_alignWithParentIfMissing=true`。字号、颜色、背景、间距、可见性、文案和Java逻辑均不变。
+- 定向XML检查两端均PASS：解析基线与候选，验证新父节点及定位属性；删除时间标签后，剩余树的标签/属性/内容/顺序完全一致。日志`/tmp/history-cover-progress-top-20260910-layout-check.log`；没有重跑未改动的时间格式化测试或构建。
