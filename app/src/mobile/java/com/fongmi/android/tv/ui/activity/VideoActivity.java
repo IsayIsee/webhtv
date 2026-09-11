@@ -1044,7 +1044,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         boolean landscape = isLand();
         for (int index = 0; index < buttons.size(); index++) {
             MpvConfigStore.CustomButton button = buttons.get(index);
-            if (!button.enabled) continue;
+            if (!button.isButtonVisible()) continue;
             TextView view = new TextView(this);
             view.setTextSize(13);
             view.setTextColor(Color.WHITE);

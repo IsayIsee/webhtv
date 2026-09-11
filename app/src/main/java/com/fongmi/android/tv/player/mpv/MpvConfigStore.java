@@ -21,8 +21,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Locale;
@@ -612,6 +614,8 @@ public final class MpvConfigStore {
     private static List<ConfigProfile> scriptProfiles() {
         migrateManagedScripts();
         migrateLegacyButtons();
+        Map<String, Boolean> enabledScripts = new HashMap<>();
+        for (CustomButton button : customButtons()) enabledScripts.putIfAbsent(button.script, button.scriptEnabled);
         List<ConfigProfile> result = new ArrayList<>();
         File[] files = scriptLibraryDir().listFiles(file -> file.isFile() && isUserScriptName(file.getName()));
         if (files != null) {
@@ -622,6 +626,7 @@ public final class MpvConfigStore {
                 profile.type = TYPE_TEXT;
                 profile.source = file.getAbsolutePath();
                 profile.time = file.lastModified();
+                profile.scriptEnabled = enabledScripts.getOrDefault(profile.id, true);
                 result.add(profile);
             }
         }
@@ -1033,16 +1038,24 @@ public final class MpvConfigStore {
     }
 
     public static synchronized List<CustomButton> customButtons() {
-        List<CustomButton> result = new ArrayList<>();
         File file = customButtonsFile();
-        if (!file.isFile()) return result;
+        if (!file.isFile()) return new ArrayList<>();
         try {
-            for (JsonElement element : parseArray(readText(file))) {
+            return parseCustomButtonsJson(readText(file));
+        } catch (IOException ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    static List<CustomButton> parseCustomButtonsJson(String json) {
+        List<CustomButton> result = new ArrayList<>();
+        try {
+            for (JsonElement element : parseArray(json)) {
                 if (element == null || !element.isJsonObject()) continue;
                 JsonObject object = element.getAsJsonObject();
                 String id = stringValue(object, "id").trim();
                 String title = stringValue(object, "title").trim();
-                if (!isSafeCustomButtonId(id) || TextUtils.isEmpty(title)) continue;
+                if (!isSafeCustomButtonId(id) || title.isEmpty()) continue;
                 CustomButton button = new CustomButton();
                 button.id = id;
                 button.title = title;
@@ -1052,6 +1065,7 @@ public final class MpvConfigStore {
                 button.longPressContent = stringValue(object, "longPressContent");
                 button.onStartup = stringValue(object, "onStartup");
                 button.enabled = !object.has("enabled") || object.get("enabled").isJsonNull() || object.get("enabled").getAsBoolean();
+                button.scriptEnabled = !object.has("scriptEnabled") || object.get("scriptEnabled").isJsonNull() || object.get("scriptEnabled").getAsBoolean();
                 result.add(button);
             }
         } catch (Throwable ignored) {
@@ -1070,6 +1084,12 @@ public final class MpvConfigStore {
 
     public static synchronized String saveScriptSettings(String id, String title, String content,
                                                           boolean enabled, String trigger) throws IOException {
+        CustomButton previous = scriptButton(id);
+        return saveScriptSettings(id, title, content, enabled, trigger, previous == null || previous.scriptEnabled);
+    }
+
+    public static synchronized String saveScriptSettings(String id, String title, String content,
+                                                          boolean enabled, String trigger, boolean scriptEnabled) throws IOException {
         migrateManagedScripts();
         File source = safeScriptFile(id);
         if (!source.isFile()) throw missingProfile();
@@ -1093,7 +1113,7 @@ public final class MpvConfigStore {
         }
         validateContent(content);
         writeTextChecked(output, content);
-        writeScriptSettings(outputName, displayName, content, enabled, trigger);
+        writeScriptSettings(outputName, displayName, content, enabled, trigger, scriptEnabled);
         return outputName;
     }
 
@@ -1103,11 +1123,11 @@ public final class MpvConfigStore {
         String content = readText(safeScriptFile(id));
         CustomButton previous = scriptButton(id);
         String title = previous == null ? id.substring(0, id.lastIndexOf('.')) : previous.title;
-        writeScriptSettings(id, title, content, enabled, trigger);
+        writeScriptSettings(id, title, content, enabled, trigger, previous == null || previous.scriptEnabled);
     }
 
     private static void writeScriptSettings(String script, String title, String content,
-                                            boolean enabled, String trigger) throws IOException {
+                                            boolean enabled, String trigger, boolean scriptEnabled) throws IOException {
         List<CustomButton> buttons = customButtons();
         CustomButton button = null;
         for (CustomButton item : buttons) {
@@ -1124,6 +1144,7 @@ public final class MpvConfigStore {
         button.script = script;
         button.title = title;
         button.enabled = enabled;
+        button.scriptEnabled = scriptEnabled;
         button.trigger = normalizeScriptTrigger(enabled, trigger);
         button.content = "click".equals(button.trigger) ? content : "";
         button.longPressContent = "long".equals(button.trigger) ? content : "";
@@ -1208,9 +1229,16 @@ public final class MpvConfigStore {
     }
 
     private static void writeCustomButtons(List<CustomButton> buttons) throws IOException {
+        String json = serializeCustomButtons(buttons);
+        validateContent(json);
+        writeTextChecked(customButtonsFile(), json);
+        writeCustomButtonScript(buttons);
+    }
+
+    static String serializeCustomButtons(List<CustomButton> buttons) {
         JsonArray array = new JsonArray();
         for (CustomButton button : buttons) {
-            if (button == null || !isSafeCustomButtonId(button.id) || TextUtils.isEmpty(button.title)) continue;
+            if (button == null || !isSafeCustomButtonId(button.id) || value(button.title).isEmpty()) continue;
             JsonObject object = new JsonObject();
             object.addProperty("id", button.id);
             object.addProperty("title", button.title);
@@ -1220,12 +1248,10 @@ public final class MpvConfigStore {
             object.addProperty("longPressContent", value(button.longPressContent));
             object.addProperty("onStartup", value(button.onStartup));
             object.addProperty("enabled", button.enabled);
+            object.addProperty("scriptEnabled", button.scriptEnabled);
             array.add(object);
         }
-        String json = array.toString();
-        validateContent(json);
-        writeTextChecked(customButtonsFile(), json);
-        writeCustomButtonScript(buttons);
+        return array.toString();
     }
 
     private static void writeCustomButtonScript(List<CustomButton> buttons) throws IOException {
@@ -1251,7 +1277,7 @@ public final class MpvConfigStore {
                 + "end\n");
         int scriptCount = 0;
         for (CustomButton button : buttons) {
-            if (button == null || !isSafeCustomButtonId(button.id)) continue;
+            if (button == null || !button.scriptEnabled || !isSafeCustomButtonId(button.id)) continue;
             boolean managed = !value(button.script).isEmpty();
             // Preserve the legacy multi-action button contract; managed files use the new timing rules.
             if (!managed && !button.enabled) continue;
@@ -1366,6 +1392,7 @@ public final class MpvConfigStore {
         public String content;
         public long time;
         public boolean active;
+        public boolean scriptEnabled = true;
 
         public boolean isDefault() {
             return TYPE_DEFAULT.equals(type);
@@ -1397,5 +1424,10 @@ public final class MpvConfigStore {
         public String longPressContent;
         public String onStartup;
         public boolean enabled = true;
+        public boolean scriptEnabled = true;
+
+        public boolean isButtonVisible() {
+            return scriptEnabled && enabled;
+        }
     }
 }

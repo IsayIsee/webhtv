@@ -985,6 +985,7 @@
     <string name="mpv_config_script_text_edit">Create from text</string>
     <string name="mpv_config_script_text_edit_desc">Open the text editor to enter and save the Lua script</string>
     <string name="mpv_config_script_settings_title">Script settings</string>
+    <string name="mpv_config_script_enabled">Enable script</string>
     <string name="mpv_config_script_settings_desc">Set the name, enabled state, and trigger</string>
     <string name="mpv_config_script_open_editor">Open editor</string>
     <string name="mpv_config_script_import_url">Import script from URL</string>

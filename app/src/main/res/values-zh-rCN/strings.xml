@@ -1034,6 +1034,7 @@
     <string name="mpv_config_script_text_edit">通过文本创建</string>
     <string name="mpv_config_script_text_edit_desc">打开文本编辑器，输入并保存 Lua 脚本</string>
     <string name="mpv_config_script_settings_title">脚本设置</string>
+    <string name="mpv_config_script_enabled">启用脚本</string>
     <string name="mpv_config_script_settings_desc">设置名称、启用状态和执行时机</string>
     <string name="mpv_config_script_open_editor">打开编辑窗口</string>
     <string name="mpv_config_script_import_url">通过 URL 导入脚本</string>

@@ -32,7 +32,7 @@
 - 最便宜决定性验证：归一化/生成器 JUnit + 用现有 Lua 源码构建的临时宿主解释器执行生成的桥接代码（状态、次数、错误隔离、旧局部变量），随后单个 mobile debug 构建/安装和已连接手机的聚焦场景；TV 只编译共享 UI 调用链，不做 ABI 矩阵/原生库重建。
 - 安全/兼容/性能：不改变数据 schema，不改用户脚本；增加常数级回调接线，无播放帧循环工作或产品依赖/ABI 变化。单元提交 + 本地 annotated recovery tag；回滚本单元提交恢复旧逻辑，用户原有脚本文件不需回滚。
 
-## Recovery anchor
+## 上一单元验证与交付（MPV-SCRIPT-TRIGGERS）
 
 - 状态：代码完成，首次合并自动化验证通过；手机安全锁屏，真机 UI/安装未执行。准备原子提交和恢复 tag。
 - 文件/符号：`MpvConfigCreateDialog` 联动与创建参数，`MpvConfigDialog` 保存/导入，`MpvConfigStore` trigger 归一化及 Lua 生成，`MpvConfigStoreTest` 和 Lua fixture。
@@ -43,3 +43,25 @@
 - 设备限制：同目录 `before.png/before.xml/device-policy.txt` 证明 `showing=true / secure=true / SCREEN_STATE_OFF`。按 android-device-tester 不绕过锁屏，已请用户解锁；只读备份 `original-scripts.tar`，没有安装、改脚本或改设置，无需恢复。自动化结果不当作真机 GUI 验收。
 - 提交/tag：由 guard 原子创建，记录在提交的 Verification/Task-Guard 及 `recovery/MPV-SCRIPT-TRIGGERS/` annotated tag 中；不为回填新 SHA 另建文档提交，不推送远端。
 - 唯一下一步：手机解锁后安装本次 APK，验证 scripts 开关联动与现有“显示信息”脚本 startup/点击场景。
+
+## 后续单元：脚本独立启用状态（2026-09-11）
+
+- 用户明确要求：仅脚本设置增加默认开启的脚本开关；scripts 列表参考站点注入区分启用/禁用，其他保持原状。guard `MPV-SCRIPT-ENABLE`，基线 `1ce8df96075f703a16cecfa077fd715c66b90279`；保护 `app/.cxx/` 35 个预存文件。不推送、不改上游/原生/依赖。
+- 18:23 Asia/Shanghai 估计约20分钟，目标18:43；实现6分钟、验证/构建6分钟、手机与闭环8分钟。
+- 本地成熟实现（A级，基线同上）：`CustomCspDialog.statusColor/rowBackground/titleColor/detailColor` 使用绿色启用、灰色禁用、禁用卡片仍可点击和聚焦；直接复用配色契约，不重排 scripts 列表或改变 mpv.conf/input.conf 样式。
+- 方案：`CustomButton.scriptEnabled` 独立于既有 `enabled`（按钮可见），JSON 缺字段/null 按 true 兼容；设置保存、重命名/导入选项更新保留新状态；禁用时生成器不读/运行该脚本，也不生成回调；两端播放按钮隐藏。配置载入时机保持当前播放器创建时生效，不引入运行中任意脚本卸载。脚本内容、点击/长按/startup 保持上一单元逻辑。
+- 备选：不改不满足需求；复用按钮 enabled 会破坏“关闭按钮仍startup”契约，拒绝；采用单独字段及现有过滤路径，最小可回滚。默认值不改变旧数据状态，新增字段随现有 metadata 文件备份。
+- 规范依据沿用本文 mpv 官方 Lua 生命周期/消息契约；新增仅 App 层已有配置模式，不涉及新的上游实现或运行时API。PR/issues/论文/基准对该字段和既定站点注入样式无待决设计问题，故不扩大检索。
+- 验收：旧数据/新脚本默认启用；停用后startup/click/long全不运行；重新启用不改按钮/trigger/脚本；列表准确读状态、置灰但可编辑，非 scripts 卡片不变；定向单测与实际Lua运行、两端编译、可用手机的一次开关/保存/重开验证。回滚本单元提交即可恢复旧逻辑；新字段在旧版被忽略（旧版不支持停用）。
+
+## Recovery anchor
+
+- 状态：字段/UI/过滤与测试实现完成，首次合并 Gradle 验证通过（1m44s）；手机安装成功，用户明确“我测试可以了，打个tag”，本单元验收通过，立即提交/tag，不追加验证。
+- 允许路径：脚本存储、设置对话框/布局、列表适配器/禁用卡片资源、mobile/leanback按钮过滤、三语言string、定向Java/Lua测试及本文。
+- 已完成：新增 `scriptEnabled=true` 默认和 JSON 兼容读写、设置开关/TV焦点、列表状态/灰色卡片、两端 `isButtonVisible()` 过滤、生成器跳过停用脚本；新建/导入界面不变，旧保存接口和导入时机更新保留脚本状态。手机V2453A已连接且解锁（18:22）。
+- 验证执行：使用上一单元已构建 `/private/tmp/webhtv-script-trigger.PIW3G6/lua` 运行扩展脚本测试（预期15项，含真实Lua），同次构建mobile arm64 debug和编译leanback arm64 Java；CMake staging仍在build/mpv-native/app-cxx，不改预存app/.cxx/。日志 `/private/tmp/webhtv-script-enable.oVGHS9/gradle.log`。
+- 设备：原脚本目录已只读备份到 `/private/tmp/webhtv-script-enable.oVGHS9/original-scripts.tar`；安装助手完成风险确认并成功安装、启动本次 mobile debug。列表启用状态与设置界面已进入，最终行为由用户实测确认通过。用户无关屏幕数据不作为任务证据引用。
+- 已验证：`MpvConfigStoreTest` 15 tests / 0 skipped / 0 failures / 0 errors，包含真实Lua执行；mobile arm64 debug打包和leanback arm64 Java编译通过；XML资源通过Android构建。报告在 app/build/test-results/testMobileArm64_v8aDebugUnitTest/TEST-com.fongmi.android.tv.player.mpv.MpvConfigStoreTest.xml。
+- 18:47进度：实际验证启动/工具等待超过原目标，停止额外检查；仅继续手机开关/列表及提交/tag。设备仍已解锁，安装助手日志同证据目录 install.log。
+- 验收：用户确认本次需求测试通过；不扩展相邻场景，不以编译替代用户实测。提交/tag 由 guard 原子生成，本轮不推送远端。
+- 唯一下一步：执行 guard finish 提交本单元并创建 annotated recovery tag。

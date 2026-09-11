@@ -251,6 +251,8 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         binding.scriptCode.setVisibility(View.GONE);
         binding.scriptStats.setVisibility(View.GONE);
         binding.scriptEdit.setVisibility(View.VISIBLE);
+        binding.scriptEnabledRow.setVisibility(View.VISIBLE);
+        binding.scriptEnabled.setChecked(sourceButton == null || sourceButton.scriptEnabled);
         binding.buttonEnabled.setChecked(sourceButton != null && sourceButton.enabled);
         triggerId = triggerIdFor(MpvConfigStore.normalizeScriptTrigger(binding.buttonEnabled.isChecked(),
                 sourceButton == null ? null : sourceButton.trigger));
@@ -258,6 +260,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
         if (Util.isLeanback()) {
             tvFocusable(binding.close);
             tvFocusable(binding.name);
+            tvFocusable(binding.scriptEnabled);
             tvFocusable(binding.buttonEnabled);
             tvFocusable(binding.triggerClick);
             tvFocusable(binding.triggerLong);
@@ -267,8 +270,10 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
             tvFocusable(binding.buttonSave);
             binding.close.setNextFocusDownId(R.id.name);
             binding.name.setNextFocusUpId(R.id.close);
-            binding.name.setNextFocusDownId(R.id.buttonEnabled);
-            binding.buttonEnabled.setNextFocusUpId(R.id.name);
+            binding.name.setNextFocusDownId(R.id.scriptEnabled);
+            binding.scriptEnabled.setNextFocusUpId(R.id.name);
+            binding.scriptEnabled.setNextFocusDownId(R.id.buttonEnabled);
+            binding.buttonEnabled.setNextFocusUpId(R.id.scriptEnabled);
             binding.buttonEnabled.setNextFocusDownId(R.id.triggerClick);
             binding.triggerClick.setNextFocusUpId(R.id.buttonEnabled);
             binding.triggerClick.setNextFocusDownId(R.id.scriptEdit);
@@ -415,7 +420,7 @@ public class MpvConfigCreateDialog extends BaseAlertDialog {
     private void saveScriptSettings() {
         try {
             String savedId = MpvConfigStore.saveScriptSettings(scriptId, name(), scriptContent,
-                    binding.buttonEnabled.isChecked(), triggerName(triggerId));
+                    binding.buttonEnabled.isChecked(), triggerName(triggerId), binding.scriptEnabled.isChecked());
             if (buttonCallback != null) buttonCallback.run();
             Notify.show(R.string.mpv_config_profile_saved);
             dismissAllowingStateLoss();

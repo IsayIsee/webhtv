@@ -911,7 +911,7 @@ public class VideoActivity extends PlaybackActivity implements CustomKeyDownVod.
         List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.customButtons();
         for (int index = 0; index < buttons.size(); index++) {
             MpvConfigStore.CustomButton button = buttons.get(index);
-            if (!button.enabled) continue;
+            if (!button.isButtonVisible()) continue;
             TextView view = new TextView(this);
             view.setTextSize(13);
             view.setTextColor(Color.WHITE);

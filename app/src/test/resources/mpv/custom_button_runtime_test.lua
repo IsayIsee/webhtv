@@ -14,6 +14,11 @@ assert(click_count == nil and long_count == nil)
 assert(return_count == 1)
 assert(disabled_legacy_ran == nil)
 assert(#errors == 1 and errors[1]:find("expected startup error", 1, true))
+for _, trigger in ipairs({"click", "long", "startup"}) do
+    dispatch("disabled_script_" .. trigger, "short")
+    dispatch("disabled_script_" .. trigger, "long")
+end
+assert(#errors == 1 and live_timers == 1 and startup_count == 1)
 
 dispatch("startup", "short")
 assert(startup_count == 2 and toggle_state == false and live_timers == 0)

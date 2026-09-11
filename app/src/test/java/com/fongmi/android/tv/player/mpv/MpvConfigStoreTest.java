@@ -20,6 +20,68 @@ import static org.junit.Assume.assumeTrue;
 public class MpvConfigStoreTest {
 
     @Test
+    public void newAndLegacyScriptsDefaultToEnabledIndependentlyOfButton() {
+        assertTrue(new MpvConfigStore.CustomButton().scriptEnabled);
+        assertTrue(new MpvConfigStore.ConfigProfile().scriptEnabled);
+        for (String extra : Arrays.asList("", ",\"scriptEnabled\":null")) {
+            List<MpvConfigStore.CustomButton> buttons = MpvConfigStore.parseCustomButtonsJson(
+                    "[{\"id\":\"old\",\"title\":\"Old script\",\"enabled\":false,\"trigger\":\"startup\"" + extra + "}]");
+            assertEquals(1, buttons.size());
+            assertTrue(buttons.get(0).scriptEnabled);
+            assertFalse(buttons.get(0).enabled);
+            assertEquals("startup", buttons.get(0).trigger);
+        }
+    }
+
+    @Test
+    public void scriptEnabledRoundTripsWithoutChangingButtonTimingOrSource() {
+        for (boolean buttonEnabled : Arrays.asList(false, true)) {
+            for (String trigger : Arrays.asList("click", "long", "startup")) {
+                MpvConfigStore.CustomButton original = scriptButton("saved", trigger, buttonEnabled);
+                original.content = "short_source()";
+                original.longPressContent = "long_source()";
+                original.onStartup = "startup_source()";
+                original.scriptEnabled = false;
+                String json = MpvConfigStore.serializeCustomButtons(Collections.singletonList(original));
+                MpvConfigStore.CustomButton restored = MpvConfigStore.parseCustomButtonsJson(json).get(0);
+                assertTrue(json.contains("\"scriptEnabled\":false"));
+                assertFalse(restored.scriptEnabled);
+                assertEquals(buttonEnabled, restored.enabled);
+                assertEquals(trigger, restored.trigger);
+                assertEquals(original.script, restored.script);
+                assertEquals(original.content, restored.content);
+                assertEquals(original.longPressContent, restored.longPressContent);
+                assertEquals(original.onStartup, restored.onStartup);
+                restored.scriptEnabled = true;
+                MpvConfigStore.CustomButton reenabled = MpvConfigStore.parseCustomButtonsJson(
+                        MpvConfigStore.serializeCustomButtons(Collections.singletonList(restored))).get(0);
+                assertTrue(reenabled.scriptEnabled);
+                assertEquals(buttonEnabled, reenabled.enabled);
+                assertEquals(trigger, reenabled.trigger);
+            }
+        }
+    }
+
+    @Test
+    public void disabledScriptNeverLoadsForAnyTriggerOrButtonVisibility() {
+        for (String trigger : Arrays.asList("click", "long", "startup")) {
+            for (boolean buttonEnabled : Arrays.asList(false, true)) {
+                MpvConfigStore.CustomButton button = scriptButton("disabled", trigger, buttonEnabled);
+                button.scriptEnabled = false;
+                assertEquals("", MpvConfigStore.buildCustomButtonScript(Collections.singletonList(button), script -> {
+                    throw new AssertionError("Disabled script must not even be read");
+                }));
+                assertFalse(button.isButtonVisible());
+                button.scriptEnabled = true;
+                String enabledLua = MpvConfigStore.buildCustomButtonScript(Collections.singletonList(button), script -> "restored_action()");
+                assertTrue(enabledLua.contains("restored_action()"));
+                assertEquals(trigger, button.trigger);
+                assertEquals(buttonEnabled, button.isButtonVisible());
+            }
+        }
+    }
+
+    @Test
     public void scriptWithoutButtonAlwaysUsesStartup() {
         for (String trigger : Arrays.asList(null, "", "click", "long", "startup", "unknown")) {
             assertEquals("startup", MpvConfigStore.normalizeScriptTrigger(false, trigger));
@@ -109,6 +171,11 @@ public class MpvConfigStoreTest {
         disabledLegacy.script = "";
         disabledLegacy.onStartup = "disabled_legacy_ran = true";
         buttons.add(disabledLegacy);
+        for (String trigger : Arrays.asList("click", "long", "startup")) {
+            MpvConfigStore.CustomButton disabledScript = scriptButton("disabled_script_" + trigger, trigger, true);
+            disabledScript.scriptEnabled = false;
+            buttons.add(disabledScript);
+        }
         String lua = MpvConfigStore.buildCustomButtonScript(buttons, script -> switch (script) {
             case "startup.lua" -> "startup_count = (startup_count or 0) + 1\n"
                     + "toggle_state = not toggle_state\n"
