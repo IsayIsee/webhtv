@@ -125,5 +125,10 @@
             style="@style/Control"
             android:text="@string/detail_episode" />
 
+        <com.google.android.material.textview.MaterialTextView
+            android:id="@+id/change2"
+            style="@style/Control"
+            android:text="@string/play_change" />
+
     </androidx.appcompat.widget.LinearLayoutCompat>
 </HorizontalScrollView>
