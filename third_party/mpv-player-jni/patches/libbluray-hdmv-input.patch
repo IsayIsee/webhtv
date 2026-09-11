@@ -9,21 +9,45 @@
 
  #ifdef _WIN32
  /* mingw: PRId64 seems to expands to %d without stdio.h ... */
-@@ -82,6 +84,13 @@
+@@ -63,6 +65,16 @@
+     int      effect_running;  /* single-loop animation not yet complete */
+ } BOG_DATA;
+
++/* WebHTV menu visit state. IDs only: never retain display-set pointers. */
++#define MENU_HISTORY_MAX 8
++typedef struct {
++    uint16_t page, child, entry;
++    uint8_t page_version, child_version;
++    unsigned num_bogs;
++    uint16_t enabled[MAX_NUM_BOGS];
++} MENU_PARENT;
++/* End WebHTV menu visit state. */
++
+ struct graphics_controller_s {
+
+     BD_REGISTERS   *regs;
+@@ -82,6 +94,20 @@
      unsigned        pg_dirty;
      unsigned        popup_visible;
      unsigned        valid_mouse_position;
 +    uint16_t        mouse_button_id;
 +    uint16_t        mouse_x, mouse_y;
++    unsigned        mouse_parent_position;
++    MENU_PARENT     menu_history[MENU_HISTORY_MAX];
++    unsigned        menu_history_count;
++    unsigned        menu_entry_pending;
++    uint16_t        menu_entry_page, menu_entry_button;
++    uint64_t        menu_entry_deadline;
 +    unsigned        pointer_route_pending;
 +    uint16_t        pointer_target_page;
 +    uint16_t        pointer_target_button;
++    uint16_t        pointer_origin_button;
 +    unsigned        pointer_route_steps;
 +    uint64_t        pointer_route_deadline;
      unsigned        auto_action_triggered;
      BOG_DATA        bog_data[MAX_NUM_BOGS];
      BOG_DATA       *saved_bog_data;
-@@ -193,7 +202,7 @@
+@@ -193,7 +219,7 @@
  enum { BTN_NORMAL, BTN_SELECTED, BTN_ACTIVATED };
 
  static BD_PG_OBJECT *_find_object_for_button(PG_DISPLAY_SET *s,
@@ -32,15 +56,116 @@
                                               BOG_DATA *bog_data)
  {
      BD_PG_OBJECT *object   = NULL;
-@@ -739,6 +748,7 @@
+@@ -393,8 +419,11 @@
+     return 1;
+ }
+
++static void _clear_menu_history(GRAPHICS_CONTROLLER *gc);
++
+ static int _restore_page_state(GRAPHICS_CONTROLLER *gc)
+ {
++    _clear_menu_history(gc);
+     gc->in_effects  = NULL;
+     gc->out_effects = NULL;
+
+@@ -695,11 +724,80 @@
+     gc->auto_action_triggered = 0;
+ }
+
++/* WebHTV observed menu transitions. Only an actual input can create a parent. */
++static void _clear_menu_history(GRAPHICS_CONTROLLER *gc)
++{
++    gc->menu_history_count = 0;
++    gc->menu_entry_pending = 0;
++    gc->mouse_parent_position = 0;
++    gc->valid_mouse_position = 0;
++    gc->pointer_route_pending = 0;
++}
++
++static void _remember_menu_entry(GRAPHICS_CONTROLLER *gc, BD_IG_PAGE *page,
++                                  const BD_IG_BUTTON *button)
++{
++    gc->menu_entry_pending = 0;
++    if (!button || button->auto_action_flag || !button->num_nav_cmds ||
++        !button->nav_cmds || !gc->ig_drawn || page->num_bogs > MAX_NUM_BOGS ||
++        !_find_object_for_button(gc->igs, button, BTN_SELECTED, NULL)) return;
++    gc->menu_entry_page = page->id;
++    gc->menu_entry_button = button->id;
++    gc->menu_entry_deadline = bd_get_scr() + 180000;
++    gc->menu_entry_pending = 1;
++}
++
++static void _observe_menu_page_change(GRAPHICS_CONTROLLER *gc, uint16_t page_id)
++{
++    unsigned current = bd_psr_read(gc->regs, PSR_MENU_PAGE_ID);
++    if (current == page_id) return;
++    gc->mouse_parent_position = 0;
++    for (unsigned i = 0; i < gc->menu_history_count; i++) {
++        if (gc->menu_history[i].page == page_id) {
++            gc->menu_history_count = i; /* authored return: pop, never reverse the edge */
++            gc->menu_entry_pending = 0;
++            return;
++        }
++    }
++    BD_IG_PAGE *page = _find_page(&gc->igs->ics->interactive_composition, current);
++    BD_IG_PAGE *child = _find_page(&gc->igs->ics->interactive_composition, page_id);
++    unsigned bog = 0;
++    BD_IG_BUTTON *entry = page ? _find_button_page(page, gc->menu_entry_button, &bog) : NULL;
++    if (!gc->menu_entry_pending || current != gc->menu_entry_page ||
++        bd_get_scr() > gc->menu_entry_deadline || !page || !child || !entry ||
++        page->num_bogs > MAX_NUM_BOGS || bog >= MAX_NUM_BOGS ||
++        gc->bog_data[bog].enabled_button != entry->id) {
++        gc->menu_history_count = 0; /* unrelated/automatic transition, not a guessed parent */
++        gc->menu_entry_pending = 0;
++        return;
++    }
++    if (gc->menu_history_count &&
++        gc->menu_history[gc->menu_history_count - 1].child != current) gc->menu_history_count = 0;
++    if (gc->menu_history_count == MENU_HISTORY_MAX) {
++        memmove(gc->menu_history, gc->menu_history + 1,
++                (MENU_HISTORY_MAX - 1) * sizeof(gc->menu_history[0]));
++        gc->menu_history_count--;
++    }
++    MENU_PARENT *visit = &gc->menu_history[gc->menu_history_count++];
++    visit->page = page->id;
++    visit->child = child->id;
++    visit->entry = entry->id;
++    visit->page_version = page->version;
++    visit->child_version = child->version;
++    visit->num_bogs = page->num_bogs;
++    for (unsigned i = 0; i < page->num_bogs; i++) visit->enabled[i] = gc->bog_data[i].enabled_button;
++    gc->menu_entry_pending = 0;
++    GC_TRACE("_user_input menu-visit: parent=%u child=%u entry=%u depth=%u\n",
++             visit->page, visit->child, visit->entry, gc->menu_history_count);
++}
++/* End WebHTV observed menu transitions. */
++
+ static void _select_page(GRAPHICS_CONTROLLER *gc, uint16_t page_id, int out_effects)
+ {
+     unsigned cur_page_id = bd_psr_read(gc->regs, PSR_MENU_PAGE_ID);
+     BD_IG_PAGE *page = NULL;
+
++    _observe_menu_page_change(gc, page_id);
+     bd_psr_write(gc->regs, PSR_MENU_PAGE_ID, page_id);
+
+     _reset_page_state(gc);
+@@ -739,6 +837,7 @@
 
      gc->popup_visible = 0;
      gc->valid_mouse_position = 0;
-+    gc->pointer_route_pending = 0;
++    _clear_menu_history(gc);
      gc->page_uo_mask = uo_mask_get_empty();
 
      graphics_processor_free(&gc->igp);
-@@ -1523,6 +1533,307 @@
+@@ -873,6 +972,7 @@
+             return 0;
+         }
+
++        _clear_menu_history(gc); /* a newly decoded IG set owns a new button context */
+         if (!gc->igs || !gc->igs->complete) {
+             bd_mutex_unlock(&gc->mutex);
+             return 0;
+@@ -1523,7 +1623,346 @@
  #define VK_IS_NUMERIC(vk) (/*vk >= BD_VK_0  &&*/ vk <= BD_VK_9)
  #define VK_IS_CURSOR(vk)  (vk >= BD_VK_UP && vk <= BD_VK_RIGHT)
  #define VK_TO_NUMBER(vk)  ((vk) - BD_VK_0)
@@ -79,6 +204,34 @@
 +}
 +
 +/* WebHTV authored-menu routing. Never synthesize a page/register write. */
++static const MENU_PARENT *_visited_parent(GRAPHICS_CONTROLLER *gc, BD_IG_PAGE *page)
++{
++    if (!gc->menu_history_count) return NULL;
++    const MENU_PARENT *visit = &gc->menu_history[gc->menu_history_count - 1];
++    BD_IG_PAGE *parent = _find_page(&gc->igs->ics->interactive_composition, visit->page);
++    if (!parent || visit->child != page->id || visit->child_version != page->version ||
++        visit->page_version != parent->version || visit->num_bogs != parent->num_bogs ||
++        visit->num_bogs > MAX_NUM_BOGS) return NULL;
++    return visit;
++}
++
++static BD_IG_BUTTON *_visited_button_at(GRAPHICS_CONTROLLER *gc, BD_IG_PAGE *parent,
++                                        const MENU_PARENT *visit)
++{
++    BD_IG_BUTTON *hit = NULL;
++    for (unsigned i = 0; i < visit->num_bogs; i++) {
++        BD_IG_BUTTON *button = _find_button_bog(&parent->bog[i], visit->enabled[i]);
++        if (!button || button->auto_action_flag || _button_has_no_action(button)) continue;
++        BD_PG_OBJECT *object = _find_object_for_button(gc->igs, button, BTN_SELECTED, NULL);
++        if (!object || gc->mouse_x < button->x_pos || gc->mouse_y < button->y_pos ||
++            gc->mouse_x >= button->x_pos + object->width ||
++            gc->mouse_y >= button->y_pos + object->height) continue;
++        if (hit) return NULL; /* overlapping parent targets must not be guessed */
++        hit = button;
++    }
++    return hit;
++}
++
 +static int _inert_pointer_button(const BD_IG_BUTTON *button)
 +{
 +    if (!_button_has_no_action(button) || button->auto_action_flag) return 0;
@@ -180,7 +333,7 @@
 +    }
 +    return page;
 +}
-+
+
 +static int _menu_only_auto(const BD_IG_BUTTON *button, unsigned page_id)
 +{
 +    if (!button->auto_action_flag || !button->num_nav_cmds || !button->nav_cmds ||
@@ -225,6 +378,7 @@
 +    *parent = NULL;
 +    *target = NULL;
 +    if (!page->num_bogs || page->num_bogs > MAX_NUM_BOGS) return NULL;
++    const MENU_PARENT *visit = _visited_parent(gc, page);
 +    unsigned selected = bd_psr_read(gc->regs, PSR_SELECTED_BUTTON_ID);
 +    BD_IG_BUTTON *start = _find_button_page(page, selected, &first);
 +    if (!start || _inert_pointer_button(start) || gc->bog_data[first].enabled_button != selected) {
@@ -250,6 +404,11 @@
 +                    if (_parent_buttons_in_background(gc, candidate, b, &unused) >= 2) copies += 2;
 +                }
 +            }
++            if (!copy && visit && candidate->id == visit->page) {
++                if (gc->mouse_parent_position) match = _visited_button_at(gc, candidate, visit);
++                else copies = 2; /* an observed entry plus authored return proves parenthood */
++            }
++            if (gc->mouse_parent_position && (!visit || candidate->id != visit->page || !match)) continue;
 +            if (match || copies >= 2) {
 +                if (found && *parent != candidate) return NULL; /* ambiguous parent */
 +                if (!found) { found = node.first_auto ? node.first_auto : button; *parent = candidate; *target = match; }
@@ -293,6 +452,8 @@
 +    gc->pointer_route_pending = 1;
 +    gc->pointer_target_page = parent->id;
 +    gc->pointer_target_button = target ? target->id : 0xffff;
++    const MENU_PARENT *visit = _visited_parent(gc, page);
++    gc->pointer_origin_button = visit && visit->page == parent->id ? visit->entry : 0xffff;
 +    gc->pointer_route_steps = 1;
 +    gc->pointer_route_deadline = bd_get_scr() + 180000;
 +    _select_button(gc, gateway->id);
@@ -331,7 +492,8 @@
 +    BD_IG_BUTTON *button = page ? _find_button_page(page, gc->pointer_target_button, &bog) : NULL;
 +    if (!button || gc->bog_data[bog].enabled_button != button->id ||
 +        button->auto_action_flag || !button->num_nav_cmds) return 0;
-+    if (bd_psr_read(gc->regs, PSR_SELECTED_BUTTON_ID) == button->id) {
++    if (gc->pointer_origin_button != 0xffff ? gc->pointer_origin_button == button->id :
++        bd_psr_read(gc->regs, PSR_SELECTED_BUTTON_ID) == button->id) {
 +        GC_TRACE("_user_input pointer route: close at parent=%u button=%u\n", page->id, button->id);
 +        return 1;
 +    }
@@ -342,22 +504,26 @@
 +    cmds->sound_id_ref = button->activated_sound_id_ref;
 +    _select_button(gc, button->id);
 +    _render_page(gc, button->id, cmds);
++    _remember_menu_entry(gc, page, button);
 +    return 1;
 +}
 +/* End WebHTV authored-menu routing. */
-
++
  static int _user_input(GRAPHICS_CONTROLLER *gc, uint32_t key, GC_NAV_CMDS *cmds)
  {
-@@ -1534,6 +1845,8 @@
+     PG_DISPLAY_SET *s          = gc->igs;
+@@ -1533,6 +1972,10 @@
+     unsigned        new_btn_id = cur_btn_id;
      unsigned        ii;
      int             activated_btn_id = -1;
-
-+    gc->pointer_route_pending = 0;
 +
++    gc->pointer_route_pending = 0;
++    gc->menu_entry_pending = 0;
++    if (key != BD_VK_MOUSE_ACTIVATE) gc->mouse_parent_position = 0;
+
      if (s->ics->interactive_composition.ui_model == IG_UI_MODEL_POPUP && !gc->popup_visible) {
          GC_TRACE("_user_input(): popup menu not visible\n");
-         return -1;
-@@ -1545,14 +1858,14 @@
+@@ -1545,14 +1988,14 @@
 
      if (!gc->ig_drawn) {
          GC_ERROR("_user_input(): menu not visible\n");
@@ -375,7 +541,7 @@
      }
 
      GC_TRACE("_user_input(%d)\n", key);
-@@ -1564,11 +1877,19 @@
+@@ -1564,11 +2007,20 @@
          return -1;
      }
 
@@ -390,12 +556,13 @@
              GC_TRACE("_user_input(): BD_VK_MOUSE_ACTIVATE outside of valid buttons\n");
              return -1;
          }
++        if (gc->mouse_parent_position) return _request_authored_return(gc, page, NULL, cmds);
 +        BD_IG_BUTTON *hit = _find_button_page(page, gc->mouse_button_id, NULL);
 +        if (_button_has_no_action(hit) && !hit->auto_action_flag) return _request_authored_return(gc, page, hit, cmds);
          key = BD_VK_ENTER;
      }
 
-@@ -1590,6 +1911,7 @@
+@@ -1590,6 +2042,7 @@
          /* cursor keys */
          else if (VK_IS_CURSOR(key) || key == BD_VK_ENTER) {
              if (button->id == cur_btn_id) {
@@ -403,27 +570,30 @@
                  switch(key) {
                      case BD_VK_UP:
                          new_btn_id = button->upper_button_id_ref;
-@@ -1632,7 +1954,11 @@
+@@ -1632,7 +2085,13 @@
 
          _select_button(gc, new_btn_id);
 
 +        int before_cmds = cmds ? cmds->num_nav_cmds : -1;
          _render_page(gc, activated_btn_id, cmds);
++        if (activated_btn_id >= 0 && cmds && cmds->num_nav_cmds)
++            _remember_menu_entry(gc, page, _find_button_page(page, activated_btn_id, NULL));
 +        GC_TRACE("_user_input result: page=%u key=%u from=%u to=%u activated=%d cmds=%d->%d\n",
 +                 page_id, key, cur_btn_id, new_btn_id, activated_btn_id,
 +                 before_cmds, cmds ? cmds->num_nav_cmds : -1);
 
          /* found one*/
          return 1;
-@@ -1795,6 +2121,7 @@
+@@ -1795,6 +2254,8 @@
      unsigned        ii;
 
      gc->valid_mouse_position = 0;
 +    gc->pointer_route_pending = 0;
++    gc->mouse_parent_position = 0;
 
      if (!gc->ig_drawn) {
          GC_TRACE("_mouse_move(): menu not visible\n");
-@@ -1834,6 +2161,25 @@
+@@ -1834,7 +2295,26 @@
 
          /* mouse is over button */
          gc->valid_mouse_position = 1;
@@ -438,7 +608,7 @@
 +                                   gc->bog_data[jj].enabled_button), "graph");
 +            }
 +        }
-+
+
 +        /* Decorative copies must not trap keyboard selection in a self-loop. */
 +        if (_inert_pointer_button(button)) return 1;
 +        if (_button_has_no_action(button) && !button->auto_action_flag) {
@@ -446,26 +616,46 @@
 +            BD_IG_BUTTON *target;
 +            if (_find_authored_return(gc, page, button, &parent, &target)) return 1;
 +        }
-
++
          /* is button already selected? */
          if (button->id == cur_btn_id) {
-@@ -2020,6 +2366,7 @@
+             return 1;
+@@ -1857,6 +2337,18 @@
+         _reset_user_timeout(gc);
+     }
+
++    if (!gc->valid_mouse_position && !gc->in_effects && !gc->out_effects && _visited_parent(gc, page)) {
++        BD_IG_PAGE *parent;
++        BD_IG_BUTTON *target;
++        gc->mouse_x = x;
++        gc->mouse_y = y;
++        gc->mouse_parent_position = 1;
++        if (_find_authored_return(gc, page, NULL, &parent, &target) && target) {
++            gc->valid_mouse_position = 1;
++            GC_TRACE("_user_input parent-hit: page=%u parent=%u target=%u x=%u y=%u\n",
++                     page->id, parent->id, target->id, x, y);
++        } else gc->mouse_parent_position = 0;
++    }
+     return gc->valid_mouse_position;
+ }
+
+@@ -2020,6 +2512,7 @@
              /* fall thru */
 
          case GC_CTRL_POPUP:
-+            gc->pointer_route_pending = 0;
++            _clear_menu_history(gc);
              if (gc->igs->ics->interactive_composition.ui_model != IG_UI_MODEL_POPUP) {
                  /* not pop-up menu */
                  break;
-@@ -2040,6 +2387,7 @@
+@@ -2040,6 +2533,7 @@
              break;
 
          case GC_CTRL_INIT_MENU:
-+            gc->pointer_route_pending = 0;
++            _clear_menu_history(gc);
              _select_page(gc, 0, 0);
              _render_page(gc, 0xffff, cmds);
              break;
-@@ -2075,6 +2423,8 @@
+@@ -2075,6 +2569,8 @@
  #endif
      }
 
@@ -474,7 +664,7 @@
      if (cmds) {
          if (gc->igs->ics->interactive_composition.ui_model == IG_UI_MODEL_POPUP) {
              cmds->status |= GC_STATUS_POPUP;
-@@ -2082,7 +2432,7 @@
+@@ -2082,7 +2578,7 @@
          if (gc->ig_drawn) {
              cmds->status |= GC_STATUS_MENU_OPEN;
          }
