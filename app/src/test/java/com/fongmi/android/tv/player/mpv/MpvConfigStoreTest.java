@@ -2,14 +2,150 @@ package com.fongmi.android.tv.player.mpv;
 
 import org.junit.Test;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeTrue;
 
 public class MpvConfigStoreTest {
+
+    @Test
+    public void scriptWithoutButtonAlwaysUsesStartup() {
+        for (String trigger : Arrays.asList(null, "", "click", "long", "startup", "unknown")) {
+            assertEquals("startup", MpvConfigStore.normalizeScriptTrigger(false, trigger));
+        }
+    }
+
+    @Test
+    public void enabledScriptPreservesSavedTriggerAndDefaultsToClick() {
+        assertEquals("click", MpvConfigStore.normalizeScriptTrigger(true, null));
+        assertEquals("click", MpvConfigStore.normalizeScriptTrigger(true, "unknown"));
+        for (String trigger : Arrays.asList("click", "long", "startup")) {
+            assertEquals(trigger, MpvConfigStore.normalizeScriptTrigger(true, trigger));
+        }
+    }
+
+    @Test
+    public void startupAndClickShareOneHandlerAndOneCopyOfScriptContent() {
+        MpvConfigStore.CustomButton button = scriptButton("startup", "startup", true);
+        button.onStartup = "stale_metadata()";
+        String lua = MpvConfigStore.buildCustomButtonScript(Collections.singletonList(button), script -> "toggle_script()");
+
+        assertTrue(lua.contains("buttons[\"startup\"].short = function()\ntoggle_script()\nend\n"));
+        assertTrue(lua.contains("run(buttons[\"startup\"].short)\n"));
+        assertEquals(lua.indexOf("toggle_script()"), lua.lastIndexOf("toggle_script()"));
+        assertFalse(lua.contains("stale_metadata"));
+        assertFalse(lua.contains(".long ="));
+    }
+
+    @Test
+    public void disabledScriptRunsOnceWithoutExposingButtonHandler() {
+        String lua = MpvConfigStore.buildCustomButtonScript(
+                Collections.singletonList(scriptButton("hidden", "long", false)), script -> "hidden_startup()");
+
+        assertTrue(lua.contains("run(function()\nhidden_startup()\nend)"));
+        assertFalse(lua.contains("buttons[\"hidden\"]"));
+    }
+
+    @Test
+    public void clickAndLongScriptsDoNotRunOnStartup() {
+        List<MpvConfigStore.CustomButton> buttons = Arrays.asList(
+                scriptButton("click", "click", true), scriptButton("hold", "long", true));
+        String lua = MpvConfigStore.buildCustomButtonScript(buttons, script -> "user_action()");
+
+        assertTrue(lua.contains("buttons[\"click\"].short = function()"));
+        assertTrue(lua.contains("buttons[\"hold\"].long = function()"));
+        assertFalse(lua.contains("buttons[\"click\"].long"));
+        assertFalse(lua.contains("buttons[\"hold\"].short"));
+        assertFalse(lua.contains("run(buttons["));
+        assertFalse(lua.contains("run(function()"));
+    }
+
+    @Test
+    public void missingScriptAndInvalidButtonDoNotDiscardOtherHandlers() {
+        List<MpvConfigStore.CustomButton> buttons = Arrays.asList(null,
+                scriptButton("bad\"]", "startup", true), scriptButton("missing", "startup", true),
+                scriptButton("good", "click", true));
+        String lua = MpvConfigStore.buildCustomButtonScript(buttons, script -> {
+            if ("missing.lua".equals(script)) throw new IOException("missing script");
+            return "good_action()";
+        });
+
+        assertFalse(lua.contains("bad"));
+        assertFalse(lua.contains("missing"));
+        assertTrue(lua.contains("buttons[\"good\"].short"));
+        assertEquals("", MpvConfigStore.buildCustomButtonScript(Collections.emptyList(), script -> ""));
+    }
+
+    @Test
+    public void generatedLuaRunsStartupAndTogglesWithoutDuplicatingState() throws Exception {
+        String interpreter = System.getenv("WEBHTV_TEST_LUA");
+        assumeTrue("Set WEBHTV_TEST_LUA to run the generated bridge with a real Lua interpreter",
+                interpreter != null && !interpreter.isEmpty());
+        List<MpvConfigStore.CustomButton> buttons = new ArrayList<>();
+        buttons.add(scriptButton("startup", "startup", true));
+        buttons.add(scriptButton("hidden", "click", false));
+        buttons.add(scriptButton("click", "click", true));
+        buttons.add(scriptButton("hold", "long", true));
+        buttons.add(scriptButton("broken", "startup", true));
+        buttons.add(scriptButton("returns", "startup", true));
+        MpvConfigStore.CustomButton legacy = scriptButton("legacy", "", true);
+        legacy.script = "";
+        legacy.onStartup = "local legacy_state = 7";
+        legacy.content = "legacy_count = legacy_state; legacy_state = legacy_state + 1";
+        legacy.longPressContent = "legacy_long = legacy_state";
+        buttons.add(legacy);
+        MpvConfigStore.CustomButton disabledLegacy = scriptButton("disabled_legacy", "", false);
+        disabledLegacy.script = "";
+        disabledLegacy.onStartup = "disabled_legacy_ran = true";
+        buttons.add(disabledLegacy);
+        String lua = MpvConfigStore.buildCustomButtonScript(buttons, script -> switch (script) {
+            case "startup.lua" -> "startup_count = (startup_count or 0) + 1\n"
+                    + "toggle_state = not toggle_state\n"
+                    + "if toggle_state then live_timers = live_timers + 1 else live_timers = live_timers - 1 end";
+            case "hidden.lua" -> "hidden_count = (hidden_count or 0) + 1";
+            case "click.lua" -> "click_count = (click_count or 0) + 1";
+            case "hold.lua" -> "long_count = (long_count or 0) + 1";
+            case "broken.lua" -> "error('expected startup error')";
+            case "returns.lua" -> "return_count = (return_count or 0) + 1; return";
+            default -> throw new IOException("unexpected script " + script);
+        });
+        Path generated = Files.createTempFile("webhtv-custom-buttons-", ".lua");
+        Process process = null;
+        try {
+            Files.writeString(generated, lua, StandardCharsets.UTF_8);
+            Path fixture = Path.of(getClass().getResource("/mpv/custom_button_runtime_test.lua").toURI());
+            process = new ProcessBuilder(interpreter, fixture.toString(), generated.toString())
+                    .redirectErrorStream(true).start();
+            assertTrue("Lua runtime test timed out", process.waitFor(10, TimeUnit.SECONDS));
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertEquals(output, 0, process.exitValue());
+            assertTrue(output, output.contains("PASS: startup/click/long/hidden/legacy/error isolation"));
+        } finally {
+            if (process != null && process.isAlive()) process.destroyForcibly();
+            Files.deleteIfExists(generated);
+        }
+    }
+
+    private static MpvConfigStore.CustomButton scriptButton(String id, String trigger, boolean enabled) {
+        MpvConfigStore.CustomButton button = new MpvConfigStore.CustomButton();
+        button.id = id;
+        button.title = id;
+        button.script = id + ".lua";
+        button.trigger = trigger;
+        button.enabled = enabled;
+        return button;
+    }
 
     @Test
     public void readsTheLastExplicitAImageReaderBackend() {

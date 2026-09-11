@@ -1093,10 +1093,25 @@ public final class MpvConfigStore {
         }
         validateContent(content);
         writeTextChecked(output, content);
+        writeScriptSettings(outputName, displayName, content, enabled, trigger);
+        return outputName;
+    }
+
+    /** Apply creation/import options without renaming the newly allocated script file. */
+    public static synchronized void saveScriptTrigger(String id, boolean enabled, String trigger) throws IOException {
+        migrateManagedScripts();
+        String content = readText(safeScriptFile(id));
+        CustomButton previous = scriptButton(id);
+        String title = previous == null ? id.substring(0, id.lastIndexOf('.')) : previous.title;
+        writeScriptSettings(id, title, content, enabled, trigger);
+    }
+
+    private static void writeScriptSettings(String script, String title, String content,
+                                            boolean enabled, String trigger) throws IOException {
         List<CustomButton> buttons = customButtons();
         CustomButton button = null;
         for (CustomButton item : buttons) {
-            if (TextUtils.equals(item.script, outputName)) {
+            if (TextUtils.equals(item.script, script)) {
                 button = item;
                 break;
             }
@@ -1106,18 +1121,18 @@ public final class MpvConfigStore {
             button.id = UUID.randomUUID().toString().replace("-", "");
             buttons.add(button);
         }
-        button.script = outputName;
-        button.title = displayName;
+        button.script = script;
+        button.title = title;
         button.enabled = enabled;
-        button.trigger = normalizeTrigger(trigger);
+        button.trigger = normalizeScriptTrigger(enabled, trigger);
         button.content = "click".equals(button.trigger) ? content : "";
         button.longPressContent = "long".equals(button.trigger) ? content : "";
         button.onStartup = "startup".equals(button.trigger) ? content : "";
         writeCustomButtons(buttons);
-        return outputName;
     }
 
-    private static String normalizeTrigger(String trigger) {
+    public static String normalizeScriptTrigger(boolean buttonEnabled, String trigger) {
+        if (!buttonEnabled) return "startup";
         return "long".equals(trigger) || "startup".equals(trigger) ? trigger : "click";
     }
 
@@ -1215,48 +1230,72 @@ public final class MpvConfigStore {
 
     private static void writeCustomButtonScript(List<CustomButton> buttons) throws IOException {
         File output = new File(scriptsDir(), CUSTOM_BUTTON_SCRIPT);
-        StringBuilder lua = new StringBuilder("-- WebHTV managed custom buttons\nlocal buttons = {}\n");
-        int enabledCount = 0;
+        String lua = buildCustomButtonScript(buttons, script -> readText(safeScriptFile(script)));
+        if (lua.isEmpty()) {
+            output.delete();
+            return;
+        }
+        writeTextChecked(output, lua);
+    }
+
+    interface ScriptContentReader {
+        String read(String script) throws IOException;
+    }
+
+    static String buildCustomButtonScript(List<CustomButton> buttons, ScriptContentReader scripts) {
+        StringBuilder lua = new StringBuilder("-- WebHTV managed custom buttons\nlocal buttons = {}\n"
+                + "local function run(fn)\n"
+                + "  if not fn then return end\n"
+                + "  local ok, err = pcall(fn)\n"
+                + "  if not ok then mp.msg.error('WebHTV custom button failed: ' .. tostring(err)) end\n"
+                + "end\n");
+        int scriptCount = 0;
         for (CustomButton button : buttons) {
-            if (button == null || !button.enabled || !isSafeCustomButtonId(button.id)) continue;
-            enabledCount++;
+            if (button == null || !isSafeCustomButtonId(button.id)) continue;
+            boolean managed = !value(button.script).isEmpty();
+            // Preserve the legacy multi-action button contract; managed files use the new timing rules.
+            if (!managed && !button.enabled) continue;
             String key = luaString(button.id);
-            lua.append("buttons[").append(key).append("] = {}\n");
             String content = button.content;
             String longContent = button.longPressContent;
             String startupContent = button.onStartup;
-            if (!TextUtils.isEmpty(button.script)) {
+            boolean startupButton = false;
+            if (managed) {
                 try {
-                    String scriptContent = readText(safeScriptFile(button.script));
-                    content = "click".equals(button.trigger) ? scriptContent : "";
-                    longContent = "long".equals(button.trigger) ? scriptContent : "";
-                    startupContent = "startup".equals(button.trigger) ? scriptContent : "";
+                    String scriptContent = scripts.read(button.script);
+                    String trigger = normalizeScriptTrigger(button.enabled, button.trigger);
+                    startupButton = button.enabled && "startup".equals(trigger);
+                    content = button.enabled && !"long".equals(trigger) ? scriptContent : "";
+                    longContent = button.enabled && "long".equals(trigger) ? scriptContent : "";
+                    startupContent = !button.enabled ? scriptContent : "";
                 } catch (IOException ignored) {
                     continue;
                 }
             }
-            if (!TextUtils.isEmpty(startupContent)) lua.append(startupContent).append('\n');
-            if (!TextUtils.isEmpty(content)) {
+            scriptCount++;
+            if (!button.enabled) {
+                lua.append("run(function()\n").append(value(startupContent)).append("\nend)\n");
+                continue;
+            }
+            lua.append("buttons[").append(key).append("] = {}\n");
+            // Legacy startup locals must remain visible to their short/long closures.
+            if (!value(startupContent).isEmpty()) lua.append(startupContent).append('\n');
+            if (!value(content).isEmpty()) {
                 lua.append("buttons[").append(key).append("].short = function()\n")
                         .append(content).append("\nend\n");
             }
-            if (!TextUtils.isEmpty(longContent)) {
+            if (!value(longContent).isEmpty()) {
                 lua.append("buttons[").append(key).append("].long = function()\n")
                         .append(longContent).append("\nend\n");
             }
+            if (startupButton) lua.append("run(buttons[").append(key).append("].short)\n");
         }
-        if (enabledCount == 0) {
-            output.delete();
-            return;
-        }
+        if (scriptCount == 0) return "";
         lua.append("mp.register_script_message(").append(luaString(CUSTOM_BUTTON_MESSAGE)).append(", function(id, phase)\n")
                 .append("  local button = buttons[id]\n")
-                .append("  local fn = button and button[phase]\n")
-                .append("  if not fn then return end\n")
-                .append("  local ok, err = pcall(fn)\n")
-                .append("  if not ok then mp.msg.error('WebHTV custom button failed: ' .. tostring(err)) end\n")
+                .append("  run(button and button[phase])\n")
                 .append("end)\n");
-        writeTextChecked(output, lua.toString());
+        return lua.toString();
     }
 
     private static File customButtonsFile() {
@@ -1264,7 +1303,7 @@ public final class MpvConfigStore {
     }
 
     private static boolean isSafeCustomButtonId(String id) {
-        return !TextUtils.isEmpty(id) && id.matches("[A-Za-z0-9_-]{1,64}");
+        return id != null && id.matches("[A-Za-z0-9_-]{1,64}");
     }
 
     private static boolean isCustomButtonProfileId(String id) {
