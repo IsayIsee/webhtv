@@ -313,6 +313,8 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     private Runnable mR4;
     private Clock mClock;
     private MpvPlayer mDiscMenuPlayer;
+    private MpvPlayer mCustomButtonPlayer;
+    private final Runnable mCustomButtonStateListener = this::updateCustomButtonStates;
     private final Runnable mDiscMenuStateListener = this::updateDiscMenuTools;
     private PiP mPiP;
     private String mContextWallUrl;
@@ -1060,16 +1062,13 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
             view.setMaxWidth(ResUtil.dp2px(144));
             view.setEllipsize(TextUtils.TruncateAt.END);
             view.setContentDescription(button.title);
+            view.setTag(button.id);
             view.setOnClickListener(item -> {
-                if (player().sendMpvCustomButton(button.id, false)) {
-                    toggleCustomButtonState(item);
-                }
+                player().sendMpvCustomButton(button.id, false);
                 setR1Callback();
             });
             view.setOnLongClickListener(item -> {
-                if (player().sendMpvCustomButton(button.id, true)) {
-                    toggleCustomButtonState(item);
-                }
+                player().sendMpvCustomButton(button.id, true);
                 setR1Callback();
                 return true;
             });
@@ -1089,8 +1088,17 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
         updateCustomButtonVisibility();
     }
 
-    private void toggleCustomButtonState(View view) {
-        view.setSelected(!view.isSelected());
+    private void updateCustomButtonStates() {
+        MpvPlayer mpv = service() != null && isOwner()
+                && player().getPlayer() instanceof MpvPlayer active ? active : null;
+        if (mCustomButtonPlayer != mpv) {
+            if (mCustomButtonPlayer != null) mCustomButtonPlayer.removeCustomButtonStateListener(mCustomButtonStateListener);
+            mCustomButtonPlayer = mpv;
+            if (mpv != null) mpv.addCustomButtonStateListener(mCustomButtonStateListener);
+        }
+        for (View view : mCustomActionViews) {
+            view.setSelected(mpv != null && mpv.isCustomButtonActive((String) view.getTag()));
+        }
     }
 
     private void ensureCustomButtonContainers() {
@@ -1157,6 +1165,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void updateCustomButtonVisibility() {
+        updateCustomButtonStates();
         boolean visible = service() != null && player().isMpv() && isVisible(mBinding.control.getRoot());
         if (mCustomLeftButtons != null) mCustomLeftButtons.setVisibility(visible && isLand() ? View.VISIBLE : View.GONE);
         if (mCustomRightButtons != null) mCustomRightButtons.setVisibility(visible && isLand() ? View.VISIBLE : View.GONE);
@@ -6042,6 +6051,7 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
     }
 
     private void updateDiscMenuTools() {
+        updateCustomButtonStates();
         MpvPlayer mpv = service() != null && isOwner()
                 && player().getPlayer() instanceof MpvPlayer active ? active : null;
         if (mDiscMenuPlayer != mpv) {
@@ -6554,6 +6564,10 @@ public class VideoActivity extends PlaybackActivity implements Clock.Callback, C
 
     @Override
     protected void onDestroy() {
+        if (mCustomButtonPlayer != null) {
+            mCustomButtonPlayer.removeCustomButtonStateListener(mCustomButtonStateListener);
+            mCustomButtonPlayer = null;
+        }
         if (mDiscMenuPlayer != null) {
             mDiscMenuPlayer.removeDiscMenuStateListener(mDiscMenuStateListener);
             mDiscMenuPlayer = null;
