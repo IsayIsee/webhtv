@@ -90,6 +90,10 @@ android {
     signingConfigs {
         release {
             if (hasReleaseSigning) {
+                // minSdk 24 时 AGP 默认只签 v2，API 24-27 设备读不到 v2-only 包的证书，升级自检会误判；
+                // 显式 v1+v2 让老设备走通 legacy 签名比对（v1 在现代 Android 上仍可正常安装）
+                enableV1Signing = true
+                enableV2Signing = true
                 storeFile file(localProps['storeFile'])
                 keyAlias localProps['keyAlias']
                 keyPassword releaseKeyPassword

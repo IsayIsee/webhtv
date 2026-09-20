@@ -308,28 +308,57 @@ public class Updater implements Download.Callback, UpdateListener {
             PackageManager manager = App.get().getPackageManager();
             int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
             PackageInfo archive = manager.getPackageArchiveInfo(file.getAbsolutePath(), flags);
-            PackageInfo installed = manager.getPackageInfo(BuildConfig.APPLICATION_ID, flags);
-            if (archive == null || installed == null || !BuildConfig.APPLICATION_ID.equals(archive.packageName)) return false;
+            // 平台解不出归档时无法判定，不作为拒绝理由，交系统安装器校验签名兼容性
+            if (archive == null) {
+                Log.w(TAG, "validatePackage: cannot parse archive, skip identity gate");
+                return true;
+            }
+            if (!BuildConfig.APPLICATION_ID.equals(archive.packageName)) {
+                Log.w(TAG, "validatePackage: package name mismatch: " + archive.packageName);
+                return false;
+            }
             long archiveCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ? archive.getLongVersionCode() : archive.versionCode;
-            if (update != null && update.code > 0 && archiveCode != update.code) return false;
-            if (update != null && !TextUtils.isEmpty(update.versionName) && !update.versionName.equals(archive.versionName)) return false;
-            return signaturesMatch(installed, archive);
+            if (update != null && update.code > 0 && archiveCode != update.code) {
+                Log.w(TAG, "validatePackage: versionCode mismatch: archive=" + archiveCode + ", manifest=" + update.code);
+                return false;
+            }
+            if (update != null && !TextUtils.isEmpty(update.versionName) && !update.versionName.equals(archive.versionName)) {
+                Log.w(TAG, "validatePackage: versionName mismatch: archive=" + archive.versionName + ", manifest=" + update.versionName);
+                return false;
+            }
+            PackageInfo installed = manager.getPackageInfo(BuildConfig.APPLICATION_ID, flags);
+            if (installed == null) {
+                Log.w(TAG, "validatePackage: installed package info unavailable, skip identity gate");
+                return true;
+            }
+            Boolean match = signaturesMatch(installed, archive);
+            if (match == null) {
+                Log.w(TAG, "validatePackage: signer unreadable, skip signature gate, sdk=" + Build.VERSION.SDK_INT);
+                return true;
+            }
+            if (!match) Log.w(TAG, "validatePackage: signature mismatch");
+            return match;
         } catch (Exception e) {
-            return false;
+            Log.w(TAG, "validatePackage: parse failed, skip identity gate", e);
+            return true;
         }
     }
 
-    private boolean signaturesMatch(PackageInfo installed, PackageInfo archive) {
+    // 返回 null 表示证书读不到、无法判定（API 24-27 读取 v2-only 包会走这条），由调用方决定放行
+    private Boolean signaturesMatch(PackageInfo installed, PackageInfo archive) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            if (installed.signingInfo == null || archive.signingInfo == null) return false;
-            if (installed.signingInfo.hasMultipleSigners() || archive.signingInfo.hasMultipleSigners()) {
-                return fingerprints(installed.signingInfo.getApkContentsSigners()).equals(fingerprints(archive.signingInfo.getApkContentsSigners()));
-            }
+            if (installed.signingInfo == null || archive.signingInfo == null) return null;
             Set<String> current = fingerprints(installed.signingInfo.getApkContentsSigners());
-            Set<String> candidateHistory = fingerprints(archive.signingInfo.getSigningCertificateHistory());
-            return !current.isEmpty() && candidateHistory.containsAll(current);
+            Set<String> candidate = archive.signingInfo.hasMultipleSigners()
+                    ? fingerprints(archive.signingInfo.getApkContentsSigners())
+                    : fingerprints(archive.signingInfo.getSigningCertificateHistory());
+            if (current.isEmpty() || candidate.isEmpty()) return null;
+            return candidate.containsAll(current);
         }
-        return fingerprints(installed.signatures).equals(fingerprints(archive.signatures));
+        Set<String> current = fingerprints(installed.signatures);
+        Set<String> candidate = fingerprints(archive.signatures);
+        if (current.isEmpty() || candidate.isEmpty()) return null;
+        return current.equals(candidate);
     }
 
     private Set<String> fingerprints(Signature[] signatures) {
