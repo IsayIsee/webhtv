@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(exo_ass LANGUAGES CXX)
 
-if(NOT ANDROID OR NOT ANDROID_ABI STREQUAL "arm64-v8a")
-    message(FATAL_ERROR "Stage 1 is an independently built arm64 Android prototype")
+if(NOT ANDROID OR NOT ANDROID_ABI MATCHES "^(arm64-v8a|armeabi-v7a)$")
+    message(FATAL_ERROR "Exo ASS requires an independent arm64-v8a or armeabi-v7a Android build")
 endif()
 if(NOT DEFINED ASS_PREFIX)
     message(FATAL_ERROR "Run scripts/build_exo_ass_native.py with the pinned dependency lock")

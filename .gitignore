@@ -29,3 +29,4 @@ __pycache__/
 third_party/sources/
 plans/
 .codex/task-state/
+docs/

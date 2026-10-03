@@ -69,9 +69,9 @@ public final class ExoAssSession implements TextRenderer.Observer {
     private int slowFrames;
     private final long[] nativeStats = new long[6];
 
-    @Nullable
+    /** Both ARM flavors package libass; native loading stays lazy until ASS is admitted. */
     public static ExoAssSession createIfEnabled(Context context, boolean tunneling) {
-        return Process.is64Bit() ? new ExoAssSession(context, tunneling) : null;
+        return new ExoAssSession(context, tunneling);
     }
 
     ExoAssSession(Context context, boolean tunneling) {

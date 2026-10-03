@@ -30,7 +30,7 @@ import okhttp3.Response;
 public class JarLoader {
 
     private final ConcurrentHashMap<String, DexClassLoader> loaders;
-    private final ConcurrentHashMap<String, Method> methods;
+    private final ConcurrentHashMap<String, ProxyMethod> methods;
     private final ConcurrentHashMap<String, Spider> spiders;
     private final ConcurrentHashMap<String, Object> locks;
     private volatile String recent;
@@ -45,6 +45,7 @@ public class JarLoader {
     public void clear() {
         SpiderDebug.log("jar-loader", "clear loaders=%s spiders=%s methods=%s", loaders.size(), spiders.size(), methods.size());
         spiders.values().forEach(Spider::destroy);
+        methods.values().forEach(ProxyMethod::close);
         loaders.clear();
         methods.clear();
         spiders.clear();
@@ -76,7 +77,7 @@ public class JarLoader {
         DexClassLoader loader = new CspDexClassLoader(file.getAbsolutePath(), cachePath, cachePath, App.get().getClassLoader());
         invokeInit(key, loader);
         invokeNetworkCompat(key, loader);
-        invokeProxy(key, loader);
+        invokeProxy(key, loader, file);
         loaders.put(key, loader);
         SpiderDebug.log("jar-loader", "load done key=%s cost=%sms", key, System.currentTimeMillis() - start);
     }
@@ -135,12 +136,21 @@ public class JarLoader {
         }
     }
 
-    private void invokeProxy(String key, DexClassLoader loader) {
+    private void invokeProxy(String key, DexClassLoader loader, File file) {
         long start = System.currentTimeMillis();
         try {
             Class<?> clz = loader.loadClass("com.github.catvod.spider.Proxy");
             Method method = clz.getMethod("proxy", Map.class);
-            methods.put(key, method);
+            PanProxyCompat compat = null;
+            try {
+                compat = PanProxyCompat.install(file, loader, message -> SpiderDebug.log("pan-proxy", message));
+                if (compat != null) {
+                    SpiderDebug.log("jar-loader", "pan proxy lifecycle compat enabled key=%s sha256=%s", key, PanProxyCompat.JAR_SHA256);
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("jar-loader", "pan proxy lifecycle compat unavailable key=%s error=%s", key, error(e));
+            }
+            methods.put(key, new ProxyMethod(method, compat));
             SpiderDebug.log("jar-loader", "proxy method ready key=%s cost=%sms", key, System.currentTimeMillis() - start);
         } catch (Throwable e) {
             SpiderDebug.log("jar-loader", "proxy method missing key=%s cost=%sms error=%s", key, System.currentTimeMillis() - start, error(e));
@@ -237,7 +247,7 @@ public class JarLoader {
     }
 
     public Object[] proxy(Map<String, String> params) throws Exception {
-        Method method = recent != null ? methods.get(recent) : null;
+        ProxyMethod method = recent != null ? methods.get(recent) : null;
         Object[] result = proxyInvoke(method, params);
         if (result != null) return result;
         return tryOthers(params);
@@ -247,12 +257,22 @@ public class JarLoader {
         return methods.entrySet().stream().filter(e -> !e.getKey().equals(recent)).map(e -> proxyInvoke(e.getValue(), p)).filter(Objects::nonNull).findFirst().orElse(null);
     }
 
-    private Object[] proxyInvoke(Method method, Map<String, String> params) {
+    private Object[] proxyInvoke(ProxyMethod proxy, Map<String, String> params) {
         try {
-            return method == null ? null : (Object[]) method.invoke(null, params);
+            if (proxy == null) return null;
+            if (proxy.compat != null && "pan".equals(params.get("do"))) {
+                return proxy.compat.invoke(() -> (Object[]) proxy.method.invoke(null, params));
+            }
+            return (Object[]) proxy.method.invoke(null, params);
         } catch (Throwable e) {
             e.printStackTrace();
             return null;
+        }
+    }
+
+    private record ProxyMethod(Method method, PanProxyCompat compat) {
+        void close() {
+            if (compat != null) compat.close();
         }
     }
 }

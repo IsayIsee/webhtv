@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the standalone, API-24 Exo ASS prototype from the pinned source graph.
+"""Build standalone, API-24 Exo ASS libraries from the pinned source graph.
 
 Normal App builds never invoke this. No MPV/FFmpeg objects or prefixes are used.
 --source-cache may supply clean Git objects/downloads; each identity is verified.
@@ -16,6 +16,10 @@ import subprocess
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
+ABI_CONFIG = {
+    "arm64-v8a": ("aarch64-linux-android", "aarch64", "aarch64", "android-arm64.ini"),
+    "armeabi-v7a": ("armv7a-linux-androideabi", "arm", "armv7", "android-armv7.ini"),
+}
 
 
 def run(args, **kwargs):
@@ -38,18 +42,59 @@ def extract(archive, target):
         tar.extractall(target)
 
 
+def configure_cross(work, toolchain, abi, api):
+    triple, family, cpu, filename = ABI_CONFIG[abi]
+    prefix = work / abi / "prefix"
+    prefix.mkdir(parents=True, exist_ok=True)
+    cross = work / filename
+    flags = ["-fvisibility=hidden", "-ffunction-sections", "-fdata-sections"]
+    if abi == "armeabi-v7a":
+        # Match Android's Thumb code generation; the NDK target supplies the softfp ABI.
+        flags.append("-mthumb")
+    cross.write_text("\n".join([
+        "[binaries]",
+        "c = '" + str(toolchain / "bin" / (triple + str(api) + "-clang")) + "'",
+        "cpp = '" + str(toolchain / "bin" / (triple + str(api) + "-clang++")) + "'",
+        "ar = '" + str(toolchain / "bin/llvm-ar") + "'",
+        "strip = '" + str(toolchain / "bin/llvm-strip") + "'",
+        "pkg-config = 'pkg-config'",
+        "[host_machine]", "system = 'android'", "cpu_family = '" + family + "'",
+        "cpu = '" + cpu + "'", "endian = 'little'",
+        "[properties]", "needs_exe_wrapper = true",
+        "pkg_config_libdir = ['" + str(prefix / "lib/pkgconfig") + "']",
+        "[built-in options]", "default_library = 'static'", "b_staticpic = true",
+        "buildtype = 'release'", "wrap_mode = 'nodownload'",
+        "c_args = " + repr(flags), "cpp_args = " + repr(flags), "",
+    ]))
+    env = os.environ.copy()
+    env.pop("CC", None)
+    env.pop("CXX", None)
+    env["PKG_CONFIG_LIBDIR"] = str(prefix / "lib/pkgconfig")
+    env["PKG_CONFIG_PATH"] = ""
+    return prefix, cross, env
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, default=ROOT / "build/exo-ass-native")
     parser.add_argument("--source-cache", type=Path)
     parser.add_argument("--download-cache", type=Path)
+    parser.add_argument("--abi", choices=["all", *ABI_CONFIG], default="all")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 4, 8))
     parser.add_argument("--install", action="store_true")
-    parser.add_argument("--dependencies-only", action="store_true")
-    parser.add_argument("--jni-only", action="store_true",
-                        help="Reuse this independent build's verified source stamps and static archives")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dependencies-only", action="store_true")
+    mode.add_argument("--jni-only", action="store_true",
+                      help="Reuse this independent build's verified source stamps and static archives")
     args = parser.parse_args()
+    if args.install and (args.abi != "all" or args.dependencies_only):
+        parser.error("--install requires --abi all and a complete JNI build")
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
     lock = json.loads((ROOT / "third_party/exo-ass-lock.json").read_text())
+    if set(lock["android"]["abis"]) != set(ABI_CONFIG):
+        raise ValueError("Unexpected locked ABI set")
+    abis = lock["android"]["abis"] if args.abi == "all" else [args.abi]
     work = args.work_dir.resolve()
     work.mkdir(parents=True, exist_ok=True)
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
@@ -64,31 +109,6 @@ def main():
         raise ValueError("NDK identity mismatch")
     host = "darwin-x86_64" if platform.system() == "Darwin" else "linux-x86_64"
     toolchain = ndk / "toolchains/llvm/prebuilt" / host
-    prefix = work / "arm64-v8a/prefix"
-    prefix.mkdir(parents=True, exist_ok=True)
-    cross = work / "android-arm64.ini"
-    cross.write_text("\n".join([
-        "[binaries]",
-        "c = '" + str(toolchain / "bin/aarch64-linux-android24-clang") + "'",
-        "cpp = '" + str(toolchain / "bin/aarch64-linux-android24-clang++") + "'",
-        "ar = '" + str(toolchain / "bin/llvm-ar") + "'",
-        "strip = '" + str(toolchain / "bin/llvm-strip") + "'",
-        "pkg-config = 'pkg-config'",
-        "[host_machine]", "system = 'android'", "cpu_family = 'aarch64'",
-        "cpu = 'aarch64'", "endian = 'little'",
-        "[properties]", "needs_exe_wrapper = true",
-        "pkg_config_libdir = ['" + str(prefix / "lib/pkgconfig") + "']",
-        "[built-in options]", "default_library = 'static'", "b_staticpic = true",
-        "buildtype = 'release'", "wrap_mode = 'nodownload'",
-        "c_args = ['-fvisibility=hidden', '-ffunction-sections', '-fdata-sections']",
-        "cpp_args = ['-fvisibility=hidden', '-ffunction-sections', '-fdata-sections']",
-        "",
-    ]))
-    env = os.environ.copy()
-    env.pop("CC", None)
-    env.pop("CXX", None)
-    env["PKG_CONFIG_LIBDIR"] = str(prefix / "lib/pkgconfig")
-    env["PKG_CONFIG_PATH"] = ""
     sources = {}
     for name, source in lock["sources"].items():
         dest = work / "sources" / name
@@ -131,10 +151,6 @@ def main():
                 roots[0].rename(dest)
             stamp.write_text(identity)
         sources[name] = dest
-        if args.jni_only:
-            if not (prefix / "lib" / ("lib" + {"freetype2": "freetype"}.get(name, name).removeprefix("lib") + ".a")).is_file():
-                raise ValueError("Missing independently built static archive: " + name)
-            continue
         if name == "libass":
             # The exported source has no .git. Meson's vcs_tag would otherwise describe
             # the enclosing WebHTV worktree, including its unrelated recovery tag.
@@ -146,33 +162,47 @@ def main():
                 meson_file.write_text(content.replace(original_stamp, locked_stamp, 1))
             elif locked_stamp not in content:
                 raise ValueError("Unexpected libass source-version configuration")
-        build = work / "arm64-v8a" / name
-        opts = source["meson_options"]
-        command = ["meson", "setup", build, dest, "--cross-file", cross,
-                   "--prefix", prefix, "--libdir", "lib"] + opts
-        if (build / "build.ninja").exists():
-            command.append("--reconfigure")
-        run(command, env=env)
-        run(["ninja", "-C", build, "-j", args.jobs], env=env)
-        run(["ninja", "-C", build, "install"], env=env)
-    if args.dependencies_only:
-        return
     native = ROOT / "third_party/exo-ass-native"
-    build = work / "arm64-v8a/jni"
-    run(["cmake", "-S", native, "-B", build, "-G", "Ninja",
-         "-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchain.cmake"),
-         "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-24",
-         "-DANDROID_STL=c++_static", "-DCMAKE_BUILD_TYPE=Release",
-         "-DASS_PREFIX=" + str(prefix)])
-    run(["cmake", "--build", build, "-j", args.jobs])
-    lib = build / "libexo_ass.so"
-    run([toolchain / "bin/llvm-strip", "--strip-unneeded", lib])
-    digest = hashlib.sha256(lib.read_bytes()).hexdigest()
-    print("arm64-v8a libexo_ass.so SHA-256", digest)
+    artifacts, static_archives = {}, {}
+    def sha(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    for abi in abis:
+        prefix, cross, env = configure_cross(work, toolchain, abi, lock["android"]["api"])
+        for name, source in lock["sources"].items():
+            if args.jni_only:
+                archive_name = "lib" + {"freetype2": "freetype"}.get(name, name).removeprefix("lib") + ".a"
+                if not (prefix / "lib" / archive_name).is_file():
+                    raise ValueError("Missing independent static archive: " + abi + "/" + name)
+                continue
+            build = work / abi / name
+            command = ["meson", "setup", build, sources[name], "--cross-file", cross,
+                       "--prefix", prefix, "--libdir", "lib"] + source["meson_options"]
+            if (build / "build.ninja").exists():
+                command.append("--reconfigure")
+            run(command, env=env)
+            run(["ninja", "-C", build, "-j", args.jobs], env=env)
+            run(["ninja", "-C", build, "install"], env=env)
+        if args.dependencies_only:
+            continue
+        build = work / abi / "jni"
+        run(["cmake", "-S", native, "-B", build, "-G", "Ninja",
+             "-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchain.cmake"),
+             "-DANDROID_ABI=" + abi, "-DANDROID_PLATFORM=android-" + str(lock["android"]["api"]),
+             "-DANDROID_STL=" + lock["android"]["stl"], "-DCMAKE_BUILD_TYPE=Release",
+             "-DASS_PREFIX=" + str(prefix)])
+        run(["cmake", "--build", build, "-j", args.jobs])
+        lib = build / "libexo_ass.so"
+        run([toolchain / "bin/llvm-strip", "--strip-unneeded", lib])
+        artifacts[abi] = {"path": "prebuilt/" + abi + "/libexo_ass.so", "sha256": sha(lib),
+                          "bytes": lib.stat().st_size}
+        static_archives[abi] = {path.name: sha(path) for path in sorted((prefix / "lib").glob("*.a"))}
+        print(abi, "libexo_ass.so SHA-256", artifacts[abi]["sha256"], flush=True)
     if args.install:
-        output = native / "prebuilt/arm64-v8a"
-        output.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(lib, output / lib.name)
+        # Publish only after every locked ABI has built successfully from these inputs.
+        for abi, artifact in artifacts.items():
+            output = native / artifact["path"]
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(work / abi / "jni/libexo_ass.so", output)
         for name, source in lock["sources"].items():
             for license_path in source["licenses"]:
                 target = native / "licenses" / name / license_path
@@ -183,26 +213,23 @@ def main():
                 notice = b"\n".join(line.rstrip(b" \t\r") for line in notice.split(b"\n"))
                 target.write_bytes(notice.rstrip(b"\n") + b"\n")
         manifest = native / "MANIFEST.sha256"
-        manifest.write_text(digest + "  prebuilt/arm64-v8a/libexo_ass.so\n")
-        def sha(path):
-            return hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest.write_text("".join(a["sha256"] + "  " + a["path"] + "\n" for a in artifacts.values()))
         inputs = [ROOT / "third_party/exo-ass-lock.json", Path(__file__).resolve(),
                   native / "CMakeLists.txt", native / "exo_ass.cpp", native / "mask_copy.h"]
         provenance = {
-            "schema": 1,
-            "artifact": {"path": "prebuilt/arm64-v8a/libexo_ass.so", "sha256": digest,
-                         "bytes": lib.stat().st_size},
+            "schema": 2,
+            "artifacts": artifacts,
             "android": lock["android"],
             "inputs": {str(path.relative_to(ROOT)): sha(path) for path in inputs},
             "sources": {name: source.get("commit") or source["sha256"]
                         for name, source in lock["sources"].items()},
-            "static_archives": {path.name: sha(path) for path in sorted((prefix / "lib").glob("*.a"))},
+            "static_archives": static_archives,
             "licenses": {str(path.relative_to(native)): sha(path)
                          for path in sorted((native / "licenses").rglob("*")) if path.is_file()},
             "compiler": subprocess.check_output([str(toolchain / "bin/clang"), "--version"], text=True).strip(),
             "tools": {name: subprocess.check_output([name, "--version"], text=True).splitlines()[0]
                       for name in ["cmake", "meson", "ninja"]},
-            "rebuild": "python3 scripts/build_exo_ass_native.py --jobs 6 --install",
+            "rebuild": "python3 scripts/build_exo_ass_native.py --abi all --jobs " + str(args.jobs) + " --install",
             "cache_note": "Source caches supply fixed Git objects only; all static archives belong to this independent build.",
         }
         (native / "build-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")

@@ -17,6 +17,29 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Real font bytes and production JNI/provider selection; no guessed substitute typeface. */
 public class AssAttachmentTest extends TestCase {
+    public void testProductionFactoryIsLazyAndReleasesMediaForBothArmFlavors() {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        instrumentation.runOnMainSync(() -> {
+            for (boolean tunneling : new boolean[]{false, true}) {
+                ExoAssSession session = ExoAssSession.createIfEnabled(
+                        instrumentation.getTargetContext(), tunneling);
+                assertNotNull("The production factory must also create sessions in a 32-bit process", session);
+                AssFontSet fonts = null;
+                try {
+                    fonts = session.beginMediaFonts();
+                    assertNotNull(fonts);
+                    assertFalse(session.diagnostics().nativeAlive());
+                    assertEquals(0L, session.diagnostics().frames());
+                } finally {
+                    session.release();
+                }
+                assertFalse(fonts.canRead(1));
+                assertTrue(session.diagnostics().releaseComplete());
+                assertNull(session.beginMediaFonts());
+            }
+        });
+    }
+
     private byte[] font() throws Exception {
         try (InputStream input = InstrumentationRegistry.getInstrumentation().getContext()
                 .getAssets().open("exo-ass/official/Aileron-Regular.otf")) { return input.readAllBytes(); }

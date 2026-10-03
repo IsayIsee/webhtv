@@ -1,11 +1,12 @@
 {
   "schema": 1,
-  "scope": "E4-LIBASS gated standalone ASS: full external scripts and Media3 SSA packet bridge; no MPV or FFmpeg linkage",
+  "scope": "E4-LIBASS standalone ASS for both ARM ABIs: full external scripts and Media3 SSA packet bridge; no MPV or FFmpeg linkage",
   "android": {
     "ndk": "29.0.14206865",
     "api": 24,
     "abis": [
-      "arm64-v8a"
+      "arm64-v8a",
+      "armeabi-v7a"
     ],
     "stl": "c++_static",
     "page_size": 16384
